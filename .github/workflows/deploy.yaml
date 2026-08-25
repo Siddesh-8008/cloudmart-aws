@@ -8,12 +8,15 @@ permissions:
   contents: read
 
 jobs:
+
   deploy-network:
     runs-on: ubuntu-latest
 
     steps:
+
       - name: Checkout repository
         uses: actions/checkout@v4
+
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -21,22 +24,39 @@ jobs:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: ap-south-1
 
+
       - name: Verify AWS access
         run: |
           aws sts get-caller-identity
 
+
+      - name: Check required variables
+        run: |
+          if [ -z "${{ vars.OPERATIONS_CIDR }}" ]; then
+            echo "ERROR: GitHub repository variable OPERATIONS_CIDR is not configured."
+            exit 1
+          fi
+
+          echo "Operations CIDR configured."
+
+
       - name: Validate CloudFormation template
         run: |
           aws cloudformation validate-template \
-            --template-body file://cloudformation/network/network-stack.yaml
+            --template-body file://cloudformation/network/network-stack.yaml \
+            --region ap-south-1
+
 
       - name: Deploy Network Stack
         run: |
           aws cloudformation deploy \
             --template-file cloudformation/network/network-stack.yaml \
             --stack-name cloudmart-dev-network \
-            --parameter-overrides Environment=dev \
+            --parameter-overrides \
+              Environment=dev \
+              OperationsCidr=${{ vars.OPERATIONS_CIDR }} \
             --region ap-south-1
+
 
       - name: Check Stack Status
         run: |
