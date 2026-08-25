@@ -28,12 +28,12 @@ jobs:
       - name: Validate CloudFormation template
         run: |
           aws cloudformation validate-template \
-            --template-body file://infrastructure/network/network-stack.yaml
+            --template-body file://cloudformation/network/network-stack.yaml
 
       - name: Deploy Network Stack
         run: |
           aws cloudformation deploy \
-            --template-file infrastructure/network/network-stack.yaml \
+            --template-file cloudformation/network/network-stack.yaml \
             --stack-name cloudmart-dev-network \
             --parameter-overrides Environment=dev \
             --region ap-south-1
