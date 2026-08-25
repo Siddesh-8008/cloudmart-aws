@@ -41,15 +41,21 @@ jobs:
           aws cloudformation validate-template \
             --template-body file://cloudformation/network/network-stack.yaml
 
-      - name: Deploy Network Stack
-        run: |
-          aws cloudformation deploy \
-            --template-file cloudformation/network/network-stack.yaml \
-            --stack-name cloudmart-dev-network \
-            --parameter-overrides \
-              Environment=${ENVIRONMENT} \
-              OperationsCidr="${{ vars.OPERATIONS_CIDR }}" \
-            --region ${AWS_REGION}
+      - name: Get GitHub Actions public IP
+  id: public-ip
+  run: |
+    IP=$(curl -s https://checkip.amazonaws.com)
+    echo "ip=${IP}/32" >> "$GITHUB_OUTPUT"
+
+     - name: Deploy Network Stack
+            run: |
+               aws cloudformation deploy \
+                 --template-file cloudformation/network/network-stack.yaml \
+                  --stack-name cloudmart-dev-network \
+                  --parameter-overrides \
+                    Environment=dev \
+                    OperationsCidr="${{ steps.public-ip.outputs.ip }}" \
+                  --region ap-south-1
 
       - name: Check Network Stack
         run: |
