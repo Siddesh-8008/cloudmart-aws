@@ -2,22 +2,19 @@ name: CloudMart Infrastructure
 
 on:
   workflow_dispatch:
-    inputs:
-
-      operations_cidr:
-        description: Public IP/CIDR allowed to access the CloudMart dashboard
-        required: true
-        type: string
 
 permissions:
   id-token: write
   contents: read
 
+env:
+  AWS_REGION: ap-south-1
+  ENVIRONMENT: dev
 
 jobs:
 
   # ============================================================
-  # JOB 1 - NETWORK STACK
+  # NETWORK
   # ============================================================
 
   deploy-network:
@@ -29,25 +26,20 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
-          aws-region: ap-south-1
-
+          aws-region: ${{ env.AWS_REGION }}
 
       - name: Verify AWS access
         run: |
           aws sts get-caller-identity
 
-
-      - name: Validate Network CloudFormation template
+      - name: Validate Network CloudFormation
         run: |
           aws cloudformation validate-template \
-            --template-body file://cloudformation/network/network-stack.yaml \
-            --region ap-south-1
-
+            --template-body file://cloudformation/network/network-stack.yaml
 
       - name: Deploy Network Stack
         run: |
@@ -55,53 +47,41 @@ jobs:
             --template-file cloudformation/network/network-stack.yaml \
             --stack-name cloudmart-dev-network \
             --parameter-overrides \
-              Environment=dev \
-              OperationsCidr="${{ inputs.operations_cidr }}" \
-            --region ap-south-1
+              Environment=${ENVIRONMENT} \
+              OperationsCidr="${{ vars.OPERATIONS_CIDR }}" \
+            --region ${AWS_REGION}
 
-
-      - name: Check Network Stack Status
+      - name: Check Network Stack
         run: |
           aws cloudformation describe-stacks \
             --stack-name cloudmart-dev-network \
-            --region ap-south-1
+            --region ${AWS_REGION}
 
 
   # ============================================================
-  # JOB 2 - DATA STACK
+  # DATA
   # ============================================================
 
   deploy-data:
     name: Deploy Data Stack
     runs-on: ubuntu-latest
-
-    needs:
-      - deploy-network
+    needs: deploy-network
 
     steps:
 
       - name: Checkout repository
         uses: actions/checkout@v4
 
-
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
-          aws-region: ap-south-1
+          aws-region: ${{ env.AWS_REGION }}
 
-
-      - name: Verify AWS access
-        run: |
-          aws sts get-caller-identity
-
-
-      - name: Validate Data CloudFormation template
+      - name: Validate Data CloudFormation
         run: |
           aws cloudformation validate-template \
-            --template-body file://cloudformation/data/data-stack.yaml \
-            --region ap-south-1
-
+            --template-body file://cloudformation/data/data-stack.yaml
 
       - name: Deploy Data Stack
         run: |
@@ -109,67 +89,189 @@ jobs:
             --template-file cloudformation/data/data-stack.yaml \
             --stack-name cloudmart-dev-data \
             --parameter-overrides \
-              Environment=dev \
-              DBName=cloudmart \
-              DBUsername=cloudmartadmin \
-              DBInstanceClass=db.t3.micro \
-              AllocatedStorage=20 \
-            --region ap-south-1
+              Environment=${ENVIRONMENT} \
+            --region ${AWS_REGION}
 
-
-      - name: Get RDS Master Secret ARN
-        id: rds-secret
-        run: |
-
-          SECRET_ARN=$(aws cloudformation describe-stacks \
-            --stack-name cloudmart-dev-data \
-            --region ap-south-1 \
-            --query "Stacks[0].Outputs[?OutputKey=='DBMasterUserSecretArn'].OutputValue" \
-            --output text)
-
-          echo "SECRET_ARN=$SECRET_ARN" >> "$GITHUB_OUTPUT"
-
-
-      - name: Store database username in SSM SecureString
-        env:
-          SECRET_ARN: ${{ steps.rds-secret.outputs.SECRET_ARN }}
-        run: |
-
-          DB_USERNAME=$(aws secretsmanager get-secret-value \
-            --secret-id "$SECRET_ARN" \
-            --region ap-south-1 \
-            --query SecretString \
-            --output text | jq -r '.username')
-
-          aws ssm put-parameter \
-            --name "/cloudmart/dev/db/username" \
-            --type SecureString \
-            --value "$DB_USERNAME" \
-            --overwrite \
-            --region ap-south-1
-
-
-      - name: Store database password in SSM SecureString
-        env:
-          SECRET_ARN: ${{ steps.rds-secret.outputs.SECRET_ARN }}
-        run: |
-
-          DB_PASSWORD=$(aws secretsmanager get-secret-value \
-            --secret-id "$SECRET_ARN" \
-            --region ap-south-1 \
-            --query SecretString \
-            --output text | jq -r '.password')
-
-          aws ssm put-parameter \
-            --name "/cloudmart/dev/db/password" \
-            --type SecureString \
-            --value "$DB_PASSWORD" \
-            --overwrite \
-            --region ap-south-1
-
-
-      - name: Check Data Stack Status
+      - name: Check Data Stack
         run: |
           aws cloudformation describe-stacks \
             --stack-name cloudmart-dev-data \
-            --region ap-south-1
+            --region ${AWS_REGION}
+
+
+  # ============================================================
+  # AUTH
+  # ============================================================
+
+  deploy-auth:
+    name: Deploy Authentication Stack
+    runs-on: ubuntu-latest
+    needs: deploy-data
+
+    steps:
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Verify AWS access
+        run: |
+          aws sts get-caller-identity
+
+      - name: Create or update authentication token
+        run: |
+          if [ -z "${{ secrets.AUTH_TOKEN }}" ]; then
+            echo "ERROR: AUTH_TOKEN GitHub secret is not configured."
+            exit 1
+          fi
+
+          aws ssm put-parameter \
+            --name "/cloudmart/${ENVIRONMENT}/auth/token" \
+            --type "SecureString" \
+            --value "${{ secrets.AUTH_TOKEN }}" \
+            --overwrite \
+            --region "${AWS_REGION}"
+
+      - name: Validate Auth CloudFormation
+        run: |
+          aws cloudformation validate-template \
+            --template-body file://cloudformation/auth/auth-stack.yaml
+
+      - name: Deploy Auth Stack
+        run: |
+          aws cloudformation deploy \
+            --template-file cloudformation/auth/auth-stack.yaml \
+            --stack-name cloudmart-dev-auth \
+            --parameter-overrides \
+              Environment=${ENVIRONMENT} \
+              AuthorizerRoleArn="${{ vars.AUTHORIZE_ROLE_ARN }}" \
+              AuthTokenParameterName="/cloudmart/${ENVIRONMENT}/auth/token" \
+              AuthorizerSubnetIds="${{ vars.LAMBDA_SUBNET_IDS }}" \
+              LambdaSecurityGroupId="${{ vars.LAMBDA_SECURITY_GROUP_ID }}" \
+            --region ${AWS_REGION}
+
+      - name: Check Auth Stack
+        run: |
+          aws cloudformation describe-stacks \
+            --stack-name cloudmart-dev-auth \
+            --region ${AWS_REGION}
+
+
+  # ============================================================
+  # API
+  # ============================================================
+
+  deploy-api:
+    name: Deploy API and Product Service
+    runs-on: ubuntu-latest
+    needs: deploy-auth
+
+    steps:
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Verify AWS access
+        run: |
+          aws sts get-caller-identity
+
+      # --------------------------------------------------------
+      # Package Product Lambda
+      # --------------------------------------------------------
+
+      - name: Prepare Product Lambda package
+        run: |
+          rm -rf build
+          mkdir -p build/product
+
+          cp lambdas/product/lambda_function.py \
+             build/product/lambda_function.py
+
+          python -m pip install \
+            pymysql \
+            -t build/product
+
+          cd build/product
+          zip -r ../../product-lambda.zip .
+          cd ../..
+
+      # --------------------------------------------------------
+      # Upload Product Lambda package
+      # --------------------------------------------------------
+
+      - name: Upload Product Lambda package
+        run: |
+          if [ -z "${{ vars.LAMBDA_CODE_BUCKET }}" ]; then
+            echo "ERROR: LAMBDA_CODE_BUCKET repository variable is not configured."
+            exit 1
+          fi
+
+          aws s3 cp \
+            product-lambda.zip \
+            "s3://${{ vars.LAMBDA_CODE_BUCKET }}/cloudmart/${ENVIRONMENT}/product/${GITHUB_SHA}.zip" \
+            --region "${AWS_REGION}"
+
+      # --------------------------------------------------------
+      # Validate API stack
+      # --------------------------------------------------------
+
+      - name: Validate API CloudFormation
+        run: |
+          aws cloudformation validate-template \
+            --template-body file://cloudformation/api/api-stack.yaml
+
+      # --------------------------------------------------------
+      # Deploy API stack
+      # --------------------------------------------------------
+
+      - name: Deploy API Stack
+        run: |
+          aws cloudformation deploy \
+            --template-file cloudformation/api/api-stack.yaml \
+            --stack-name cloudmart-dev-api \
+            --parameter-overrides \
+              Environment=${ENVIRONMENT} \
+              ProductLambdaRoleArn="${{ vars.PRODUCT_LAMBDA_ROLE_ARN }}" \
+              LambdaCodeBucket="${{ vars.LAMBDA_CODE_BUCKET }}" \
+              ProductCodeKey="cloudmart/${ENVIRONMENT}/product/${GITHUB_SHA}.zip" \
+              LambdaSubnetIds="${{ vars.LAMBDA_SUBNET_IDS }}" \
+              LambdaSecurityGroupId="${{ vars.LAMBDA_SECURITY_GROUP_ID }}" \
+              DBHostParameter="/cloudmart/${ENVIRONMENT}/db/host" \
+              DBPortParameter="/cloudmart/${ENVIRONMENT}/db/port" \
+              DBNameParameter="/cloudmart/${ENVIRONMENT}/db/name" \
+              DBUsernameParameter="/cloudmart/${ENVIRONMENT}/db/username" \
+              DBPasswordParameter="/cloudmart/${ENVIRONMENT}/db/password" \
+            --region ${AWS_REGION}
+
+      # --------------------------------------------------------
+      # Check API stack
+      # --------------------------------------------------------
+
+      - name: Check API Stack
+        run: |
+          aws cloudformation describe-stacks \
+            --stack-name cloudmart-dev-api \
+            --region ${AWS_REGION}
+
+      # --------------------------------------------------------
+      # Display API URL
+      # --------------------------------------------------------
+
+      - name: Display API URL
+        run: |
+          aws cloudformation describe-stacks \
+            --stack-name cloudmart-dev-api \
+            --region ${AWS_REGION} \
+            --query "Stacks[0].Outputs[?OutputKey=='ApiUrl'].OutputValue" \
+            --output text
