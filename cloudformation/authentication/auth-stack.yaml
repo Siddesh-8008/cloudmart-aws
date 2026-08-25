@@ -1,0 +1,227 @@
+AWSTemplateFormatVersion: '2010-09-09'
+
+Description: >
+  CloudMart Milestone 3 Authentication Stack.
+  Creates the Lambda Authorizer used by API Gateway.
+
+Parameters:
+
+  Environment:
+    Type: String
+    Default: dev
+    AllowedValues:
+      - dev
+      - prod
+
+  AuthorizerSubnetIds:
+    Type: CommaDelimitedList
+    Description: Private subnet IDs for the Lambda Authorizer
+
+  LambdaSecurityGroupId:
+    Type: AWS::EC2::SecurityGroup::Id
+    Description: Security group for the Lambda Authorizer
+
+  AuthTokenParameterName:
+    Type: String
+    Default: /cloudmart/dev/auth/token
+    Description: SSM SecureString containing the CloudMart authentication token
+
+
+Resources:
+
+  # ============================================================
+  # LAMBDA AUTHORIZE FUNCTION
+  # ============================================================
+
+  LambdaAuthorizer:
+    Type: AWS::Lambda::Function
+
+    Properties:
+      FunctionName: !Sub CloudMart-${Environment}-authorizer
+
+      Description: CloudMart Bearer Token Lambda Authorizer
+
+      Runtime: python3.13
+
+      Handler: index.handler
+
+      # Use the role created by the IAM stack
+      Role:
+        Fn::ImportValue: !Sub CloudMart-${Environment}-AuthorizerLambdaRoleArn
+
+      Timeout: 10
+
+      MemorySize: 128
+
+      VpcConfig:
+        SubnetIds: !Ref AuthorizerSubnetIds
+        SecurityGroupIds:
+          - !Ref LambdaSecurityGroupId
+
+      Environment:
+        Variables:
+          ENVIRONMENT: !Ref Environment
+          AUTH_TOKEN_PARAMETER: !Ref AuthTokenParameterName
+
+      Code:
+        ZipFile: |
+          import json
+          import os
+          import boto3
+
+          ssm = boto3.client("ssm")
+
+          PARAMETER_NAME = os.environ["AUTH_TOKEN_PARAMETER"]
+
+
+          def generate_policy(effect, principal_id, method_arn):
+              return {
+                  "principalId": principal_id,
+                  "policyDocument": {
+                      "Version": "2012-10-17",
+                      "Statement": [
+                          {
+                              "Action": "execute-api:Invoke",
+                              "Effect": effect,
+                              "Resource": method_arn
+                          }
+                      ]
+                  }
+              }
+
+
+          def handler(event, context):
+
+              method_arn = event.get("methodArn", "*")
+
+              authorization_token = event.get("authorizationToken")
+
+              # ------------------------------------------------
+              # Missing token
+              # ------------------------------------------------
+
+              if not authorization_token:
+                  print(json.dumps({
+                      "level": "WARN",
+                      "event": "token_validation",
+                      "result": "missing"
+                  }))
+
+                  raise Exception("Unauthorized")
+
+
+              # ------------------------------------------------
+              # Validate Bearer format
+              # ------------------------------------------------
+
+              if not authorization_token.startswith("Bearer "):
+                  print(json.dumps({
+                      "level": "WARN",
+                      "event": "token_validation",
+                      "result": "invalid_format"
+                  }))
+
+                  raise Exception("Unauthorized")
+
+
+              supplied_token = authorization_token[7:].strip()
+
+
+              if not supplied_token:
+                  print(json.dumps({
+                      "level": "WARN",
+                      "event": "token_validation",
+                      "result": "empty"
+                  }))
+
+                  raise Exception("Unauthorized")
+
+
+              # ------------------------------------------------
+              # Read expected token from SSM
+              # ------------------------------------------------
+
+              try:
+
+                  parameter = ssm.get_parameter(
+                      Name=PARAMETER_NAME,
+                      WithDecryption=True
+                  )
+
+                  expected_token = parameter["Parameter"]["Value"]
+
+              except Exception as error:
+
+                  print(json.dumps({
+                      "level": "ERROR",
+                      "event": "token_validation",
+                      "result": "configuration_error"
+                  }))
+
+                  raise Exception("Unauthorized")
+
+
+              # ------------------------------------------------
+              # Compare token
+              # ------------------------------------------------
+
+              if supplied_token != expected_token:
+
+                  print(json.dumps({
+                      "level": "WARN",
+                      "event": "token_validation",
+                      "result": "failure"
+                  }))
+
+                  raise Exception("Unauthorized")
+
+
+              # ------------------------------------------------
+              # Valid token
+              # ------------------------------------------------
+
+              print(json.dumps({
+                  "level": "INFO",
+                  "event": "token_validation",
+                  "result": "success"
+              }))
+
+
+              return generate_policy(
+                  "Allow",
+                  "cloudmart-authenticated-client",
+                  method_arn
+              )
+
+
+Outputs:
+
+  # ============================================================
+  # AUTHORIZE LAMBDA ARN
+  # ============================================================
+
+  AuthorizerLambdaArn:
+    Description: ARN of the CloudMart Lambda Authorizer
+    Value: !GetAtt LambdaAuthorizer.Arn
+    Export:
+      Name: !Sub CloudMart-${Environment}-AuthorizerLambdaArn
+
+
+  # ============================================================
+  # AUTHORIZE LAMBDA NAME
+  # ============================================================
+
+  AuthorizerLambdaName:
+    Description: Name of the CloudMart Lambda Authorizer
+    Value: !Ref LambdaAuthorizer
+    Export:
+      Name: !Sub CloudMart-${Environment}-AuthorizerLambdaName
+
+
+  # ============================================================
+  # AUTH TOKEN PARAMETER
+  # ============================================================
+
+  AuthTokenParameter:
+    Description: SSM parameter used by the Lambda Authorizer
+    Value: !Ref AuthTokenParameterName
