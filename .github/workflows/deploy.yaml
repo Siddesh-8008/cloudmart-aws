@@ -2,6 +2,11 @@ name: CloudMart Infrastructure
 
 on:
   workflow_dispatch:
+    inputs:
+      operations_cidr:
+        description: "Public IP/CIDR allowed to access the CloudMart dashboard"
+        required: true
+        type: string
 
 permissions:
   id-token: write
@@ -30,16 +35,6 @@ jobs:
           aws sts get-caller-identity
 
 
-      - name: Check required variables
-        run: |
-          if [ -z "${{ vars.OPERATIONS_CIDR }}" ]; then
-            echo "ERROR: GitHub repository variable OPERATIONS_CIDR is not configured."
-            exit 1
-          fi
-
-          echo "Operations CIDR configured."
-
-
       - name: Validate CloudFormation template
         run: |
           aws cloudformation validate-template \
@@ -54,7 +49,7 @@ jobs:
             --stack-name cloudmart-dev-network \
             --parameter-overrides \
               Environment=dev \
-              OperationsCidr=${{ vars.OPERATIONS_CIDR }} \
+              OperationsCidr="${{ inputs.operations_cidr }}" \
             --region ap-south-1
 
 
