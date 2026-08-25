@@ -3,8 +3,9 @@ name: CloudMart Infrastructure
 on:
   workflow_dispatch:
     inputs:
+
       operations_cidr:
-        description: "Public IP/CIDR allowed to access the CloudMart dashboard"
+        description: Public IP/CIDR allowed to access the CloudMart dashboard
         required: true
         type: string
 
@@ -12,9 +13,15 @@ permissions:
   id-token: write
   contents: read
 
+
 jobs:
 
+  # ============================================================
+  # JOB 1 - NETWORK STACK
+  # ============================================================
+
   deploy-network:
+    name: Deploy Network Stack
     runs-on: ubuntu-latest
 
     steps:
@@ -35,7 +42,7 @@ jobs:
           aws sts get-caller-identity
 
 
-      - name: Validate CloudFormation template
+      - name: Validate Network CloudFormation template
         run: |
           aws cloudformation validate-template \
             --template-body file://cloudformation/network/network-stack.yaml \
@@ -53,8 +60,116 @@ jobs:
             --region ap-south-1
 
 
-      - name: Check Stack Status
+      - name: Check Network Stack Status
         run: |
           aws cloudformation describe-stacks \
             --stack-name cloudmart-dev-network \
+            --region ap-south-1
+
+
+  # ============================================================
+  # JOB 2 - DATA STACK
+  # ============================================================
+
+  deploy-data:
+    name: Deploy Data Stack
+    runs-on: ubuntu-latest
+
+    needs:
+      - deploy-network
+
+    steps:
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ap-south-1
+
+
+      - name: Verify AWS access
+        run: |
+          aws sts get-caller-identity
+
+
+      - name: Validate Data CloudFormation template
+        run: |
+          aws cloudformation validate-template \
+            --template-body file://cloudformation/data/data-stack.yaml \
+            --region ap-south-1
+
+
+      - name: Deploy Data Stack
+        run: |
+          aws cloudformation deploy \
+            --template-file cloudformation/data/data-stack.yaml \
+            --stack-name cloudmart-dev-data \
+            --parameter-overrides \
+              Environment=dev \
+              DBName=cloudmart \
+              DBUsername=cloudmartadmin \
+              DBInstanceClass=db.t3.micro \
+              AllocatedStorage=20 \
+            --region ap-south-1
+
+
+      - name: Get RDS Master Secret ARN
+        id: rds-secret
+        run: |
+
+          SECRET_ARN=$(aws cloudformation describe-stacks \
+            --stack-name cloudmart-dev-data \
+            --region ap-south-1 \
+            --query "Stacks[0].Outputs[?OutputKey=='DBMasterUserSecretArn'].OutputValue" \
+            --output text)
+
+          echo "SECRET_ARN=$SECRET_ARN" >> "$GITHUB_OUTPUT"
+
+
+      - name: Store database username in SSM SecureString
+        env:
+          SECRET_ARN: ${{ steps.rds-secret.outputs.SECRET_ARN }}
+        run: |
+
+          DB_USERNAME=$(aws secretsmanager get-secret-value \
+            --secret-id "$SECRET_ARN" \
+            --region ap-south-1 \
+            --query SecretString \
+            --output text | jq -r '.username')
+
+          aws ssm put-parameter \
+            --name "/cloudmart/dev/db/username" \
+            --type SecureString \
+            --value "$DB_USERNAME" \
+            --overwrite \
+            --region ap-south-1
+
+
+      - name: Store database password in SSM SecureString
+        env:
+          SECRET_ARN: ${{ steps.rds-secret.outputs.SECRET_ARN }}
+        run: |
+
+          DB_PASSWORD=$(aws secretsmanager get-secret-value \
+            --secret-id "$SECRET_ARN" \
+            --region ap-south-1 \
+            --query SecretString \
+            --output text | jq -r '.password')
+
+          aws ssm put-parameter \
+            --name "/cloudmart/dev/db/password" \
+            --type SecureString \
+            --value "$DB_PASSWORD" \
+            --overwrite \
+            --region ap-south-1
+
+
+      - name: Check Data Stack Status
+        run: |
+          aws cloudformation describe-stacks \
+            --stack-name cloudmart-dev-data \
             --region ap-south-1

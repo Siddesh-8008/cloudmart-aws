@@ -1,1 +1,221 @@
+AWSTemplateFormatVersion: '2010-09-09'
 
+Description: CloudMart Data Stack - RDS MySQL
+
+Parameters:
+
+  Environment:
+    Type: String
+    Default: dev
+    AllowedValues:
+      - dev
+      - prod
+
+  DBName:
+    Type: String
+    Default: cloudmart
+    AllowedPattern: '^[a-zA-Z][a-zA-Z0-9_]*$'
+
+  DBUsername:
+    Type: String
+    Default: cloudmartadmin
+    NoEcho: true
+    AllowedPattern: '^[a-zA-Z][a-zA-Z0-9_]*$'
+
+  DBInstanceClass:
+    Type: String
+    Default: db.t3.micro
+
+  AllocatedStorage:
+    Type: Number
+    Default: 20
+    MinValue: 20
+
+
+Resources:
+
+  # ============================================================
+  # RDS SUBNET GROUP
+  # Uses BOTH private subnets created by Network Stack
+  # ============================================================
+
+  DBSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: !Sub CloudMart ${Environment} RDS private subnet group
+
+      SubnetIds:
+        - Fn::ImportValue:
+            Fn::Sub: CloudMart-${Environment}-PrivateSubnetAId
+
+        - Fn::ImportValue:
+            Fn::Sub: CloudMart-${Environment}-PrivateSubnetBId
+
+      Tags:
+        - Key: Name
+          Value: !Sub CloudMart-${Environment}-rds-subnet-group
+
+
+  # ============================================================
+  # RDS MYSQL
+  # ============================================================
+
+  RDSInstance:
+    Type: AWS::RDS::DBInstance
+
+    DeletionPolicy: Snapshot
+    UpdateReplacePolicy: Snapshot
+
+    Properties:
+
+      DBInstanceIdentifier:
+        !Sub CloudMart-${Environment}-mysql
+
+      Engine: mysql
+
+      DBName:
+        !Ref DBName
+
+      MasterUsername:
+        !Ref DBUsername
+
+      ManageMasterUserPassword: true
+
+      DBInstanceClass:
+        !Ref DBInstanceClass
+
+      AllocatedStorage:
+        !Ref AllocatedStorage
+
+      StorageType: gp3
+
+      StorageEncrypted: true
+
+      PubliclyAccessible: false
+
+      MultiAZ: false
+
+      BackupRetentionPeriod: 7
+
+      AutoMinorVersionUpgrade: true
+
+      CopyTagsToSnapshot: true
+
+      DBSubnetGroupName:
+        !Ref DBSubnetGroup
+
+      VPCSecurityGroups:
+        - Fn::ImportValue:
+            Fn::Sub: CloudMart-${Environment}-RDSSecurityGroupId
+
+      Tags:
+
+        - Key: Name
+          Value: !Sub CloudMart-${Environment}-mysql
+
+        - Key: Environment
+          Value: !Ref Environment
+
+
+  # ============================================================
+  # SSM PARAMETERS
+  # ============================================================
+
+  DBHostParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name:
+        !Sub /cloudmart/${Environment}/db/host
+
+      Type: String
+
+      Value:
+        !GetAtt RDSInstance.Endpoint.Address
+
+      Description: CloudMart RDS MySQL endpoint
+
+
+  DBPortParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name:
+        !Sub /cloudmart/${Environment}/db/port
+
+      Type: String
+
+      Value:
+        !GetAtt RDSInstance.Endpoint.Port
+
+      Description: CloudMart RDS MySQL port
+
+
+  DBNameParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name:
+        !Sub /cloudmart/${Environment}/db/name
+
+      Type: String
+
+      Value:
+        !Ref DBName
+
+      Description: CloudMart database name
+
+
+Outputs:
+
+  # ============================================================
+  # RDS OUTPUTS
+  # ============================================================
+
+  DBInstanceIdentifier:
+    Description: RDS instance identifier
+    Value:
+      !Ref RDSInstance
+
+
+  DBEndpoint:
+    Description: RDS MySQL endpoint
+    Value:
+      !GetAtt RDSInstance.Endpoint.Address
+
+    Export:
+      Name:
+        !Sub CloudMart-${Environment}-RDS-Endpoint
+
+
+  DBPort:
+    Description: RDS MySQL port
+    Value:
+      !GetAtt RDSInstance.Endpoint.Port
+
+    Export:
+      Name:
+        !Sub CloudMart-${Environment}-RDS-Port
+
+
+  DBName:
+    Description: RDS database name
+    Value:
+      !Ref DBName
+
+    Export:
+      Name:
+        !Sub CloudMart-${Environment}-RDS-DBName
+
+
+  DBMasterUserSecretArn:
+    Description: Secrets Manager secret containing RDS master credentials
+    Value:
+      !GetAtt RDSInstance.MasterUserSecret.SecretArn
+
+    Export:
+      Name:
+        !Sub CloudMart-${Environment}-RDS-MasterSecretArn
+
+
+  DBSubnetGroupName:
+    Description: RDS DB subnet group
+    Value:
+      !Ref DBSubnetGroup
