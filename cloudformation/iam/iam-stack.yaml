@@ -1,3 +1,4 @@
+```yaml
 AWSTemplateFormatVersion: '2010-09-09'
 
 Description: >
@@ -38,7 +39,7 @@ Resources:
                 - lambda.amazonaws.com
             Action:
               - sts:AssumeRole
-       
+
       Policies:
 
         # --------------------------------------------------------
@@ -72,6 +73,23 @@ Resources:
                   - ssm:GetParameter
                 Resource:
                   - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/auth/token
+
+        # --------------------------------------------------------
+        # VPC network interface permissions
+        # --------------------------------------------------------
+
+        - PolicyName: AuthorizerVPCAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+
+              - Effect: Allow
+                Action:
+                  - ec2:CreateNetworkInterface
+                  - ec2:DescribeNetworkInterfaces
+                  - ec2:DescribeSubnets
+                  - ec2:DeleteNetworkInterface
+                Resource: "*"
 
 
   # ============================================================
@@ -115,7 +133,6 @@ Resources:
                 Resource:
                   - !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/CloudMart-${Environment}-product:*
 
-
         # --------------------------------------------------------
         # Read database parameters from SSM
         # --------------------------------------------------------
@@ -155,7 +172,7 @@ Outputs:
 
 
   AuthorizerLambdaRoleName:
-    Description: Name of the Lambda Authorizer execution role
+    Description: Name of the Authorizer Lambda execution role
     Value: !Ref AuthorizerLambdaRole
     Export:
       Name: !Sub CloudMart-${Environment}-AuthorizerLambdaRoleName
@@ -177,3 +194,4 @@ Outputs:
     Value: !Ref ProductLambdaRole
     Export:
       Name: !Sub CloudMart-${Environment}-ProductLambdaRoleName
+```
