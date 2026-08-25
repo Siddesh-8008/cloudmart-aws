@@ -17,7 +17,7 @@ jobs:
   # NETWORK
   # ============================================================
 
-  deploy-network:
+    deploy-network:
     name: Deploy Network Stack
     runs-on: ubuntu-latest
 
@@ -42,20 +42,21 @@ jobs:
             --template-body file://cloudformation/network/network-stack.yaml
 
       - name: Get GitHub Actions public IP
-  id: public-ip
-  run: |
-    IP=$(curl -s https://checkip.amazonaws.com)
-    echo "ip=${IP}/32" >> "$GITHUB_OUTPUT"
+        id: public-ip
+        run: |
+          IP=$(curl -s https://checkip.amazonaws.com)
+          echo "ip=${IP}/32" >> "$GITHUB_OUTPUT"
+          echo "GitHub Actions public IP detected."
 
-     - name: Deploy Network Stack
-            run: |
-               aws cloudformation deploy \
-                 --template-file cloudformation/network/network-stack.yaml \
-                  --stack-name cloudmart-dev-network \
-                  --parameter-overrides \
-                    Environment=dev \
-                    OperationsCidr="${{ steps.public-ip.outputs.ip }}" \
-                  --region ap-south-1
+      - name: Deploy Network Stack
+        run: |
+          aws cloudformation deploy \
+            --template-file cloudformation/network/network-stack.yaml \
+            --stack-name cloudmart-dev-network \
+            --parameter-overrides \
+              Environment=dev \
+              OperationsCidr="${{ steps.public-ip.outputs.ip }}" \
+            --region ${AWS_REGION}
 
       - name: Check Network Stack
         run: |
