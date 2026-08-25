@@ -69,7 +69,7 @@ jobs:
   # DATA
   # ============================================================
 
-  deploy-data:
+    deploy-data:
     name: Deploy Data Stack
     runs-on: ubuntu-latest
     needs: deploy-network
