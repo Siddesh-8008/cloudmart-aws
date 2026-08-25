@@ -100,7 +100,7 @@ jobs:
 
           aws ssm get-parameter \
             --name "/cloudmart/${ENVIRONMENT}/auth/token" \
-            --with-decryption false \
+            --with-decryption \
             --region "${AWS_REGION}" \
             --query "Parameter.Name" \
             --output text
