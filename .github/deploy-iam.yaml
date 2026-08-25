@@ -1,0 +1,109 @@
+name: CloudMart IAM Infrastructure
+
+on:
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: ap-south-1
+  ENVIRONMENT: dev
+
+jobs:
+
+  # ============================================================
+  # IAM STACK
+  # ============================================================
+
+  deploy-iam:
+    name: Deploy IAM Stack
+    runs-on: ubuntu-latest
+
+    steps:
+
+      # --------------------------------------------------------
+      # Checkout
+      # --------------------------------------------------------
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+
+      # --------------------------------------------------------
+      # Configure AWS credentials
+      # --------------------------------------------------------
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+
+      # --------------------------------------------------------
+      # Verify AWS access
+      # --------------------------------------------------------
+
+      - name: Verify AWS access
+        run: |
+          aws sts get-caller-identity
+
+
+      # --------------------------------------------------------
+      # Validate IAM CloudFormation template
+      # --------------------------------------------------------
+
+      - name: Validate IAM CloudFormation
+        run: |
+          aws cloudformation validate-template \
+            --template-body file://cloudformation/iam/iam-stack.yaml \
+            --region ${AWS_REGION}
+
+
+      # --------------------------------------------------------
+      # Deploy IAM Stack
+      # --------------------------------------------------------
+
+      - name: Deploy IAM Stack
+        run: |
+          aws cloudformation deploy \
+            --template-file cloudformation/iam/iam-stack.yaml \
+            --stack-name cloudmart-dev-iam \
+            --parameter-overrides \
+              Environment=${ENVIRONMENT} \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --region ${AWS_REGION}
+
+
+      # --------------------------------------------------------
+      # Check IAM Stack
+      # --------------------------------------------------------
+
+      - name: Check IAM Stack
+        run: |
+          aws cloudformation describe-stacks \
+            --stack-name cloudmart-dev-iam \
+            --region ${AWS_REGION}
+
+
+      # --------------------------------------------------------
+      # Display IAM Role ARNs
+      # --------------------------------------------------------
+
+      - name: Display IAM Role ARNs
+        run: |
+          echo "Authorizer Lambda Role:"
+          aws cloudformation describe-stacks \
+            --stack-name cloudmart-dev-iam \
+            --region ${AWS_REGION} \
+            --query "Stacks[0].Outputs[?OutputKey=='AuthorizerLambdaRoleArn'].OutputValue" \
+            --output text
+
+          echo "Product Lambda Role:"
+          aws cloudformation describe-stacks \
+            --stack-name cloudmart-dev-iam \
+            --region ${AWS_REGION} \
+            --query "Stacks[0].Outputs[?OutputKey=='ProductLambdaRoleArn'].OutputValue" \
+            --output text

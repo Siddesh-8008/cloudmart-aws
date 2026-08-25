@@ -1,1 +1,179 @@
+AWSTemplateFormatVersion: '2010-09-09'
 
+Description: >
+  CloudMart IAM Stack for Milestone 3.
+  Creates least-privilege execution roles for
+  Lambda Authorizer and Product Lambda.
+
+Parameters:
+
+  Environment:
+    Type: String
+    Default: dev
+    AllowedValues:
+      - dev
+      - prod
+
+
+Resources:
+
+  # ============================================================
+  # AUTHORIZE LAMBDA ROLE
+  # ============================================================
+
+  AuthorizerLambdaRole:
+    Type: AWS::IAM::Role
+
+    Properties:
+      RoleName: !Sub CloudMart-${Environment}-authorizer-lambda-role
+
+      Description: IAM execution role for CloudMart Lambda Authorizer
+
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+
+      Policies:
+
+        # --------------------------------------------------------
+        # CloudWatch Logs
+        # --------------------------------------------------------
+
+        - PolicyName: AuthorizerCloudWatchLogs
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource:
+                  - !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/CloudMart-${Environment}-authorizer:*
+
+        # --------------------------------------------------------
+        # Read authentication token from SSM
+        # --------------------------------------------------------
+
+        - PolicyName: AuthorizerReadAuthToken
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+
+              - Effect: Allow
+                Action:
+                  - ssm:GetParameter
+                Resource:
+                  - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/auth/token
+
+
+  # ============================================================
+  # PRODUCT LAMBDA ROLE
+  # ============================================================
+
+  ProductLambdaRole:
+    Type: AWS::IAM::Role
+
+    Properties:
+      RoleName: !Sub CloudMart-${Environment}-product-lambda-role
+
+      Description: IAM execution role for CloudMart Product Lambda
+
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+
+      Policies:
+
+        # --------------------------------------------------------
+        # CloudWatch Logs
+        # --------------------------------------------------------
+
+        - PolicyName: ProductCloudWatchLogs
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource:
+                  - !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/CloudMart-${Environment}-product:*
+
+
+        # --------------------------------------------------------
+        # Read database parameters from SSM
+        # --------------------------------------------------------
+
+        - PolicyName: ProductReadDatabaseParameters
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+
+              - Effect: Allow
+                Action:
+                  - ssm:GetParameter
+                Resource:
+
+                  - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/host
+
+                  - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/port
+
+                  - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/name
+
+                  - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/username
+
+                  - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/password
+
+
+Outputs:
+
+  # ============================================================
+  # AUTHORIZE ROLE OUTPUT
+  # ============================================================
+
+  AuthorizerLambdaRoleArn:
+    Description: ARN of the Lambda Authorizer execution role
+    Value: !GetAtt AuthorizerLambdaRole.Arn
+    Export:
+      Name: !Sub CloudMart-${Environment}-AuthorizerLambdaRoleArn
+
+
+  AuthorizerLambdaRoleName:
+    Description: Name of the Lambda Authorizer execution role
+    Value: !Ref AuthorizerLambdaRole
+    Export:
+      Name: !Sub CloudMart-${Environment}-AuthorizerLambdaRoleName
+
+
+  # ============================================================
+  # PRODUCT ROLE OUTPUT
+  # ============================================================
+
+  ProductLambdaRoleArn:
+    Description: ARN of the Product Lambda execution role
+    Value: !GetAtt ProductLambdaRole.Arn
+    Export:
+      Name: !Sub CloudMart-${Environment}-ProductLambdaRoleArn
+
+
+  ProductLambdaRoleName:
+    Description: Name of the Product Lambda execution role
+    Value: !Ref ProductLambdaRole
+    Export:
+      Name: !Sub CloudMart-${Environment}-ProductLambdaRoleName
