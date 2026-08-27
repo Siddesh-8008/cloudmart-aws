@@ -3,7 +3,7 @@ name: Deploy API Stack
 on:
   push:
     branches:
-      - main
+      - milestone-3
     paths:
       - "infrastructure/api-stack.yml"
       - "lambda/product/**"
