@@ -1,0 +1,151 @@
+name: Deploy API Stack
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "infrastructure/api-stack.yml"
+      - "lambda/product/**"
+      - ".github/workflows/deploy-api.yml"
+
+permissions:
+  contents: read
+
+jobs:
+
+  deploy-api:
+    runs-on: ubuntu-latest
+
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      ENVIRONMENT: dev
+
+      API_STACK_NAME: cloudmart-dev-api
+
+      LAMBDA_BUCKET: ${{ vars.LAMBDA_BUCKET }}
+
+      PRIVATE_SUBNET_IDS: ${{ vars.PRIVATE_SUBNET_IDS }}
+      LAMBDA_SECURITY_GROUP_ID: ${{ vars.LAMBDA_SECURITY_GROUP_ID }}
+
+      PRODUCT_LAMBDA_ROLE_ARN: ${{ vars.PRODUCT_LAMBDA_ROLE_ARN }}
+      AUTHORIZER_LAMBDA_ARN: ${{ vars.AUTHORIZER_LAMBDA_ARN }}
+
+      DB_HOST_PARAMETER: /cloudmart/dev/db/host
+      DB_NAME_PARAMETER: /cloudmart/dev/db/name
+      DB_USERNAME_PARAMETER: /cloudmart/dev/db/username
+      DB_PASSWORD_PARAMETER: /cloudmart/dev/db/password
+
+    steps:
+
+      # --------------------------------------------------------
+      # Checkout
+      # --------------------------------------------------------
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+
+      # --------------------------------------------------------
+      # Configure AWS
+      # --------------------------------------------------------
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+
+
+      # --------------------------------------------------------
+      # Setup Python
+      # --------------------------------------------------------
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+
+      # --------------------------------------------------------
+      # Install Lambda dependencies
+      # --------------------------------------------------------
+
+      - name: Install Product Lambda dependencies
+        run: |
+          rm -rf build
+          mkdir -p build
+
+          pip install pymysql -t build/
+
+          cp lambda/product/lambda_function.py build/
+
+
+      # --------------------------------------------------------
+      # Package Product Lambda
+      # --------------------------------------------------------
+
+      - name: Package Product Lambda
+        run: |
+          cd build
+          zip -r ../product-lambda.zip .
+          cd ..
+
+
+      # --------------------------------------------------------
+      # Upload Lambda package
+      # --------------------------------------------------------
+
+      - name: Upload Product Lambda package
+        run: |
+          aws s3 cp \
+            product-lambda.zip \
+            s3://${LAMBDA_BUCKET}/cloudmart/${ENVIRONMENT}/product/product-lambda.zip
+
+
+      # --------------------------------------------------------
+      # Validate CloudFormation
+      # --------------------------------------------------------
+
+      - name: Validate API CloudFormation template
+        run: |
+          aws cloudformation validate-template \
+            --template-body file://infrastructure/api-stack.yml
+
+
+      # --------------------------------------------------------
+      # Deploy API stack
+      # --------------------------------------------------------
+
+      - name: Deploy API stack
+        run: |
+          aws cloudformation deploy \
+            --stack-name "${API_STACK_NAME}" \
+            --template-file infrastructure/api-stack.yml \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --parameter-overrides \
+              Environment="${ENVIRONMENT}" \
+              PrivateSubnetIds="${PRIVATE_SUBNET_IDS}" \
+              LambdaSecurityGroupId="${LAMBDA_SECURITY_GROUP_ID}" \
+              ProductLambdaExecutionRoleArn="${PRODUCT_LAMBDA_ROLE_ARN}" \
+              AuthorizerLambdaArn="${AUTHORIZER_LAMBDA_ARN}" \
+              LambdaCodeBucket="${LAMBDA_BUCKET}" \
+              ProductLambdaCodeKey="cloudmart/${ENVIRONMENT}/product/product-lambda.zip" \
+              DBHostParameter="${DB_HOST_PARAMETER}" \
+              DBNameParameter="${DB_NAME_PARAMETER}" \
+              DBUsernameParameter="${DB_USERNAME_PARAMETER}" \
+              DBPasswordParameter="${DB_PASSWORD_PARAMETER}" \
+              AuthorizerCacheTTL="300" \
+            --no-fail-on-empty-changeset
+
+
+      # --------------------------------------------------------
+      # Show stack outputs
+      # --------------------------------------------------------
+
+      - name: Show API stack outputs
+        run: |
+          aws cloudformation describe-stacks \
+            --stack-name "${API_STACK_NAME}" \
+            --query 'Stacks[0].Outputs'
