@@ -1,0 +1,94 @@
+AWSTemplateFormatVersion: '2010-09-09'
+
+Description: >
+  CloudMart Lambda Artifact S3 Bucket.
+  Stores Lambda deployment ZIP files created by GitHub Actions.
+
+Parameters:
+
+  Environment:
+    Type: String
+    Default: dev
+    AllowedValues:
+      - dev
+      - prod
+
+Resources:
+
+  # ============================================================
+  # LAMBDA ARTIFACT BUCKET
+  # ============================================================
+
+  LambdaArtifactBucket:
+    Type: AWS::S3::Bucket
+
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+
+    Properties:
+
+      BucketName:
+        !Sub cloudmart-${Environment}-lambda-artifacts-${AWS::AccountId}
+
+      # --------------------------------------------------------
+      # Block all public access
+      # --------------------------------------------------------
+
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+      # --------------------------------------------------------
+      # Enable versioning
+      # --------------------------------------------------------
+
+      VersioningConfiguration:
+        Status: Enabled
+
+      # --------------------------------------------------------
+      # Server-side encryption
+      # --------------------------------------------------------
+
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+
+      # --------------------------------------------------------
+      # Tags
+      # --------------------------------------------------------
+
+      Tags:
+        - Key: Name
+          Value: !Sub CloudMart-${Environment}-lambda-artifacts
+
+        - Key: Environment
+          Value: !Ref Environment
+
+
+Outputs:
+
+  # ============================================================
+  # BUCKET NAME
+  # ============================================================
+
+  LambdaArtifactBucketName:
+    Description: S3 bucket used to store Lambda deployment artifacts
+    Value: !Ref LambdaArtifactBucket
+
+    Export:
+      Name: !Sub CloudMart-${Environment}-LambdaArtifactBucketName
+
+
+  # ============================================================
+  # BUCKET ARN
+  # ============================================================
+
+  LambdaArtifactBucketArn:
+    Description: ARN of the Lambda artifact S3 bucket
+    Value: !GetAtt LambdaArtifactBucket.Arn
+
+    Export:
+      Name: !Sub CloudMart-${Environment}-LambdaArtifactBucketArn
