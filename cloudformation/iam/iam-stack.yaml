@@ -1,10 +1,9 @@
-
 AWSTemplateFormatVersion: '2010-09-09'
 
 Description: >
   CloudMart IAM Stack for Milestone 3.
   Creates least-privilege execution roles for
-  Lambda Authorizer and Product Lambda.
+  Lambda Authorizer, Product Lambda, and Inventory Alert Lambda.
 
 Parameters:
 
@@ -26,19 +25,25 @@ Resources:
     Type: AWS::IAM::Role
 
     Properties:
+
       RoleName: !Sub CloudMart-${Environment}-authorizer-lambda-role
 
       Description: IAM execution role for CloudMart Lambda Authorizer
 
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
+
         Statement:
+
           - Effect: Allow
+
             Principal:
               Service:
                 - lambda.amazonaws.com
+
             Action:
               - sts:AssumeRole
+
 
       Policies:
 
@@ -47,49 +52,75 @@ Resources:
         # --------------------------------------------------------
 
         - PolicyName: AuthorizerCloudWatchLogs
+
           PolicyDocument:
             Version: '2012-10-17'
+
             Statement:
 
+              # Lambda needs permission to create its log group.
+
               - Effect: Allow
+
                 Action:
                   - logs:CreateLogGroup
+
+                Resource: "*"
+
+
+              # Restrict log stream and log event access
+              # to the Authorizer Lambda log group.
+
+              - Effect: Allow
+
+                Action:
                   - logs:CreateLogStream
                   - logs:PutLogEvents
+
                 Resource:
                   - !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/CloudMart-${Environment}-authorizer:*
+
 
         # --------------------------------------------------------
         # Read authentication token from SSM
         # --------------------------------------------------------
 
         - PolicyName: AuthorizerReadAuthToken
+
           PolicyDocument:
             Version: '2012-10-17'
+
             Statement:
 
               - Effect: Allow
+
                 Action:
                   - ssm:GetParameter
+
                 Resource:
                   - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/auth/token
+
 
         # --------------------------------------------------------
         # VPC network interface permissions
         # --------------------------------------------------------
 
         - PolicyName: AuthorizerVPCAccess
+
           PolicyDocument:
             Version: '2012-10-17'
+
             Statement:
 
               - Effect: Allow
+
                 Action:
                   - ec2:CreateNetworkInterface
                   - ec2:DescribeNetworkInterfaces
-                  - ec2:DescribeSubnets
                   - ec2:DeleteNetworkInterface
+
                 Resource: "*"
+
 
 
   # ============================================================
@@ -100,19 +131,25 @@ Resources:
     Type: AWS::IAM::Role
 
     Properties:
+
       RoleName: !Sub CloudMart-${Environment}-product-lambda-role
 
       Description: IAM execution role for CloudMart Product Lambda
 
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
+
         Statement:
+
           - Effect: Allow
+
             Principal:
               Service:
                 - lambda.amazonaws.com
+
             Action:
               - sts:AssumeRole
+
 
       Policies:
 
@@ -121,77 +158,269 @@ Resources:
         # --------------------------------------------------------
 
         - PolicyName: ProductCloudWatchLogs
+
           PolicyDocument:
             Version: '2012-10-17'
+
             Statement:
 
               - Effect: Allow
+
                 Action:
                   - logs:CreateLogGroup
+
+                Resource: "*"
+
+
+              - Effect: Allow
+
+                Action:
                   - logs:CreateLogStream
                   - logs:PutLogEvents
+
                 Resource:
                   - !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/CloudMart-${Environment}-product:*
+
 
         # --------------------------------------------------------
         # Read database parameters from SSM
         # --------------------------------------------------------
 
         - PolicyName: ProductReadDatabaseParameters
+
           PolicyDocument:
             Version: '2012-10-17'
+
             Statement:
 
               - Effect: Allow
+
                 Action:
                   - ssm:GetParameter
+
                 Resource:
 
+                  # RDS HOST
                   - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/host
 
+                  # RDS PORT
                   - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/port
 
+                  # DATABASE NAME
                   - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/name
 
+                  # DATABASE USERNAME
                   - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/username
 
+                  # DATABASE PASSWORD
                   - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/password
+
+
+        # --------------------------------------------------------
+        # VPC network interface permissions
+        # --------------------------------------------------------
+
+        - PolicyName: ProductVPCAccess
+
+          PolicyDocument:
+            Version: '2012-10-17'
+
+            Statement:
+
+              - Effect: Allow
+
+                Action:
+                  - ec2:CreateNetworkInterface
+                  - ec2:DescribeNetworkInterfaces
+                  - ec2:DeleteNetworkInterface
+
+                Resource: "*"
+
+
+        # --------------------------------------------------------
+        # Publish inventory change events to EventBridge
+        # --------------------------------------------------------
+
+        - PolicyName: ProductPublishInventoryEvents
+
+          PolicyDocument:
+            Version: '2012-10-17'
+
+            Statement:
+
+              - Effect: Allow
+
+                Action:
+                  - events:PutEvents
+
+                Resource:
+                  - !Sub arn:${AWS::Partition}:events:${AWS::Region}:${AWS::AccountId}:event-bus/default
+
+
+
+  # ============================================================
+  # INVENTORY ALERT LAMBDA ROLE
+  # ============================================================
+  #
+  # This Lambda will be invoked by EventBridge when an inventory
+  # change event matches the CloudMart inventory event pattern.
+  #
+  # It publishes low-stock alerts to SNS.
+  #
+  # It does NOT need VPC access because it does not connect to RDS.
+  # ============================================================
+
+  InventoryAlertLambdaRole:
+    Type: AWS::IAM::Role
+
+    Properties:
+
+      RoleName: !Sub CloudMart-${Environment}-inventory-alert-lambda-role
+
+      Description: IAM execution role for CloudMart Inventory Alert Lambda
+
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+
+        Statement:
+
+          - Effect: Allow
+
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+
+            Action:
+              - sts:AssumeRole
+
+
+      Policies:
+
+        # --------------------------------------------------------
+        # CloudWatch Logs
+        # --------------------------------------------------------
+
+        - PolicyName: InventoryAlertCloudWatchLogs
+
+          PolicyDocument:
+            Version: '2012-10-17'
+
+            Statement:
+
+              - Effect: Allow
+
+                Action:
+                  - logs:CreateLogGroup
+
+                Resource: "*"
+
+
+              - Effect: Allow
+
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+
+                Resource:
+                  - !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/CloudMart-${Environment}-inventory-alert:*
+
+
+        # --------------------------------------------------------
+        # Publish low-stock alerts to SNS
+        # --------------------------------------------------------
+
+        - PolicyName: InventoryAlertPublishSNS
+
+          PolicyDocument:
+            Version: '2012-10-17'
+
+            Statement:
+
+              - Effect: Allow
+
+                Action:
+                  - sns:Publish
+
+                Resource:
+                  - !Sub arn:${AWS::Partition}:sns:${AWS::Region}:${AWS::AccountId}:CloudMart-${Environment}-low-stock-alert
+
 
 
 Outputs:
 
   # ============================================================
-  # AUTHORIZE ROLE OUTPUT
+  # AUTHORIZE ROLE OUTPUTS
   # ============================================================
 
   AuthorizerLambdaRoleArn:
-    Description: ARN of the Lambda Authorizer execution role
-    Value: !GetAtt AuthorizerLambdaRole.Arn
+
+    Description: ARN of the CloudMart Authorizer Lambda execution role
+
+    Value:
+      !GetAtt AuthorizerLambdaRole.Arn
+
     Export:
       Name: !Sub CloudMart-${Environment}-AuthorizerLambdaRoleArn
 
 
   AuthorizerLambdaRoleName:
-    Description: Name of the Authorizer Lambda execution role
-    Value: !Ref AuthorizerLambdaRole
+
+    Description: Name of the CloudMart Authorizer Lambda execution role
+
+    Value:
+      !Ref AuthorizerLambdaRole
+
     Export:
       Name: !Sub CloudMart-${Environment}-AuthorizerLambdaRoleName
 
 
   # ============================================================
-  # PRODUCT ROLE OUTPUT
+  # PRODUCT ROLE OUTPUTS
   # ============================================================
 
   ProductLambdaRoleArn:
-    Description: ARN of the Product Lambda execution role
-    Value: !GetAtt ProductLambdaRole.Arn
+
+    Description: ARN of the CloudMart Product Lambda execution role
+
+    Value:
+      !GetAtt ProductLambdaRole.Arn
+
     Export:
       Name: !Sub CloudMart-${Environment}-ProductLambdaRoleArn
 
 
   ProductLambdaRoleName:
-    Description: Name of the Product Lambda execution role
-    Value: !Ref ProductLambdaRole
+
+    Description: Name of the CloudMart Product Lambda execution role
+
+    Value:
+      !Ref ProductLambdaRole
+
     Export:
       Name: !Sub CloudMart-${Environment}-ProductLambdaRoleName
 
+
+  # ============================================================
+  # INVENTORY ALERT ROLE OUTPUTS
+  # ============================================================
+
+  InventoryAlertLambdaRoleArn:
+
+    Description: ARN of the CloudMart Inventory Alert Lambda execution role
+
+    Value:
+      !GetAtt InventoryAlertLambdaRole.Arn
+
+    Export:
+      Name: !Sub CloudMart-${Environment}-InventoryAlertLambdaRoleArn
+
+
+  InventoryAlertLambdaRoleName:
+
+    Description: Name of the CloudMart Inventory Alert Lambda execution role
+
+    Value:
+      !Ref InventoryAlertLambdaRole
+
+    Export:
+      Name: !Sub CloudMart-${Environment}-InventoryAlertLambdaRoleName

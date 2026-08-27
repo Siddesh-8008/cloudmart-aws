@@ -18,13 +18,15 @@ jobs:
   # ============================================================
 
   deploy-iam:
+
     name: Deploy IAM Stack
+
     runs-on: ubuntu-latest
 
     steps:
 
       # --------------------------------------------------------
-      # Checkout
+      # Checkout repository
       # --------------------------------------------------------
 
       - name: Checkout repository
@@ -37,6 +39,7 @@ jobs:
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
+
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
@@ -52,7 +55,7 @@ jobs:
 
 
       # --------------------------------------------------------
-      # Validate IAM CloudFormation template
+      # Validate CloudFormation template
       # --------------------------------------------------------
 
       - name: Validate IAM CloudFormation
@@ -78,14 +81,16 @@ jobs:
 
 
       # --------------------------------------------------------
-      # Check IAM Stack
+      # Verify CloudFormation Stack
       # --------------------------------------------------------
 
       - name: Check IAM Stack
         run: |
           aws cloudformation describe-stacks \
             --stack-name cloudmart-dev-iam \
-            --region ${AWS_REGION}
+            --region ${AWS_REGION} \
+            --query "Stacks[0].[StackName,StackStatus]" \
+            --output table
 
 
       # --------------------------------------------------------
@@ -94,16 +99,35 @@ jobs:
 
       - name: Display IAM Role ARNs
         run: |
+
+          echo "=========================================="
           echo "Authorizer Lambda Role:"
+          echo "=========================================="
+
           aws cloudformation describe-stacks \
             --stack-name cloudmart-dev-iam \
             --region ${AWS_REGION} \
             --query "Stacks[0].Outputs[?OutputKey=='AuthorizerLambdaRoleArn'].OutputValue" \
             --output text
 
+
+          echo "=========================================="
           echo "Product Lambda Role:"
+          echo "=========================================="
+
           aws cloudformation describe-stacks \
             --stack-name cloudmart-dev-iam \
             --region ${AWS_REGION} \
             --query "Stacks[0].Outputs[?OutputKey=='ProductLambdaRoleArn'].OutputValue" \
+            --output text
+
+
+          echo "=========================================="
+          echo "Inventory Alert Lambda Role:"
+          echo "=========================================="
+
+          aws cloudformation describe-stacks \
+            --stack-name cloudmart-dev-iam \
+            --region ${AWS_REGION} \
+            --query "Stacks[0].Outputs[?OutputKey=='InventoryAlertLambdaRoleArn'].OutputValue" \
             --output text
