@@ -172,8 +172,7 @@ Resources:
       Type:
         TOKEN
 
-      IdentitySource:
-        - method.request.header.Authorization
+      IdentitySource: method.request.header.Authorization
 
       AuthorizerResultTtlInSeconds:
         !Ref AuthorizerCacheTTL
