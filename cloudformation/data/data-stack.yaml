@@ -1,6 +1,8 @@
 AWSTemplateFormatVersion: '2010-09-09'
 
-Description: CloudMart Data Stack - RDS MySQL
+Description: >
+  CloudMart Data Stack.
+  Creates RDS MySQL and S3 Lambda artifact storage.
 
 Parameters:
 
@@ -41,10 +43,14 @@ Resources:
 
   DBSubnetGroup:
     Type: AWS::RDS::DBSubnetGroup
+
     Properties:
-      DBSubnetGroupDescription: !Sub CloudMart ${Environment} RDS private subnet group
+
+      DBSubnetGroupDescription:
+        !Sub CloudMart ${Environment} RDS private subnet group
 
       SubnetIds:
+
         - Fn::ImportValue:
             Fn::Sub: CloudMart-${Environment}-PrivateSubnetAId
 
@@ -52,6 +58,7 @@ Resources:
             Fn::Sub: CloudMart-${Environment}-PrivateSubnetBId
 
       Tags:
+
         - Key: Name
           Value: !Sub CloudMart-${Environment}-rds-subnet-group
 
@@ -105,6 +112,7 @@ Resources:
         !Ref DBSubnetGroup
 
       VPCSecurityGroups:
+
         - Fn::ImportValue:
             Fn::Sub: CloudMart-${Environment}-RDSSecurityGroupId
 
@@ -118,12 +126,78 @@ Resources:
 
 
   # ============================================================
+  # LAMBDA ARTIFACT S3 BUCKET
+  #
+  # Used by GitHub Actions to store Lambda ZIP files.
+  #
+  # Example:
+  # s3://cloudmart-dev-lambda-artifacts-ACCOUNT_ID/
+  #     product/product.zip
+  # ============================================================
+
+  LambdaArtifactBucket:
+    Type: AWS::S3::Bucket
+
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+
+    Properties:
+
+      BucketName:
+        !Sub cloudmart-${Environment}-lambda-artifacts-${AWS::AccountId}
+
+      # --------------------------------------------------------
+      # Block public access
+      # --------------------------------------------------------
+
+      PublicAccessBlockConfiguration:
+
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+      # --------------------------------------------------------
+      # Versioning
+      # --------------------------------------------------------
+
+      VersioningConfiguration:
+        Status: Enabled
+
+      # --------------------------------------------------------
+      # Server-side encryption
+      # --------------------------------------------------------
+
+      BucketEncryption:
+
+        ServerSideEncryptionConfiguration:
+
+          - ServerSideEncryptionByDefault:
+
+              SSEAlgorithm: AES256
+
+      # --------------------------------------------------------
+      # Tags
+      # --------------------------------------------------------
+
+      Tags:
+
+        - Key: Name
+          Value: !Sub CloudMart-${Environment}-lambda-artifacts
+
+        - Key: Environment
+          Value: !Ref Environment
+
+
+  # ============================================================
   # SSM PARAMETERS
   # ============================================================
 
   DBHostParameter:
     Type: AWS::SSM::Parameter
+
     Properties:
+
       Name:
         !Sub /cloudmart/${Environment}/db/host
 
@@ -137,7 +211,9 @@ Resources:
 
   DBPortParameter:
     Type: AWS::SSM::Parameter
+
     Properties:
+
       Name:
         !Sub /cloudmart/${Environment}/db/port
 
@@ -151,7 +227,9 @@ Resources:
 
   DBNameParameter:
     Type: AWS::SSM::Parameter
+
     Properties:
+
       Name:
         !Sub /cloudmart/${Environment}/db/name
 
@@ -219,3 +297,27 @@ Outputs:
     Description: RDS DB subnet group
     Value:
       !Ref DBSubnetGroup
+
+
+  # ============================================================
+  # LAMBDA ARTIFACT BUCKET OUTPUTS
+  # ============================================================
+
+  LambdaArtifactBucketName:
+    Description: S3 bucket used to store Lambda deployment ZIP files
+    Value:
+      !Ref LambdaArtifactBucket
+
+    Export:
+      Name:
+        !Sub CloudMart-${Environment}-LambdaArtifactBucketName
+
+
+  LambdaArtifactBucketArn:
+    Description: ARN of the Lambda artifact S3 bucket
+    Value:
+      !GetAtt LambdaArtifactBucket.Arn
+
+    Export:
+      Name:
+        !Sub CloudMart-${Environment}-LambdaArtifactBucketArn

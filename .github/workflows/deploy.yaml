@@ -14,6 +14,11 @@ permissions:
   contents: read
 
 
+env:
+  AWS_REGION: ap-south-1
+  ENVIRONMENT: dev
+
+
 jobs:
 
   # ============================================================
@@ -34,7 +39,7 @@ jobs:
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
-          aws-region: ap-south-1
+          aws-region: ${{ env.AWS_REGION }}
 
 
       - name: Verify AWS access
@@ -46,7 +51,7 @@ jobs:
         run: |
           aws cloudformation validate-template \
             --template-body file://cloudformation/network/network-stack.yaml \
-            --region ap-south-1
+            --region "${AWS_REGION}"
 
 
       - name: Deploy Network Stack
@@ -55,16 +60,18 @@ jobs:
             --template-file cloudformation/network/network-stack.yaml \
             --stack-name cloudmart-dev-network \
             --parameter-overrides \
-              Environment=dev \
+              Environment="${ENVIRONMENT}" \
               OperationsCidr="${{ inputs.operations_cidr }}" \
-            --region ap-south-1
+            --region "${AWS_REGION}"
 
 
       - name: Check Network Stack Status
         run: |
           aws cloudformation describe-stacks \
             --stack-name cloudmart-dev-network \
-            --region ap-south-1
+            --region "${AWS_REGION}" \
+            --query "Stacks[0].StackStatus" \
+            --output text
 
 
   # ============================================================
@@ -88,7 +95,7 @@ jobs:
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
-          aws-region: ap-south-1
+          aws-region: ${{ env.AWS_REGION }}
 
 
       - name: Verify AWS access
@@ -100,7 +107,7 @@ jobs:
         run: |
           aws cloudformation validate-template \
             --template-body file://cloudformation/data/data-stack.yaml \
-            --region ap-south-1
+            --region "${AWS_REGION}"
 
 
       - name: Deploy Data Stack
@@ -109,13 +116,17 @@ jobs:
             --template-file cloudformation/data/data-stack.yaml \
             --stack-name cloudmart-dev-data \
             --parameter-overrides \
-              Environment=dev \
+              Environment="${ENVIRONMENT}" \
               DBName=cloudmart \
               DBUsername=cloudmartadmin \
               DBInstanceClass=db.t3.micro \
               AllocatedStorage=20 \
-            --region ap-south-1
+            --region "${AWS_REGION}"
 
+
+      # ========================================================
+      # GET RDS MASTER SECRET ARN
+      # ========================================================
 
       - name: Get RDS Master Secret ARN
         id: rds-secret
@@ -123,53 +134,86 @@ jobs:
 
           SECRET_ARN=$(aws cloudformation describe-stacks \
             --stack-name cloudmart-dev-data \
-            --region ap-south-1 \
+            --region "${AWS_REGION}" \
             --query "Stacks[0].Outputs[?OutputKey=='DBMasterUserSecretArn'].OutputValue" \
             --output text)
 
           echo "SECRET_ARN=$SECRET_ARN" >> "$GITHUB_OUTPUT"
 
 
+      # ========================================================
+      # STORE DB USERNAME IN SSM
+      # ========================================================
+
       - name: Store database username in SSM SecureString
         env:
           SECRET_ARN: ${{ steps.rds-secret.outputs.SECRET_ARN }}
+
         run: |
 
           DB_USERNAME=$(aws secretsmanager get-secret-value \
             --secret-id "$SECRET_ARN" \
-            --region ap-south-1 \
+            --region "${AWS_REGION}" \
             --query SecretString \
             --output text | jq -r '.username')
 
           aws ssm put-parameter \
-            --name "/cloudmart/dev/db/username" \
+            --name "/cloudmart/${ENVIRONMENT}/db/username" \
             --type SecureString \
             --value "$DB_USERNAME" \
             --overwrite \
-            --region ap-south-1
+            --region "${AWS_REGION}"
 
+
+      # ========================================================
+      # STORE DB PASSWORD IN SSM
+      # ========================================================
 
       - name: Store database password in SSM SecureString
         env:
           SECRET_ARN: ${{ steps.rds-secret.outputs.SECRET_ARN }}
+
         run: |
 
           DB_PASSWORD=$(aws secretsmanager get-secret-value \
             --secret-id "$SECRET_ARN" \
-            --region ap-south-1 \
+            --region "${AWS_REGION}" \
             --query SecretString \
             --output text | jq -r '.password')
 
           aws ssm put-parameter \
-            --name "/cloudmart/dev/db/password" \
+            --name "/cloudmart/${ENVIRONMENT}/db/password" \
             --type SecureString \
             --value "$DB_PASSWORD" \
             --overwrite \
-            --region ap-south-1
+            --region "${AWS_REGION}"
 
+
+      # ========================================================
+      # DISPLAY ARTIFACT BUCKET
+      # ========================================================
+
+      - name: Display Lambda Artifact Bucket
+        run: |
+
+          echo "Lambda Artifact Bucket:"
+
+          aws cloudformation describe-stacks \
+            --stack-name cloudmart-dev-data \
+            --region "${AWS_REGION}" \
+            --query "Stacks[0].Outputs[?OutputKey=='LambdaArtifactBucketName'].OutputValue" \
+            --output text
+
+
+      # ========================================================
+      # CHECK DATA STACK
+      # ========================================================
 
       - name: Check Data Stack Status
         run: |
+
           aws cloudformation describe-stacks \
             --stack-name cloudmart-dev-data \
-            --region ap-south-1
+            --region "${AWS_REGION}" \
+            --query "Stacks[0].StackStatus" \
+            --output text
