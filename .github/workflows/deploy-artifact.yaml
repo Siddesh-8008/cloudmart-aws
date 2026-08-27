@@ -1,6 +1,13 @@
 name: CloudMart Lambda Artifact Infrastructure
 
 on:
+  push:
+    branches:
+      - milestone-3
+    paths:
+      - "cloudformation/artifact/**"
+      - ".github/workflows/artifact-deploy.yml"
+
   workflow_dispatch:
 
 permissions:
@@ -12,24 +19,14 @@ env:
   ENVIRONMENT: dev
 
 jobs:
-
   deploy-artifact:
     name: Deploy Lambda Artifact Bucket
     runs-on: ubuntu-latest
 
     steps:
 
-      # --------------------------------------------------------
-      # Checkout
-      # --------------------------------------------------------
-
       - name: Checkout repository
         uses: actions/checkout@v4
-
-
-      # --------------------------------------------------------
-      # Configure AWS credentials
-      # --------------------------------------------------------
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -37,30 +34,15 @@ jobs:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
-
-      # --------------------------------------------------------
-      # Verify AWS access
-      # --------------------------------------------------------
-
       - name: Verify AWS access
         run: |
           aws sts get-caller-identity
-
-
-      # --------------------------------------------------------
-      # Validate CloudFormation
-      # --------------------------------------------------------
 
       - name: Validate Artifact CloudFormation
         run: |
           aws cloudformation validate-template \
             --template-body file://cloudformation/artifact/artifact-stack.yaml \
             --region "${AWS_REGION}"
-
-
-      # --------------------------------------------------------
-      # Deploy Artifact Stack
-      # --------------------------------------------------------
 
       - name: Deploy Artifact Stack
         run: |
@@ -71,11 +53,6 @@ jobs:
               Environment="${ENVIRONMENT}" \
             --region "${AWS_REGION}"
 
-
-      # --------------------------------------------------------
-      # Check Stack
-      # --------------------------------------------------------
-
       - name: Check Artifact Stack
         run: |
           aws cloudformation describe-stacks \
@@ -84,15 +61,8 @@ jobs:
             --query "Stacks[0].StackStatus" \
             --output text
 
-
-      # --------------------------------------------------------
-      # Display Bucket Name
-      # --------------------------------------------------------
-
       - name: Display Artifact Bucket
         run: |
-          echo "Lambda Artifact Bucket:"
-
           aws cloudformation describe-stacks \
             --stack-name cloudmart-dev-artifact \
             --region "${AWS_REGION}" \
