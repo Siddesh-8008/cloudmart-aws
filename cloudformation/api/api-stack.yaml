@@ -3,7 +3,7 @@ AWSTemplateFormatVersion: '2010-09-09'
 Description: >
   CloudMart Milestone 3 API Stack.
   Creates API Gateway, Lambda Authorizer integration,
-  Product Lambda and Product CRUD API endpoints.
+  Product Lambda, SNS low-stock alerts and Product CRUD API endpoints.
 
 
 # ============================================================
@@ -43,13 +43,19 @@ Parameters:
   ProductLambdaCodeKey:
     Type: String
     Default: product/product.zip
-    Description: S3 key containing Product Lambda ZIP
+    Description: S3 key containing Product Lambda ZIP file
 
 
   DBHostParameter:
     Type: String
     Default: /cloudmart/dev/db/host
     Description: SSM parameter containing RDS hostname
+
+
+  DBPortParameter:
+    Type: String
+    Default: /cloudmart/dev/db/port
+    Description: SSM parameter containing RDS port
 
 
   DBNameParameter:
@@ -73,6 +79,7 @@ Parameters:
   AuthorizerCacheTTL:
     Type: Number
     Default: 300
+    MinValue: 0
     Description: Lambda Authorizer cache TTL in seconds
 
 
@@ -149,15 +156,6 @@ Resources:
 
   # ==========================================================
   # LAMBDA AUTHORIZER
-  #
-  # IMPORTANT:
-  # Type = TOKEN
-  #
-  # Your authorizer Lambda expects:
-  #
-  # event["authorizationToken"]
-  #
-  # Therefore TOKEN authorizer is required.
   # ==========================================================
 
   ProductApiAuthorizer:
@@ -171,7 +169,8 @@ Resources:
       RestApiId:
         !Ref ProductApi
 
-      Type: TOKEN
+      Type:
+        TOKEN
 
       IdentitySource:
         - method.request.header.Authorization
@@ -180,8 +179,8 @@ Resources:
         !Ref AuthorizerCacheTTL
 
       AuthorizerUri:
-        Fn::Sub:
-          - arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${AuthorizerLambdaArn}/invocations
+        !Sub
+          - arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${AuthorizerLambdaArn}/invocations
           - AuthorizerLambdaArn:
               !Ref AuthorizerLambdaArn
 
@@ -244,6 +243,9 @@ Resources:
           DB_HOST_PARAMETER:
             !Ref DBHostParameter
 
+          DB_PORT_PARAMETER:
+            !Ref DBPortParameter
+
           DB_NAME_PARAMETER:
             !Ref DBNameParameter
 
@@ -258,7 +260,7 @@ Resources:
 
 
   # ==========================================================
-  # LAMBDA PERMISSION
+  # PRODUCT LAMBDA PERMISSION
   #
   # Allows API Gateway to invoke Product Lambda.
   # ==========================================================
@@ -278,13 +280,14 @@ Resources:
         apigateway.amazonaws.com
 
       SourceArn:
-        !Sub arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${ProductApi}/*
+        !Sub
+          arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${ProductApi}/*
 
 
   # ==========================================================
-  # LAMBDA PERMISSION
+  # AUTHORIZER LAMBDA PERMISSION
   #
-  # Allows API Gateway to invoke Authorizer Lambda.
+  # Allows API Gateway to invoke Lambda Authorizer.
   # ==========================================================
 
   AuthorizerLambdaPermission:
@@ -302,7 +305,8 @@ Resources:
         apigateway.amazonaws.com
 
       SourceArn:
-        !Sub arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${ProductApi}/authorizers/${ProductApiAuthorizer}
+        !Sub
+          arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${ProductApi}/authorizers/${ProductApiAuthorizer}
 
 
   # ==========================================================
@@ -676,7 +680,7 @@ Outputs:
 
 
   # ==========================================================
-  # AUTHORIZE CACHE TTL
+  # AUTHORIZER CACHE TTL
   # ==========================================================
 
   AuthorizerCacheTTL:
