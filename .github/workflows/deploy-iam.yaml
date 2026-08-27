@@ -1,27 +1,123 @@
+name: CloudMart IAM Infrastructure
+
+on:
+  workflow_dispatch:
+
 permissions:
   id-token: write
   contents: read
 
+env:
+  AWS_REGION: ap-south-1
+  ENVIRONMENT: dev
+
 jobs:
 
+  # ============================================================
+  # IAM STACK
+  # ============================================================
+
   deploy-iam:
+    name: Deploy IAM Stack
     runs-on: ubuntu-latest
 
     steps:
 
+      # --------------------------------------------------------
+      # Checkout repository
+      # --------------------------------------------------------
+
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Show GitHub OIDC information
-        run: |
-          echo "Repository: $GITHUB_REPOSITORY"
-          echo "Branch: $GITHUB_REF_NAME"
-          echo "Full ref: $GITHUB_REF"
-          echo "Repository ID: $GITHUB_REPOSITORY_ID"
-          echo "Repository owner ID: $GITHUB_REPOSITORY_OWNER_ID"
+
+      # --------------------------------------------------------
+      # Configure AWS credentials using GitHub OIDC
+      # --------------------------------------------------------
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
+
+
+      # --------------------------------------------------------
+      # Verify AWS access
+      # --------------------------------------------------------
+
+      - name: Verify AWS access
+        run: |
+          echo "AWS Region: ${AWS_REGION}"
+          echo "Environment: ${ENVIRONMENT}"
+
+          aws sts get-caller-identity
+
+
+      # --------------------------------------------------------
+      # Validate IAM CloudFormation template
+      # --------------------------------------------------------
+
+      - name: Validate IAM CloudFormation
+        run: |
+          aws cloudformation validate-template \
+            --template-body file://cloudformation/iam/iam-stack.yaml \
+            --region "${AWS_REGION}"
+
+
+      # --------------------------------------------------------
+      # Deploy IAM Stack
+      # --------------------------------------------------------
+
+      - name: Deploy IAM Stack
+        run: |
+          aws cloudformation deploy \
+            --template-file cloudformation/iam/iam-stack.yaml \
+            --stack-name cloudmart-dev-iam \
+            --parameter-overrides \
+              Environment="${ENVIRONMENT}" \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --region "${AWS_REGION}"
+
+
+      # --------------------------------------------------------
+      # Check IAM Stack
+      # --------------------------------------------------------
+
+      - name: Check IAM Stack
+        run: |
+          aws cloudformation describe-stacks \
+            --stack-name cloudmart-dev-iam \
+            --region "${AWS_REGION}" \
+            --query "Stacks[0].StackStatus" \
+            --output text
+
+
+      # --------------------------------------------------------
+      # Display Authorizer Lambda Role ARN
+      # --------------------------------------------------------
+
+      - name: Display Authorizer Lambda Role ARN
+        run: |
+          echo "Authorizer Lambda Role ARN:"
+
+          aws cloudformation describe-stacks \
+            --stack-name cloudmart-dev-iam \
+            --region "${AWS_REGION}" \
+            --query "Stacks[0].Outputs[?OutputKey=='AuthorizerLambdaRoleArn'].OutputValue" \
+            --output text
+
+
+      # --------------------------------------------------------
+      # Display Product Lambda Role ARN
+      # --------------------------------------------------------
+
+      - name: Display Product Lambda Role ARN
+        run: |
+          echo "Product Lambda Role ARN:"
+
+          aws cloudformation describe-stacks \
+            --stack-name cloudmart-dev-iam \
+            --region "${AWS_REGION}" \
+            --query "Stacks[0].Outputs[?OutputKey=='ProductLambdaRoleArn'].OutputValue" \
+            --output text
