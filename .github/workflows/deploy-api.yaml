@@ -5,9 +5,9 @@ on:
     branches:
       - milestone-3
     paths:
-      - "infrastructure/api-stack.yml"
+      - "cloudformation/api-stack.yaml"
       - "lambda/product/**"
-      - ".github/workflows/deploy-api.yml"
+      - ".github/workflows/deploy-api.yaml"
 
 permissions:
   contents: read
