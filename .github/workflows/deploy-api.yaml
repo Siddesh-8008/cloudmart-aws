@@ -1,16 +1,12 @@
 name: CloudMart API Infrastructure
 
-
 on:
 
   push:
-
     branches:
-
       - milestone-3
 
     paths:
-
       - "cloudformation/api/api-stack.yaml"
       - "lambda/product/**"
       - ".github/workflows/deploy-api.yaml"
@@ -19,13 +15,11 @@ on:
 
 
 permissions:
-
   id-token: write
   contents: read
 
 
 env:
-
   AWS_REGION: ap-south-1
   ENVIRONMENT: dev
 
@@ -33,7 +27,7 @@ env:
 jobs:
 
   # ============================================================
-  # API STACK
+  # BUILD AND DEPLOY API STACK
   # ============================================================
 
   deploy-api:
@@ -45,9 +39,8 @@ jobs:
 
     steps:
 
-
       # ========================================================
-      # CHECKOUT
+      # 1. CHECKOUT
       # ========================================================
 
       - name: Checkout repository
@@ -55,47 +48,62 @@ jobs:
 
 
       # ========================================================
-      # AWS CREDENTIALS
+      # 2. CONFIGURE AWS CREDENTIALS
       # ========================================================
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
-
         with:
-
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
-
           aws-region: ${{ env.AWS_REGION }}
 
 
       # ========================================================
-      # VERIFY AWS
+      # 3. VERIFY AWS ACCESS
       # ========================================================
 
       - name: Verify AWS access
         run: |
-
           echo "AWS Region: ${AWS_REGION}"
-
           echo "Environment: ${ENVIRONMENT}"
 
           aws sts get-caller-identity
 
 
       # ========================================================
-      # SETUP PYTHON
+      # 4. SETUP PYTHON
+      # Match Product Lambda runtime
       # ========================================================
 
       - name: Setup Python
         uses: actions/setup-python@v5
-
         with:
-
-          python-version: "3.12"
+          python-version: "3.13"
 
 
       # ========================================================
-      # INSTALL PRODUCT LAMBDA DEPENDENCIES
+      # 5. VERIFY PRODUCT LAMBDA FILES
+      # ========================================================
+
+      - name: Verify Product Lambda files
+        run: |
+
+          echo "Product Lambda directory:"
+          ls -la lambda/product
+
+          if [ ! -f "lambda/product/lambda_function.py" ]; then
+            echo "ERROR: lambda_function.py not found."
+            exit 1
+          fi
+
+          if [ ! -f "lambda/product/requirements.txt" ]; then
+            echo "ERROR: requirements.txt not found."
+            exit 1
+          fi
+
+
+      # ========================================================
+      # 6. INSTALL PRODUCT LAMBDA DEPENDENCIES
       # ========================================================
 
       - name: Install Product Lambda dependencies
@@ -109,7 +117,7 @@ jobs:
 
 
       # ========================================================
-      # CREATE PRODUCT LAMBDA ZIP
+      # 7. CREATE PRODUCT LAMBDA ZIP
       # ========================================================
 
       - name: Package Product Lambda
@@ -127,7 +135,7 @@ jobs:
 
 
       # ========================================================
-      # GET ARTIFACT BUCKET
+      # 8. GET ARTIFACT BUCKET
       # ========================================================
 
       - name: Get Lambda Artifact Bucket
@@ -141,11 +149,8 @@ jobs:
             --output text)
 
           if [ -z "$ARTIFACT_BUCKET" ] || [ "$ARTIFACT_BUCKET" = "None" ]; then
-
             echo "ERROR: Lambda artifact bucket was not found."
-
             exit 1
-
           fi
 
           echo "Artifact bucket: $ARTIFACT_BUCKET"
@@ -154,12 +159,11 @@ jobs:
 
 
       # ========================================================
-      # UPLOAD PRODUCT ZIP
+      # 9. UPLOAD PRODUCT ZIP TO S3
       # ========================================================
 
       - name: Upload Product Lambda package
         env:
-
           ARTIFACT_BUCKET: ${{ steps.artifact.outputs.bucket }}
 
         run: |
@@ -171,12 +175,11 @@ jobs:
 
 
       # ========================================================
-      # VERIFY PRODUCT ZIP
+      # 10. VERIFY ZIP IN S3
       # ========================================================
 
       - name: Verify Product Lambda package
         env:
-
           ARTIFACT_BUCKET: ${{ steps.artifact.outputs.bucket }}
 
         run: |
@@ -187,7 +190,7 @@ jobs:
 
 
       # ========================================================
-      # VALIDATE API STACK
+      # 11. VALIDATE API CLOUDFORMATION
       # ========================================================
 
       - name: Validate API CloudFormation
@@ -199,7 +202,7 @@ jobs:
 
 
       # ========================================================
-      # GET PRIVATE SUBNET A
+      # 12. GET PRIVATE SUBNET A
       # ========================================================
 
       - name: Get Private Subnet A
@@ -213,18 +216,17 @@ jobs:
             --output text)
 
           if [ -z "$SUBNET_A" ] || [ "$SUBNET_A" = "None" ]; then
-
             echo "ERROR: PrivateSubnetAId not found."
-
             exit 1
-
           fi
+
+          echo "Private Subnet A: $SUBNET_A"
 
           echo "subnet=$SUBNET_A" >> "$GITHUB_OUTPUT"
 
 
       # ========================================================
-      # GET PRIVATE SUBNET B
+      # 13. GET PRIVATE SUBNET B
       # ========================================================
 
       - name: Get Private Subnet B
@@ -238,18 +240,17 @@ jobs:
             --output text)
 
           if [ -z "$SUBNET_B" ] || [ "$SUBNET_B" = "None" ]; then
-
             echo "ERROR: PrivateSubnetBId not found."
-
             exit 1
-
           fi
+
+          echo "Private Subnet B: $SUBNET_B"
 
           echo "subnet=$SUBNET_B" >> "$GITHUB_OUTPUT"
 
 
       # ========================================================
-      # GET LAMBDA SECURITY GROUP
+      # 14. GET LAMBDA SECURITY GROUP
       # ========================================================
 
       - name: Get Lambda Security Group
@@ -263,18 +264,17 @@ jobs:
             --output text)
 
           if [ -z "$LAMBDA_SG" ] || [ "$LAMBDA_SG" = "None" ]; then
-
             echo "ERROR: LambdaSecurityGroupId not found."
-
             exit 1
-
           fi
+
+          echo "Lambda Security Group: $LAMBDA_SG"
 
           echo "security_group=$LAMBDA_SG" >> "$GITHUB_OUTPUT"
 
 
       # ========================================================
-      # GET PRODUCT IAM ROLE
+      # 15. GET PRODUCT IAM ROLE
       # ========================================================
 
       - name: Get Product Lambda IAM Role
@@ -288,20 +288,17 @@ jobs:
             --output text)
 
           if [ -z "$PRODUCT_ROLE" ] || [ "$PRODUCT_ROLE" = "None" ]; then
-
             echo "ERROR: ProductLambdaRoleArn not found."
-
             exit 1
-
           fi
 
-          echo "Product role: $PRODUCT_ROLE"
+          echo "Product Lambda Role: $PRODUCT_ROLE"
 
           echo "product_role=$PRODUCT_ROLE" >> "$GITHUB_OUTPUT"
 
 
       # ========================================================
-      # GET AUTHORIZER ARN
+      # 16. GET AUTHORIZE LAMBDA ARN
       # ========================================================
 
       - name: Get Authorizer Lambda ARN
@@ -315,11 +312,8 @@ jobs:
             --output text)
 
           if [ -z "$AUTHORIZER_ARN" ] || [ "$AUTHORIZER_ARN" = "None" ]; then
-
             echo "ERROR: AuthorizerLambdaArn not found."
-
             exit 1
-
           fi
 
           echo "Authorizer ARN: $AUTHORIZER_ARN"
@@ -328,7 +322,7 @@ jobs:
 
 
       # ========================================================
-      # DEPLOY API STACK
+      # 17. DEPLOY API STACK
       # ========================================================
 
       - name: Deploy API Stack
@@ -353,7 +347,7 @@ jobs:
 
 
       # ========================================================
-      # CHECK API STACK
+      # 18. CHECK API STACK
       # ========================================================
 
       - name: Check API Stack
@@ -367,15 +361,15 @@ jobs:
 
 
       # ========================================================
-      # DISPLAY API URL
+      # 19. DISPLAY API URL
       # ========================================================
 
       - name: Display API URL
         run: |
 
           echo "======================================"
-
           echo "CloudMart API URL:"
+          echo "======================================"
 
           aws cloudformation describe-stacks \
             --stack-name cloudmart-dev-api \
