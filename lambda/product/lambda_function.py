@@ -31,6 +31,12 @@ def get_database_connection():
         os.environ["DB_HOST_PARAMETER"]
     )
 
+    port = int(
+        get_parameter(
+            os.environ["DB_PORT_PARAMETER"]
+        )
+    )
+
     database = get_parameter(
         os.environ["DB_NAME_PARAMETER"]
     )
@@ -45,18 +51,12 @@ def get_database_connection():
         secure=True
     )
 
-    port = int(
-        get_parameter(
-            "/cloudmart/dev/db/port"
-        )
-    )
-
     connection = pymysql.connect(
         host=host,
+        port=port,
         user=username,
         password=password,
         database=database,
-        port=port,
         cursorclass=pymysql.cursors.DictCursor,
         connect_timeout=10
     )
@@ -77,7 +77,10 @@ def response(status_code, body):
             "Content-Type": "application/json"
         },
 
-        "body": json.dumps(body, default=str)
+        "body": json.dumps(
+            body,
+            default=str
+        )
     }
 
 
@@ -96,13 +99,11 @@ def lambda_handler(event, context):
         "path": event.get("path")
     }))
 
-
     method = event.get("httpMethod")
 
     path_parameters = event.get("pathParameters") or {}
 
     product_id = path_parameters.get("id")
-
 
     try:
 
@@ -121,6 +122,7 @@ def lambda_handler(event, context):
             description = body.get("description")
             price = body.get("price")
             stock = body.get("stock", 0)
+
             low_stock_threshold = body.get(
                 "lowStockThreshold",
                 5
@@ -134,7 +136,6 @@ def lambda_handler(event, context):
                         "message": "name and price are required"
                     }
                 )
-
 
             connection = get_database_connection()
 
@@ -180,13 +181,11 @@ def lambda_handler(event, context):
 
                 connection.close()
 
-
             print(json.dumps({
                 "level": "INFO",
                 "message": "Product created",
                 "product_id": product_id
             }))
-
 
             return response(
                 201,
@@ -232,7 +231,6 @@ def lambda_handler(event, context):
 
                 connection.close()
 
-
             return response(
                 200,
                 {
@@ -277,7 +275,6 @@ def lambda_handler(event, context):
 
                 connection.close()
 
-
             if not product:
 
                 return response(
@@ -286,7 +283,6 @@ def lambda_handler(event, context):
                         "message": "Product not found"
                     }
                 )
-
 
             return response(
                 200,
@@ -314,30 +310,25 @@ def lambda_handler(event, context):
                     fields = []
                     values = []
 
-
                     if "name" in body:
 
                         fields.append("name = %s")
                         values.append(body["name"])
-
 
                     if "description" in body:
 
                         fields.append("description = %s")
                         values.append(body["description"])
 
-
                     if "price" in body:
 
                         fields.append("price = %s")
                         values.append(body["price"])
 
-
                     if "stock" in body:
 
                         fields.append("stock = %s")
                         values.append(body["stock"])
-
 
                     if "lowStockThreshold" in body:
 
@@ -349,7 +340,6 @@ def lambda_handler(event, context):
                             body["lowStockThreshold"]
                         )
 
-
                     if not fields:
 
                         return response(
@@ -359,9 +349,7 @@ def lambda_handler(event, context):
                             }
                         )
 
-
                     values.append(product_id)
-
 
                     sql = f"""
                         UPDATE products
@@ -369,12 +357,10 @@ def lambda_handler(event, context):
                         WHERE id = %s
                     """
 
-
                     cursor.execute(
                         sql,
                         values
                     )
-
 
                     if cursor.rowcount == 0:
 
@@ -385,13 +371,11 @@ def lambda_handler(event, context):
                             }
                         )
 
-
                 connection.commit()
 
             finally:
 
                 connection.close()
-
 
             return response(
                 200,
@@ -423,7 +407,6 @@ def lambda_handler(event, context):
                         (product_id,)
                     )
 
-
                     if cursor.rowcount == 0:
 
                         return response(
@@ -438,7 +421,6 @@ def lambda_handler(event, context):
             finally:
 
                 connection.close()
-
 
             return response(
                 200,
@@ -469,7 +451,6 @@ def lambda_handler(event, context):
             "error": str(error),
             "request_id": context.aws_request_id
         }))
-
 
         return response(
             500,
