@@ -1,9 +1,9 @@
 AWSTemplateFormatVersion: '2010-09-09'
 
 Description: >
-  CloudMart database schema initialization stack.
-  Runs schema.sql through a Lambda function inside the VPC
-  and creates the required MySQL tables in RDS.
+  CloudMart database schema initialization Lambda.
+  Connects privately to RDS MySQL and creates the products table.
+
 
 Parameters:
 
@@ -14,57 +14,46 @@ Parameters:
       - dev
       - prod
 
-  # ------------------------------------------------------------
-  # Networking
-  # ------------------------------------------------------------
 
   PrivateSubnetIds:
-    Type: CommaDelimitedList
-    Description: Private subnet IDs where Schema Lambda will run
+    Type: List<AWS::EC2::Subnet::Id>
+
 
   LambdaSecurityGroupId:
     Type: AWS::EC2::SecurityGroup::Id
-    Description: Security group for Schema Lambda
 
-  # ------------------------------------------------------------
-  # Existing IAM role
-  # ------------------------------------------------------------
 
-  ProductLambdaExecutionRoleArn:
+  LambdaExecutionRoleArn:
     Type: String
-    Description: Existing IAM role with SSM and CloudWatch permissions
 
-  # ------------------------------------------------------------
-  # Lambda package
-  # ------------------------------------------------------------
 
   LambdaCodeBucket:
     Type: String
-    Description: S3 bucket containing Lambda deployment packages
 
-  SchemaLambdaCodeKey:
+
+  LambdaCodeKey:
     Type: String
-    Description: S3 key for Schema Lambda zip package
 
-  # ------------------------------------------------------------
-  # Database SSM parameters
-  # ------------------------------------------------------------
 
   DBHostParameter:
     Type: String
     Default: /cloudmart/dev/db/host
 
+
   DBNameParameter:
     Type: String
     Default: /cloudmart/dev/db/name
+
 
   DBUsernameParameter:
     Type: String
     Default: /cloudmart/dev/db/username
 
+
   DBPasswordParameter:
     Type: String
     Default: /cloudmart/dev/db/password
+
 
   DBPortParameter:
     Type: String
@@ -73,40 +62,33 @@ Parameters:
 
 Resources:
 
-  # ============================================================
-  # Schema Lambda
-  # ============================================================
-
   SchemaLambda:
+
     Type: AWS::Lambda::Function
 
     Properties:
 
-      FunctionName:
-        !Sub cloudmart-${Environment}-schema-initializer
+      FunctionName: !Sub CloudMart-${Environment}-schema
 
       Runtime: python3.12
 
-      Handler: schema_function.lambda_handler
+      Handler: lambda_function.lambda_handler
 
-      Role:
-        !Ref ProductLambdaExecutionRoleArn
+      Role: !Ref LambdaExecutionRoleArn
 
       Timeout: 60
 
       MemorySize: 256
 
       Code:
-        S3Bucket:
-          !Ref LambdaCodeBucket
 
-        S3Key:
-          !Ref SchemaLambdaCodeKey
+        S3Bucket: !Ref LambdaCodeBucket
+
+        S3Key: !Ref LambdaCodeKey
 
       VpcConfig:
 
-        SubnetIds:
-          !Ref PrivateSubnetIds
+        SubnetIds: !Ref PrivateSubnetIds
 
         SecurityGroupIds:
           - !Ref LambdaSecurityGroupId
@@ -115,57 +97,33 @@ Resources:
 
         Variables:
 
-          ENVIRONMENT:
-            !Ref Environment
+          ENVIRONMENT: !Ref Environment
 
-          DB_HOST_PARAMETER:
-            !Ref DBHostParameter
+          DB_HOST_PARAMETER: !Ref DBHostParameter
 
-          DB_NAME_PARAMETER:
-            !Ref DBNameParameter
+          DB_NAME_PARAMETER: !Ref DBNameParameter
 
-          DB_USERNAME_PARAMETER:
-            !Ref DBUsernameParameter
+          DB_USERNAME_PARAMETER: !Ref DBUsernameParameter
 
-          DB_PASSWORD_PARAMETER:
-            !Ref DBPasswordParameter
+          DB_PASSWORD_PARAMETER: !Ref DBPasswordParameter
 
-          DB_PORT_PARAMETER:
-            !Ref DBPortParameter
-
-
-  # ============================================================
-  # CloudFormation Custom Resource
-  # ============================================================
-
-  DatabaseSchema:
-
-    Type: Custom::CloudMartDatabaseSchema
-
-    Properties:
-
-      ServiceToken:
-        !GetAtt SchemaLambda.Arn
-
-      Environment:
-        !Ref Environment
-
-      SchemaVersion:
-        "1"
+          DB_PORT_PARAMETER: !Ref DBPortParameter
 
 
 Outputs:
 
   SchemaLambdaArn:
 
-    Description: Schema initialization Lambda ARN
+    Description: Schema Lambda ARN
 
-    Value:
-      !GetAtt SchemaLambda.Arn
+    Value: !GetAtt SchemaLambda.Arn
 
-  SchemaStatus:
+    Export:
+      Name: !Sub CloudMart-${Environment}-SchemaLambdaArn
 
-    Description: Database schema initialization status
 
-    Value:
-      "Schema initialization completed"
+  SchemaLambdaName:
+
+    Description: Schema Lambda name
+
+    Value: !Ref SchemaLambda
