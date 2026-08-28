@@ -3,12 +3,8 @@ AWSTemplateFormatVersion: '2010-09-09'
 Description: >
   CloudMart API Stack.
   Creates Product Lambda, Schema Lambda, API Gateway,
-  API Gateway Authorizer, and initializes the RDS database schema.
+  API Gateway Authorizer, and RDS database integration.
 
-
-# ==========================================================
-# PARAMETERS
-# ==========================================================
 
 Parameters:
 
@@ -73,16 +69,12 @@ Parameters:
     Default: /cloudmart/dev/db/port
 
 
-# ==========================================================
-# RESOURCES
-# ==========================================================
-
 Resources:
 
 
-  # ========================================================
+  # ==========================================================
   # PRODUCT LAMBDA
-  # ========================================================
+  # ==========================================================
 
   ProductLambda:
 
@@ -90,7 +82,7 @@ Resources:
 
     Properties:
 
-      FunctionName: !Sub CloudMart-${Environment}-product
+      FunctionName: !Sub 'CloudMart-${Environment}-product'
 
       Runtime: python3.12
 
@@ -132,9 +124,9 @@ Resources:
           DB_PORT_PARAMETER: !Ref DBPortParameter
 
 
-  # ========================================================
-  # SCHEMA INITIALIZER LAMBDA
-  # ========================================================
+  # ==========================================================
+  # SCHEMA LAMBDA
+  # ==========================================================
 
   SchemaLambda:
 
@@ -142,7 +134,7 @@ Resources:
 
     Properties:
 
-      FunctionName: !Sub CloudMart-${Environment}-schema
+      FunctionName: !Sub 'CloudMart-${Environment}-schema'
 
       Runtime: python3.12
 
@@ -184,9 +176,9 @@ Resources:
           DB_PORT_PARAMETER: !Ref DBPortParameter
 
 
-  # ========================================================
+  # ==========================================================
   # API GATEWAY
-  # ========================================================
+  # ==========================================================
 
   Api:
 
@@ -194,12 +186,12 @@ Resources:
 
     Properties:
 
-      Name: !Sub CloudMart-${Environment}-api
+      Name: !Sub 'CloudMart-${Environment}-api'
 
 
-  # ========================================================
+  # ==========================================================
   # /products
-  # ========================================================
+  # ==========================================================
 
   ProductsResource:
 
@@ -214,9 +206,9 @@ Resources:
       PathPart: products
 
 
-  # ========================================================
+  # ==========================================================
   # /products/{id}
-  # ========================================================
+  # ==========================================================
 
   ProductIdResource:
 
@@ -228,12 +220,12 @@ Resources:
 
       ParentId: !Ref ProductsResource
 
-      PathPart: "{id}"
+      PathPart: '{id}'
 
 
-  # ========================================================
+  # ==========================================================
   # PRODUCT LAMBDA PERMISSION
-  # ========================================================
+  # ==========================================================
 
   ProductLambdaPermission:
 
@@ -247,12 +239,15 @@ Resources:
 
       Principal: apigateway.amazonaws.com
 
-      SourceArn: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${Api}/*/*
+      SourceArn:
+        Fn::Sub:
+          - 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${Api}/*/*'
+          - Api: !Ref Api
 
 
-  # ========================================================
-  # API AUTHORIZE
-  # ========================================================
+  # ==========================================================
+  # API AUTHORIZER
+  # ==========================================================
 
   ApiAuthorizer:
 
@@ -260,7 +255,7 @@ Resources:
 
     Properties:
 
-      Name: !Sub CloudMart-${Environment}-authorizer
+      Name: !Sub 'CloudMart-${Environment}-authorizer'
 
       RestApiId: !Ref Api
 
@@ -269,14 +264,17 @@ Resources:
       IdentitySource:
         - method.request.header.Authorization
 
-      AuthorizerUri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${AuthorizerLambdaArn}/invocations
+      AuthorizerUri:
+        Fn::Sub:
+          - 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaArn}/invocations'
+          - LambdaArn: !Ref AuthorizerLambdaArn
 
       AuthorizerResultTtlInSeconds: 0
 
 
-  # ========================================================
+  # ==========================================================
   # AUTHORIZE LAMBDA PERMISSION
-  # ========================================================
+  # ==========================================================
 
   AuthorizerLambdaPermission:
 
@@ -290,12 +288,15 @@ Resources:
 
       Principal: apigateway.amazonaws.com
 
-      SourceArn: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${Api}/authorizers/*
+      SourceArn:
+        Fn::Sub:
+          - 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${Api}/*/*'
+          - Api: !Ref Api
 
 
-  # ========================================================
+  # ==========================================================
   # GET /products
-  # ========================================================
+  # ==========================================================
 
   GetProductsMethod:
 
@@ -319,12 +320,15 @@ Resources:
 
         IntegrationHttpMethod: POST
 
-        Uri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${ProductLambda.Arn}/invocations
+        Uri:
+          Fn::Sub:
+            - 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaArn}/invocations'
+            - LambdaArn: !GetAtt ProductLambda.Arn
 
 
-  # ========================================================
+  # ==========================================================
   # POST /products
-  # ========================================================
+  # ==========================================================
 
   PostProductsMethod:
 
@@ -348,12 +352,15 @@ Resources:
 
         IntegrationHttpMethod: POST
 
-        Uri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${ProductLambda.Arn}/invocations
+        Uri:
+          Fn::Sub:
+            - 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaArn}/invocations'
+            - LambdaArn: !GetAtt ProductLambda.Arn
 
 
-  # ========================================================
+  # ==========================================================
   # GET /products/{id}
-  # ========================================================
+  # ==========================================================
 
   GetProductMethod:
 
@@ -371,18 +378,25 @@ Resources:
 
       AuthorizerId: !Ref ApiAuthorizer
 
+      RequestParameters:
+
+        method.request.path.id: true
+
       Integration:
 
         Type: AWS_PROXY
 
         IntegrationHttpMethod: POST
 
-        Uri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${ProductLambda.Arn}/invocations
+        Uri:
+          Fn::Sub:
+            - 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaArn}/invocations'
+            - LambdaArn: !GetAtt ProductLambda.Arn
 
 
-  # ========================================================
+  # ==========================================================
   # PUT /products/{id}
-  # ========================================================
+  # ==========================================================
 
   PutProductMethod:
 
@@ -400,18 +414,25 @@ Resources:
 
       AuthorizerId: !Ref ApiAuthorizer
 
+      RequestParameters:
+
+        method.request.path.id: true
+
       Integration:
 
         Type: AWS_PROXY
 
         IntegrationHttpMethod: POST
 
-        Uri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${ProductLambda.Arn}/invocations
+        Uri:
+          Fn::Sub:
+            - 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaArn}/invocations'
+            - LambdaArn: !GetAtt ProductLambda.Arn
 
 
-  # ========================================================
+  # ==========================================================
   # DELETE /products/{id}
-  # ========================================================
+  # ==========================================================
 
   DeleteProductMethod:
 
@@ -429,18 +450,25 @@ Resources:
 
       AuthorizerId: !Ref ApiAuthorizer
 
+      RequestParameters:
+
+        method.request.path.id: true
+
       Integration:
 
         Type: AWS_PROXY
 
         IntegrationHttpMethod: POST
 
-        Uri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${ProductLambda.Arn}/invocations
+        Uri:
+          Fn::Sub:
+            - 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaArn}/invocations'
+            - LambdaArn: !GetAtt ProductLambda.Arn
 
 
-  # ========================================================
+  # ==========================================================
   # API DEPLOYMENT
-  # ========================================================
+  # ==========================================================
 
   ApiDeployment:
 
@@ -461,18 +489,26 @@ Resources:
       StageName: !Ref Environment
 
 
-# ==========================================================
-# OUTPUTS
-# ==========================================================
-
 Outputs:
+
+
+  # ==========================================================
+  # API URL
+  # ==========================================================
 
   ApiUrl:
 
     Description: CloudMart API URL
 
-    Value: !Sub https://${Api}.execute-api.${AWS::Region}.amazonaws.com/${Environment}
+    Value:
+      Fn::Sub:
+        - 'https://${Api}.execute-api.${AWS::Region}.amazonaws.com/${Environment}'
+        - Api: !Ref Api
 
+
+  # ==========================================================
+  # PRODUCT LAMBDA ARN
+  # ==========================================================
 
   ProductLambdaArn:
 
@@ -480,6 +516,10 @@ Outputs:
 
     Value: !GetAtt ProductLambda.Arn
 
+
+  # ==========================================================
+  # SCHEMA LAMBDA ARN
+  # ==========================================================
 
   SchemaLambdaArn:
 
