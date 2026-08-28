@@ -4,6 +4,8 @@ Description: >
   CloudMart IAM Stack for Milestone 3.
   Creates least-privilege execution roles for
   Lambda Authorizer, Product Lambda, and Inventory Alert Lambda.
+  Product Lambda role is also used by Schema Lambda.
+
 
 Parameters:
 
@@ -16,6 +18,7 @@ Parameters:
 
 
 Resources:
+
 
   # ============================================================
   # AUTHORIZE LAMBDA ROLE
@@ -47,8 +50,9 @@ Resources:
 
       Policies:
 
+
         # --------------------------------------------------------
-        # CloudWatch Logs
+        # CLOUDWATCH LOGS
         # --------------------------------------------------------
 
         - PolicyName: AuthorizerCloudWatchLogs
@@ -58,8 +62,6 @@ Resources:
 
             Statement:
 
-              # Lambda needs permission to create its log group.
-
               - Effect: Allow
 
                 Action:
@@ -67,9 +69,6 @@ Resources:
 
                 Resource: "*"
 
-
-              # Restrict log stream and log event access
-              # to the Authorizer Lambda log group.
 
               - Effect: Allow
 
@@ -82,7 +81,7 @@ Resources:
 
 
         # --------------------------------------------------------
-        # Read authentication token from SSM
+        # READ AUTH TOKEN FROM SSM
         # --------------------------------------------------------
 
         - PolicyName: AuthorizerReadAuthToken
@@ -102,7 +101,7 @@ Resources:
 
 
         # --------------------------------------------------------
-        # VPC network interface permissions
+        # VPC ACCESS
         # --------------------------------------------------------
 
         - PolicyName: AuthorizerVPCAccess
@@ -126,6 +125,22 @@ Resources:
   # ============================================================
   # PRODUCT LAMBDA ROLE
   # ============================================================
+  #
+  # IMPORTANT:
+  #
+  # This role is used by:
+  #
+  # 1. Product Lambda
+  # 2. Schema Lambda
+  #
+  # Therefore this role contains:
+  #
+  # - CloudWatch permissions
+  # - SSM database parameter permissions
+  # - VPC permissions
+  # - EventBridge permissions
+  #
+  # ============================================================
 
   ProductLambdaRole:
     Type: AWS::IAM::Role
@@ -134,7 +149,9 @@ Resources:
 
       RoleName: !Sub CloudMart-${Environment}-product-lambda-role
 
-      Description: IAM execution role for CloudMart Product Lambda
+      Description: >
+        IAM execution role for CloudMart Product Lambda
+        and Schema Lambda
 
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
@@ -153,8 +170,9 @@ Resources:
 
       Policies:
 
+
         # --------------------------------------------------------
-        # CloudWatch Logs
+        # CLOUDWATCH LOGS
         # --------------------------------------------------------
 
         - PolicyName: ProductCloudWatchLogs
@@ -164,6 +182,7 @@ Resources:
 
             Statement:
 
+              # Create log group
               - Effect: Allow
 
                 Action:
@@ -172,6 +191,7 @@ Resources:
                 Resource: "*"
 
 
+              # Product Lambda logs
               - Effect: Allow
 
                 Action:
@@ -182,11 +202,30 @@ Resources:
                   - !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/CloudMart-${Environment}-product:*
 
 
+              # Schema Lambda logs
+              - Effect: Allow
+
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+
+                Resource:
+                  - !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/CloudMart-${Environment}-schema:*
+
+
         # --------------------------------------------------------
-        # Read database parameters from SSM
+        # READ DATABASE PARAMETERS FROM SSM
+        # --------------------------------------------------------
+        #
+        # Product Lambda and Schema Lambda use these parameters.
+        #
+        # IMPORTANT:
+        # The parameter names must match the parameters actually
+        # created in SSM Parameter Store.
+        #
         # --------------------------------------------------------
 
-        - PolicyName: ProductReadDatabaseParameters
+        - PolicyName: ProductAndSchemaReadDatabaseParameters
 
           PolicyDocument:
             Version: '2012-10-17'
@@ -200,27 +239,77 @@ Resources:
 
                 Resource:
 
-                  # RDS HOST
+                  # ------------------------------------------------
+                  # DATABASE HOST
+                  # ------------------------------------------------
+
                   - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/host
 
-                  # RDS PORT
+
+                  # ------------------------------------------------
+                  # DATABASE PORT
+                  # ------------------------------------------------
+
                   - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/port
 
+
+                  # ------------------------------------------------
                   # DATABASE NAME
+                  # ------------------------------------------------
+
                   - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/name
 
+
+                  # ------------------------------------------------
                   # DATABASE USERNAME
+                  # ------------------------------------------------
+
                   - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/username
 
+
+                  # ------------------------------------------------
                   # DATABASE PASSWORD
+                  # ------------------------------------------------
+
                   - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/password
 
 
         # --------------------------------------------------------
-        # VPC network interface permissions
+        # KMS PERMISSION
+        # --------------------------------------------------------
+        #
+        # Needed if DB username/password are SecureString
+        # parameters encrypted using the AWS managed
+        # aws/ssm KMS key.
+        #
         # --------------------------------------------------------
 
-        - PolicyName: ProductVPCAccess
+        - PolicyName: ProductAndSchemaReadSSMKMS
+
+          PolicyDocument:
+            Version: '2012-10-17'
+
+            Statement:
+
+              - Effect: Allow
+
+                Action:
+                  - kms:Decrypt
+
+                Resource:
+                  - !Sub arn:${AWS::Partition}:kms:${AWS::Region}:${AWS::AccountId}:key/*
+
+
+        # --------------------------------------------------------
+        # VPC NETWORK INTERFACE PERMISSIONS
+        # --------------------------------------------------------
+        #
+        # Required because Product Lambda and Schema Lambda
+        # run inside the VPC.
+        #
+        # --------------------------------------------------------
+
+        - PolicyName: ProductAndSchemaVPCAccess
 
           PolicyDocument:
             Version: '2012-10-17'
@@ -238,7 +327,7 @@ Resources:
 
 
         # --------------------------------------------------------
-        # Publish inventory change events to EventBridge
+        # PUBLISH INVENTORY EVENTS
         # --------------------------------------------------------
 
         - PolicyName: ProductPublishInventoryEvents
@@ -260,14 +349,6 @@ Resources:
 
   # ============================================================
   # INVENTORY ALERT LAMBDA ROLE
-  # ============================================================
-  #
-  # This Lambda will be invoked by EventBridge when an inventory
-  # change event matches the CloudMart inventory event pattern.
-  #
-  # It publishes low-stock alerts to SNS.
-  #
-  # It does NOT need VPC access because it does not connect to RDS.
   # ============================================================
 
   InventoryAlertLambdaRole:
@@ -296,8 +377,9 @@ Resources:
 
       Policies:
 
+
         # --------------------------------------------------------
-        # CloudWatch Logs
+        # CLOUDWATCH LOGS
         # --------------------------------------------------------
 
         - PolicyName: InventoryAlertCloudWatchLogs
@@ -326,7 +408,7 @@ Resources:
 
 
         # --------------------------------------------------------
-        # Publish low-stock alerts to SNS
+        # PUBLISH LOW STOCK ALERTS TO SNS
         # --------------------------------------------------------
 
         - PolicyName: InventoryAlertPublishSNS
@@ -346,7 +428,13 @@ Resources:
 
 
 
+# ==============================================================
+# OUTPUTS
+# ==============================================================
+
+
 Outputs:
+
 
   # ============================================================
   # AUTHORIZE ROLE OUTPUTS
@@ -374,13 +462,16 @@ Outputs:
       Name: !Sub CloudMart-${Environment}-AuthorizerLambdaRoleName
 
 
+
   # ============================================================
   # PRODUCT ROLE OUTPUTS
   # ============================================================
 
   ProductLambdaRoleArn:
 
-    Description: ARN of the CloudMart Product Lambda execution role
+    Description: >
+      ARN of the CloudMart Product Lambda execution role.
+      This role is also used by Schema Lambda.
 
     Value:
       !GetAtt ProductLambdaRole.Arn
@@ -391,13 +482,16 @@ Outputs:
 
   ProductLambdaRoleName:
 
-    Description: Name of the CloudMart Product Lambda execution role
+    Description: >
+      Name of the CloudMart Product Lambda execution role.
+      This role is also used by Schema Lambda.
 
     Value:
       !Ref ProductLambdaRole
 
     Export:
       Name: !Sub CloudMart-${Environment}-ProductLambdaRoleName
+
 
 
   # ============================================================
