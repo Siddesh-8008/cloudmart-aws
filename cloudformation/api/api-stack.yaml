@@ -112,7 +112,7 @@ Parameters:
 
   AuthorizerCacheTTL:
     Type: Number
-    Default: 300
+    Default: 0
     Description: API Gateway authorizer cache TTL in seconds
 
 
