@@ -24,36 +24,30 @@ env:
   AWS_REGION: ap-south-1
   ENVIRONMENT: dev
 
-  API_STACK: cloudmart-dev-api
-  DATA_STACK: cloudmart-dev-data
-  NETWORK_STACK: cloudmart-dev-network
-  IAM_STACK: cloudmart-dev-iam
-  AUTH_STACK: cloudmart-dev-auth
-
 
 jobs:
 
   deploy-api:
 
-    name: Build and Deploy API Stack
+    name: Build and Deploy CloudMart API
 
     runs-on: ubuntu-latest
 
 
     steps:
 
-      # ======================================================
+      # ========================================================
       # 1. CHECKOUT
-      # ======================================================
+      # ========================================================
 
       - name: Checkout repository
 
         uses: actions/checkout@v4
 
 
-      # ======================================================
+      # ========================================================
       # 2. AWS CREDENTIALS
-      # ======================================================
+      # ========================================================
 
       - name: Configure AWS credentials
 
@@ -66,26 +60,23 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
 
 
-      # ======================================================
+      # ========================================================
       # 3. VERIFY AWS
-      # ======================================================
+      # ========================================================
 
       - name: Verify AWS access
 
         run: |
 
-          echo "======================================"
-          echo "AWS ACCESS"
-          echo "======================================"
+          echo "AWS Region: ${AWS_REGION}"
+          echo "Environment: ${ENVIRONMENT}"
 
           aws sts get-caller-identity
 
-          echo "Region: ${AWS_REGION}"
 
-
-      # ======================================================
+      # ========================================================
       # 4. PYTHON
-      # ======================================================
+      # ========================================================
 
       - name: Setup Python
 
@@ -96,16 +87,16 @@ jobs:
           python-version: "3.12"
 
 
-      # ======================================================
-      # 5. VERIFY PRODUCT FILES
-      # ======================================================
+      # ========================================================
+      # 5. VERIFY FILES
+      # ========================================================
 
       - name: Verify Product Lambda files
 
         run: |
 
           echo "======================================"
-          echo "PRODUCT LAMBDA FILES"
+          echo "CHECKING PRODUCT LAMBDA"
           echo "======================================"
 
           ls -la lambda/product
@@ -114,43 +105,12 @@ jobs:
 
           test -f lambda/product/requirements.txt
 
-
-      # ======================================================
-      # 6. VERIFY REQUIREMENTS
-      # ======================================================
-
-      - name: Check Product Lambda requirements
-
-        run: |
-
-          echo "======================================"
-          echo "REQUIREMENTS"
-          echo "======================================"
-
-          cat lambda/product/requirements.txt
+          echo "Lambda files found."
 
 
-      # ======================================================
-      # 7. CLEAN PACKAGE DIRECTORY
-      # ======================================================
-
-      - name: Clean Lambda package
-
-        run: |
-
-          find lambda/product \
-            -type d \
-            -name "__pycache__" \
-            -prune \
-            -exec rm -rf {} +
-
-          rm -rf lambda/product/boto3
-          rm -rf lambda/product/botocore
-
-
-      # ======================================================
-      # 8. INSTALL DEPENDENCIES
-      # ======================================================
+      # ========================================================
+      # 6. INSTALL DEPENDENCIES
+      # ========================================================
 
       - name: Install Product Lambda dependencies
 
@@ -160,15 +120,14 @@ jobs:
 
           python -m pip install \
             -r lambda/product/requirements.txt \
-            -t lambda/product/ \
-            --upgrade
+            -t lambda/product/
 
 
-      # ======================================================
-      # 9. VERIFY DEPENDENCIES
-      # ======================================================
+      # ========================================================
+      # 7. VERIFY DEPENDENCIES
+      # ========================================================
 
-      - name: Verify Lambda dependencies
+      - name: Verify installed dependencies
 
         run: |
 
@@ -176,11 +135,9 @@ jobs:
           echo "VERIFYING DEPENDENCIES"
           echo "======================================"
 
+          cd lambda/product
+
           python - <<'PY'
-
-          import sys
-
-          sys.path.insert(0, "lambda/product")
 
           import pymysql
           import cryptography
@@ -188,28 +145,16 @@ jobs:
           print("PyMySQL:", pymysql.__version__)
           print("cryptography:", cryptography.__version__)
 
+          print("Dependencies OK.")
+
           PY
 
-
-      # ======================================================
-      # 10. VERIFY REQUIRED FILES
-      # ======================================================
-
-      - name: Verify dependency files
-
-        run: |
-
-          test -d lambda/product/pymysql
-
-          test -d lambda/product/cryptography
-
-          echo "PyMySQL package found."
-          echo "cryptography package found."
+          cd ../..
 
 
-      # ======================================================
-      # 11. CREATE ZIP
-      # ======================================================
+      # ========================================================
+      # 8. PACKAGE PRODUCT LAMBDA
+      # ========================================================
 
       - name: Package Product Lambda
 
@@ -224,31 +169,33 @@ jobs:
           cd ../..
 
           echo "======================================"
-          echo "PRODUCT ZIP"
+          echo "PRODUCT LAMBDA PACKAGE"
           echo "======================================"
 
           ls -lh product.zip
 
 
-      # ======================================================
-      # 12. VERIFY ZIP CONTENT
-      # ======================================================
+      # ========================================================
+      # 9. VERIFY ZIP
+      # ========================================================
 
-      - name: Verify Lambda ZIP
+      - name: Verify Lambda package
 
         run: |
 
           echo "======================================"
-          echo "ZIP CONTENT CHECK"
+          echo "CHECKING ZIP CONTENT"
           echo "======================================"
 
           unzip -l product.zip | grep -E \
             "lambda_function.py|pymysql|cryptography"
 
+          echo "Lambda package verified."
 
-      # ======================================================
-      # 13. GET ARTIFACT BUCKET
-      # ======================================================
+
+      # ========================================================
+      # 10. GET ARTIFACT BUCKET
+      # ========================================================
 
       - name: Get Lambda Artifact Bucket
 
@@ -257,7 +204,7 @@ jobs:
         run: |
 
           ARTIFACT_BUCKET=$(aws cloudformation describe-stacks \
-            --stack-name "${DATA_STACK}" \
+            --stack-name cloudmart-dev-data \
             --region "${AWS_REGION}" \
             --query "Stacks[0].Outputs[?OutputKey=='LambdaArtifactBucketName'].OutputValue" \
             --output text)
@@ -272,18 +219,16 @@ jobs:
 
           echo "Artifact bucket: $ARTIFACT_BUCKET"
 
-          echo "bucket=${ARTIFACT_BUCKET}" >> "$GITHUB_OUTPUT"
+          echo "bucket=$ARTIFACT_BUCKET" >> "$GITHUB_OUTPUT"
 
 
-      # ======================================================
-      # 14. UPLOAD ZIP
-      # ======================================================
+      # ========================================================
+      # 11. CREATE UNIQUE S3 KEY
+      # ========================================================
 
-      - name: Upload Product Lambda package
+      - name: Create Product Lambda S3 key
 
-        env:
-
-          ARTIFACT_BUCKET: ${{ steps.artifact.outputs.bucket }}
+        id: package
 
         run: |
 
@@ -291,23 +236,40 @@ jobs:
 
           echo "Product code key: ${PRODUCT_CODE_KEY}"
 
+          echo "key=${PRODUCT_CODE_KEY}" >> "$GITHUB_OUTPUT"
+
+
+      # ========================================================
+      # 12. UPLOAD ZIP
+      # ========================================================
+
+      - name: Upload Product Lambda package
+
+        env:
+
+          ARTIFACT_BUCKET: ${{ steps.artifact.outputs.bucket }}
+
+          PRODUCT_CODE_KEY: ${{ steps.package.outputs.key }}
+
+        run: |
+
           aws s3 cp \
             product.zip \
             "s3://${ARTIFACT_BUCKET}/${PRODUCT_CODE_KEY}" \
             --region "${AWS_REGION}"
 
-          echo "product_key=${PRODUCT_CODE_KEY}" >> "$GITHUB_ENV"
 
-
-      # ======================================================
-      # 15. VERIFY S3
-      # ======================================================
+      # ========================================================
+      # 13. VERIFY S3
+      # ========================================================
 
       - name: Verify Product Lambda package
 
         env:
 
           ARTIFACT_BUCKET: ${{ steps.artifact.outputs.bucket }}
+
+          PRODUCT_CODE_KEY: ${{ steps.package.outputs.key }}
 
         run: |
 
@@ -316,112 +278,84 @@ jobs:
             --region "${AWS_REGION}"
 
 
-      # ======================================================
-      # 16. VALIDATE CLOUDFORMATION
-      # ======================================================
+      # ========================================================
+      # 14. GET SUBNET A
+      # ========================================================
 
-      - name: Validate API CloudFormation
+      - name: Get Private Subnet A
 
-        run: |
-
-          aws cloudformation validate-template \
-            --template-body file://cloudformation/api/api-stack.yaml \
-            --region "${AWS_REGION}"
-
-
-      # ======================================================
-      # 17. GET NETWORK RESOURCES
-      # ======================================================
-
-      - name: Get network resources
-
-        id: network
+        id: subnet-a
 
         run: |
-
-          echo "======================================"
-          echo "NETWORK RESOURCES"
-          echo "======================================"
 
           SUBNET_A=$(aws cloudformation describe-stacks \
-            --stack-name "${NETWORK_STACK}" \
+            --stack-name cloudmart-dev-network \
             --region "${AWS_REGION}" \
             --query "Stacks[0].Outputs[?OutputKey=='PrivateSubnetAId'].OutputValue" \
             --output text)
 
+          test -n "$SUBNET_A"
+
+          test "$SUBNET_A" != "None"
+
+          echo "Private Subnet A: $SUBNET_A"
+
+          echo "subnet=$SUBNET_A" >> "$GITHUB_OUTPUT"
+
+
+      # ========================================================
+      # 15. GET SUBNET B
+      # ========================================================
+
+      - name: Get Private Subnet B
+
+        id: subnet-b
+
+        run: |
+
           SUBNET_B=$(aws cloudformation describe-stacks \
-            --stack-name "${NETWORK_STACK}" \
+            --stack-name cloudmart-dev-network \
             --region "${AWS_REGION}" \
             --query "Stacks[0].Outputs[?OutputKey=='PrivateSubnetBId'].OutputValue" \
             --output text)
 
+          test -n "$SUBNET_B"
+
+          test "$SUBNET_B" != "None"
+
+          echo "Private Subnet B: $SUBNET_B"
+
+          echo "subnet=$SUBNET_B" >> "$GITHUB_OUTPUT"
+
+
+      # ========================================================
+      # 16. GET LAMBDA SECURITY GROUP
+      # ========================================================
+
+      - name: Get Lambda Security Group
+
+        id: lambda-sg
+
+        run: |
+
           LAMBDA_SG=$(aws cloudformation describe-stacks \
-            --stack-name "${NETWORK_STACK}" \
+            --stack-name cloudmart-dev-network \
             --region "${AWS_REGION}" \
             --query "Stacks[0].Outputs[?OutputKey=='LambdaSecurityGroupId'].OutputValue" \
             --output text)
 
+          test -n "$LAMBDA_SG"
 
-          echo "Subnet A: ${SUBNET_A}"
-          echo "Subnet B: ${SUBNET_B}"
-          echo "Lambda SG: ${LAMBDA_SG}"
+          test "$LAMBDA_SG" != "None"
 
+          echo "Lambda Security Group: $LAMBDA_SG"
 
-          test -n "${SUBNET_A}"
-          test "${SUBNET_A}" != "None"
-
-          test -n "${SUBNET_B}"
-          test "${SUBNET_B}" != "None"
-
-          test -n "${LAMBDA_SG}"
-          test "${LAMBDA_SG}" != "None"
+          echo "security_group=$LAMBDA_SG" >> "$GITHUB_OUTPUT"
 
 
-          echo "subnet_a=${SUBNET_A}" >> "$GITHUB_OUTPUT"
-
-          echo "subnet_b=${SUBNET_B}" >> "$GITHUB_OUTPUT"
-
-          echo "security_group=${LAMBDA_SG}" >> "$GITHUB_OUTPUT"
-
-
-      # ======================================================
-      # 18. VERIFY NETWORK RESOURCES REALLY EXIST
-      # ======================================================
-
-      - name: Verify network resources
-
-        run: |
-
-          echo "Checking subnet A..."
-
-          aws ec2 describe-subnets \
-            --subnet-ids "${{ steps.network.outputs.subnet_a }}" \
-            --region "${AWS_REGION}" \
-            --query "Subnets[0].SubnetId" \
-            --output text
-
-
-          echo "Checking subnet B..."
-
-          aws ec2 describe-subnets \
-            --subnet-ids "${{ steps.network.outputs.subnet_b }}" \
-            --region "${AWS_REGION}" \
-            --query "Subnets[0].SubnetId" \
-            --output text
-
-
-          echo "Checking security group..."
-
-          aws ec2 describe-security-groups \
-            --group-ids "${{ steps.network.outputs.security_group }}" \
-            --region "${AWS_REGION}" \
-            --query "SecurityGroups[0].GroupId" \
-            --output text
-
-
-      # ======================================================
-      # 19. GET PRODUCT IAM ROLE
-      # ======================================================
+      # ========================================================
+      # 17. GET PRODUCT IAM ROLE
+      # ========================================================
 
       - name: Get Product Lambda IAM Role
 
@@ -430,48 +364,23 @@ jobs:
         run: |
 
           PRODUCT_ROLE=$(aws cloudformation describe-stacks \
-            --stack-name "${IAM_STACK}" \
+            --stack-name cloudmart-dev-iam \
             --region "${AWS_REGION}" \
             --query "Stacks[0].Outputs[?OutputKey=='ProductLambdaRoleArn'].OutputValue" \
             --output text)
 
-          if [ -z "$PRODUCT_ROLE" ] || [ "$PRODUCT_ROLE" = "None" ]; then
+          test -n "$PRODUCT_ROLE"
 
-            echo "ERROR: Product Lambda role not found."
+          test "$PRODUCT_ROLE" != "None"
 
-            exit 1
+          echo "Product Role: $PRODUCT_ROLE"
 
-          fi
-
-          echo "Product role: ${PRODUCT_ROLE}"
-
-          echo "product_role=${PRODUCT_ROLE}" >> "$GITHUB_OUTPUT"
+          echo "product_role=$PRODUCT_ROLE" >> "$GITHUB_OUTPUT"
 
 
-      # ======================================================
-      # 20. VERIFY IAM ROLE REALLY EXISTS
-      # ======================================================
-
-      - name: Verify Product IAM role
-
-        run: |
-
-          ROLE_ARN="${{ steps.iam.outputs.product_role }}"
-
-          echo "Checking role:"
-          echo "${ROLE_ARN}"
-
-          ROLE_NAME=$(echo "${ROLE_ARN}" | awk -F/ '{print $NF}')
-
-          aws iam get-role \
-            --role-name "${ROLE_NAME}" \
-            --query "Role.Arn" \
-            --output text
-
-
-      # ======================================================
-      # 21. GET AUTHORIZER ARN
-      # ======================================================
+      # ========================================================
+      # 18. GET AUTHORIZER ARN
+      # ========================================================
 
       - name: Get Authorizer Lambda ARN
 
@@ -480,129 +389,58 @@ jobs:
         run: |
 
           AUTHORIZER_ARN=$(aws cloudformation describe-stacks \
-            --stack-name "${AUTH_STACK}" \
+            --stack-name cloudmart-dev-auth \
             --region "${AWS_REGION}" \
             --query "Stacks[0].Outputs[?OutputKey=='AuthorizerLambdaArn'].OutputValue" \
             --output text)
 
-          if [ -z "$AUTHORIZER_ARN" ] || [ "$AUTHORIZER_ARN" = "None" ]; then
+          test -n "$AUTHORIZER_ARN"
 
-            echo "ERROR: Authorizer Lambda ARN not found."
+          test "$AUTHORIZER_ARN" != "None"
 
-            exit 1
+          echo "Authorizer ARN: $AUTHORIZER_ARN"
 
-          fi
-
-          echo "Authorizer ARN:"
-          echo "${AUTHORIZER_ARN}"
-
-          echo "authorizer_arn=${AUTHORIZER_ARN}" >> "$GITHUB_OUTPUT"
+          echo "authorizer_arn=$AUTHORIZER_ARN" >> "$GITHUB_OUTPUT"
 
 
-      # ======================================================
-      # 22. VERIFY AUTHORIZER REALLY EXISTS
-      # ======================================================
+      # ========================================================
+      # 19. VALIDATE CLOUDFORMATION
+      # ========================================================
 
-      - name: Verify Authorizer Lambda
+      - name: Validate API CloudFormation
 
         run: |
 
-          AUTHORIZER_ARN="${{ steps.auth.outputs.authorizer_arn }}"
+          echo "======================================"
+          echo "VALIDATING API STACK"
+          echo "======================================"
 
-          echo "Checking authorizer..."
-
-          aws lambda get-function \
-            --function-name "${AUTHORIZER_ARN}" \
-            --region "${AWS_REGION}" \
-            --query "Configuration.FunctionArn" \
-            --output text
+          aws cloudformation validate-template \
+            --template-body file://cloudformation/api/api-stack.yaml \
+            --region "${AWS_REGION}"
 
 
-      # ======================================================
-      # 23. VERIFY SSM PARAMETERS
-      # ======================================================
-
-      - name: Verify database SSM parameters
-
-        run: |
-
-          echo "Checking database parameters..."
-
-          aws ssm get-parameter \
-            --name "/cloudmart/dev/db/host" \
-            --region "${AWS_REGION}" \
-            --query "Parameter.Name" \
-            --output text
-
-
-          aws ssm get-parameter \
-            --name "/cloudmart/dev/db/name" \
-            --region "${AWS_REGION}" \
-            --query "Parameter.Name" \
-            --output text
-
-
-          aws ssm get-parameter \
-            --name "/cloudmart/dev/db/username" \
-            --region "${AWS_REGION}" \
-            --query "Parameter.Name" \
-            --output text
-
-
-          aws ssm get-parameter \
-            --name "/cloudmart/dev/db/password" \
-            --region "${AWS_REGION}" \
-            --query "Parameter.Name" \
-            --output text
-
-
-          aws ssm get-parameter \
-            --name "/cloudmart/dev/db/port" \
-            --region "${AWS_REGION}" \
-            --query "Parameter.Name" \
-            --output text
-
-
-      # ======================================================
-      # 24. DELETE OLD REVIEW STACK
-      # ======================================================
-
-      - name: Remove failed API stack
-
-        run: |
-
-          STATUS=$(aws cloudformation describe-stacks \
-            --stack-name "${API_STACK}" \
-            --region "${AWS_REGION}" \
-            --query "Stacks[0].StackStatus" \
-            --output text 2>/dev/null || true)
-
-
-          echo "Existing API stack status: ${STATUS}"
-
-
-          if [ "${STATUS}" = "REVIEW_IN_PROGRESS" ]; then
-
-            echo "Deleting REVIEW_IN_PROGRESS stack..."
-
-            aws cloudformation delete-stack \
-              --stack-name "${API_STACK}" \
-              --region "${AWS_REGION}"
-
-            aws cloudformation wait stack-delete-complete \
-              --stack-name "${API_STACK}" \
-              --region "${AWS_REGION}"
-
-            echo "Old review stack deleted."
-
-          fi
-
-
-      # ======================================================
-      # 25. DEPLOY API STACK
-      # ======================================================
+      # ========================================================
+      # 20. DEPLOY API STACK
+      # ========================================================
 
       - name: Deploy API Stack
+
+        env:
+
+          ARTIFACT_BUCKET: ${{ steps.artifact.outputs.bucket }}
+
+          PRODUCT_CODE_KEY: ${{ steps.package.outputs.key }}
+
+          SUBNET_A: ${{ steps.subnet-a.outputs.subnet }}
+
+          SUBNET_B: ${{ steps.subnet-b.outputs.subnet }}
+
+          LAMBDA_SG: ${{ steps.lambda-sg.outputs.security_group }}
+
+          PRODUCT_ROLE: ${{ steps.iam.outputs.product_role }}
+
+          AUTHORIZER_ARN: ${{ steps.auth.outputs.authorizer_arn }}
 
         run: |
 
@@ -611,72 +449,50 @@ jobs:
           echo "======================================"
 
           echo "Artifact bucket:"
-          echo "${{ steps.artifact.outputs.bucket }}"
+          echo "${ARTIFACT_BUCKET}"
 
           echo "Product code:"
           echo "${PRODUCT_CODE_KEY}"
 
           echo "Subnet A:"
-          echo "${{ steps.network.outputs.subnet_a }}"
+          echo "${SUBNET_A}"
 
           echo "Subnet B:"
-          echo "${{ steps.network.outputs.subnet_b }}"
+          echo "${SUBNET_B}"
 
           echo "Security Group:"
-          echo "${{ steps.network.outputs.security_group }}"
+          echo "${LAMBDA_SG}"
 
           echo "Product Role:"
-          echo "${{ steps.iam.outputs.product_role }}"
+          echo "${PRODUCT_ROLE}"
 
           echo "Authorizer:"
-          echo "${{ steps.auth.outputs.authorizer_arn }}"
+          echo "${AUTHORIZER_ARN}"
 
 
           aws cloudformation deploy \
             --template-file cloudformation/api/api-stack.yaml \
-            --stack-name "${API_STACK}" \
+            --stack-name cloudmart-dev-api \
+            --capabilities CAPABILITY_IAM \
             --parameter-overrides \
               Environment="${ENVIRONMENT}" \
-              PrivateSubnetIds="${{ steps.network.outputs.subnet_a }},${{ steps.network.outputs.subnet_b }}" \
-              LambdaSecurityGroupId="${{ steps.network.outputs.security_group }}" \
-              ProductLambdaExecutionRoleArn="${{ steps.iam.outputs.product_role }}" \
-              AuthorizerLambdaArn="${{ steps.auth.outputs.authorizer_arn }}" \
-              LambdaCodeBucket="${{ steps.artifact.outputs.bucket }}" \
+              PrivateSubnetIds="${SUBNET_A},${SUBNET_B}" \
+              LambdaSecurityGroupId="${LAMBDA_SG}" \
+              ProductLambdaExecutionRoleArn="${PRODUCT_ROLE}" \
+              AuthorizerLambdaArn="${AUTHORIZER_ARN}" \
+              LambdaCodeBucket="${ARTIFACT_BUCKET}" \
               ProductLambdaCodeKey="${PRODUCT_CODE_KEY}" \
               DBHostParameter="/cloudmart/dev/db/host" \
               DBNameParameter="/cloudmart/dev/db/name" \
               DBUsernameParameter="/cloudmart/dev/db/username" \
               DBPasswordParameter="/cloudmart/dev/db/password" \
               DBPortParameter="/cloudmart/dev/db/port" \
-            --capabilities CAPABILITY_IAM \
             --region "${AWS_REGION}"
 
 
-      # ======================================================
-      # 26. SHOW CLOUDFORMATION EVENTS
-      # ======================================================
-
-      - name: Show CloudFormation Events
-
-        if: always()
-
-        run: |
-
-          echo "======================================"
-          echo "CLOUDFORMATION EVENTS"
-          echo "======================================"
-
-
-          aws cloudformation describe-stack-events \
-            --stack-name "${API_STACK}" \
-            --region "${AWS_REGION}" \
-            --query "StackEvents[0:20].[Timestamp,LogicalResourceId,ResourceType,ResourceStatus,ResourceStatusReason]" \
-            --output table || true
-
-
-      # ======================================================
-      # 27. CHECK API STACK
-      # ======================================================
+      # ========================================================
+      # 21. CHECK STACK
+      # ========================================================
 
       - name: Check API Stack
 
@@ -686,38 +502,36 @@ jobs:
           echo "API STACK STATUS"
           echo "======================================"
 
-
           STATUS=$(aws cloudformation describe-stacks \
-            --stack-name "${API_STACK}" \
+            --stack-name cloudmart-dev-api \
             --region "${AWS_REGION}" \
             --query "Stacks[0].StackStatus" \
             --output text)
 
-
           echo "Stack status: ${STATUS}"
 
+          case "$STATUS" in
 
-          case "${STATUS}" in
+            CREATE_COMPLETE|UPDATE_COMPLETE)
 
-            CREATE_COMPLETE)
-              echo "API stack created successfully."
-              ;;
+              echo "API stack is healthy."
 
-            UPDATE_COMPLETE)
-              echo "API stack updated successfully."
               ;;
 
             *)
+
               echo "ERROR: API stack is not healthy."
+
               exit 1
+
               ;;
 
           esac
 
 
-      # ======================================================
-      # 28. DISPLAY API URL
-      # ======================================================
+      # ========================================================
+      # 22. DISPLAY API URL
+      # ========================================================
 
       - name: Display API URL
 
@@ -727,9 +541,12 @@ jobs:
           echo "CLOUDMART API URL"
           echo "======================================"
 
-
-          aws cloudformation describe-stacks \
-            --stack-name "${API_STACK}" \
+          API_URL=$(aws cloudformation describe-stacks \
+            --stack-name cloudmart-dev-api \
             --region "${AWS_REGION}" \
             --query "Stacks[0].Outputs[?OutputKey=='ApiUrl'].OutputValue" \
-            --output text
+            --output text)
+
+          echo "${API_URL}"
+
+          echo "======================================"
