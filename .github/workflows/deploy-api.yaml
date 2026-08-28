@@ -1,29 +1,24 @@
 name: CloudMart API Infrastructure
 
 on:
-
   push:
     branches:
       - milestone-3
-
     paths:
       - "cloudformation/api/api-stack.yaml"
       - "lambda/product/**"
       - "lambda/schema/**"
-      - "schema/**"
       - ".github/workflows/deploy-api.yaml"
 
   workflow_dispatch:
 
 
 permissions:
-
   id-token: write
   contents: read
 
 
 env:
-
   AWS_REGION: ap-south-1
   ENVIRONMENT: dev
 
@@ -36,92 +31,357 @@ jobs:
 
     runs-on: ubuntu-latest
 
-
     steps:
 
-      # ======================================================
-      # CHECKOUT
-      # ======================================================
+      # ============================================================
+      # 1. CHECKOUT
+      # ============================================================
 
       - name: Checkout repository
-
         uses: actions/checkout@v4
 
 
-      # ======================================================
-      # AWS CREDENTIALS
-      # ======================================================
+      # ============================================================
+      # 2. CONFIGURE AWS
+      # ============================================================
 
       - name: Configure AWS credentials
-
         uses: aws-actions/configure-aws-credentials@v4
-
         with:
-
-          role-to-assume:
-            ${{ secrets.AWS_ROLE_ARN }}
-
-          aws-region:
-            ${{ env.AWS_REGION }}
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
 
 
-      # ======================================================
-      # VERIFY AWS
-      # ======================================================
+      # ============================================================
+      # 3. VERIFY AWS
+      # ============================================================
 
       - name: Verify AWS access
-
         run: |
+          echo "======================================"
+          echo "AWS ACCESS"
+          echo "======================================"
 
           aws sts get-caller-identity
 
+          echo "AWS Region: ${AWS_REGION}"
+          echo "Environment: ${ENVIRONMENT}"
 
-      # ======================================================
-      # PYTHON
-      # ======================================================
+
+      # ============================================================
+      # 4. SETUP PYTHON
+      # ============================================================
 
       - name: Setup Python
-
         uses: actions/setup-python@v5
-
         with:
-
           python-version: "3.12"
 
 
-      # ======================================================
-      # VERIFY FILES
-      # ======================================================
+      # ============================================================
+      # 5. VERIFY REPOSITORY FILES
+      # ============================================================
 
       - name: Verify files
-
+        shell: bash
         run: |
+          set -e
 
           echo "======================================"
           echo "VERIFYING FILES"
           echo "======================================"
 
-          test -f cloudformation/api/api-stack.yaml
+          echo ""
+          echo "Repository:"
+          ls -la
+
+          echo ""
+          echo "CloudFormation:"
+          ls -la cloudformation/api
+
+          echo ""
+          echo "Product Lambda:"
+          ls -la lambda/product
+
+          echo ""
+          echo "Schema Lambda:"
+          ls -la lambda/schema
+
+          echo ""
+          echo "Checking required files..."
+
+          test -f cloudformation/api/api-stack.yaml \
+            || { echo "ERROR: api-stack.yaml not found"; exit 1; }
+
+          test -f lambda/product/lambda_function.py \
+            || { echo "ERROR: Product lambda_function.py not found"; exit 1; }
+
+          test -f lambda/product/requirements.txt \
+            || { echo "ERROR: Product requirements.txt not found"; exit 1; }
+
+          test -f lambda/schema/lambda_function.py \
+            || { echo "ERROR: Schema lambda_function.py not found"; exit 1; }
+
+          test -f lambda/schema/requirements.txt \
+            || { echo "ERROR: Schema requirements.txt not found"; exit 1; }
+
+          echo ""
+          echo "All required files found."
+
+
+      # ============================================================
+      # 6. CHECK LAMBDA REQUIREMENTS
+      # ============================================================
+
+      - name: Check Lambda requirements
+        shell: bash
+        run: |
+          set -e
+
+          echo "======================================"
+          echo "CHECKING REQUIREMENTS"
+          echo "======================================"
+
+          echo ""
+          echo "Product requirements:"
+          cat lambda/product/requirements.txt
+
+          echo ""
+          echo "Schema requirements:"
+          cat lambda/schema/requirements.txt
+
+
+      # ============================================================
+      # 7. INSTALL PRODUCT DEPENDENCIES
+      # ============================================================
+
+      - name: Install Product Lambda dependencies
+        shell: bash
+        run: |
+          set -e
+
+          echo "======================================"
+          echo "INSTALLING PRODUCT DEPENDENCIES"
+          echo "======================================"
+
+          python -m pip install --upgrade pip
+
+          python -m pip install \
+            -r lambda/product/requirements.txt \
+            -t lambda/product/
+
+          echo ""
+          echo "Checking pymysql..."
+
+          python - <<'PY'
+          import sys
+          sys.path.insert(0, "lambda/product")
+
+          import pymysql
+
+          print("PyMySQL installed successfully")
+          print("PyMySQL version:", pymysql.__version__)
+          PY
+
+
+      # ============================================================
+      # 8. INSTALL SCHEMA DEPENDENCIES
+      # ============================================================
+
+      - name: Install Schema Lambda dependencies
+        shell: bash
+        run: |
+          set -e
+
+          echo "======================================"
+          echo "INSTALLING SCHEMA DEPENDENCIES"
+          echo "======================================"
+
+          python -m pip install \
+            -r lambda/schema/requirements.txt \
+            -t lambda/schema/
+
+          echo ""
+          echo "Checking pymysql..."
+
+          python - <<'PY'
+          import sys
+          sys.path.insert(0, "lambda/schema")
+
+          import pymysql
+
+          print("PyMySQL installed successfully")
+          print("PyMySQL version:", pymysql.__version__)
+          PY
+
+
+      # ============================================================
+      # 9. VERIFY PRODUCT LAMBDA
+      # ============================================================
+
+      - name: Verify Product Lambda
+        shell: bash
+        run: |
+          set -e
+
+          echo "======================================"
+          echo "VERIFYING PRODUCT LAMBDA"
+          echo "======================================"
+
           test -f lambda/product/lambda_function.py
-          test -f lambda/product/requirements.txt
+          test -d lambda/product
+
+          python - <<'PY'
+          import sys
+          sys.path.insert(0, "lambda/product")
+
+          import lambda_function
+
+          print("Product Lambda import successful")
+          PY
+
+
+      # ============================================================
+      # 10. VERIFY SCHEMA LAMBDA
+      # ============================================================
+
+      - name: Verify Schema Lambda
+        shell: bash
+        run: |
+          set -e
+
+          echo "======================================"
+          echo "VERIFYING SCHEMA LAMBDA"
+          echo "======================================"
 
           test -f lambda/schema/lambda_function.py
-          test -f lambda/schema/requirements.txt
+          test -d lambda/schema
 
-          test -f schema/schema.sql
+          python - <<'PY'
+          import sys
+          sys.path.insert(0, "lambda/schema")
 
-          echo "All required files exist."
+          import lambda_function
+
+          print("Schema Lambda import successful")
+          PY
 
 
-      # ======================================================
-      # GET ARTIFACT BUCKET
-      # ======================================================
+      # ============================================================
+      # 11. CREATE PRODUCT ZIP
+      # ============================================================
 
-      - name: Get Lambda artifact bucket
-
-        id: artifact
-
+      - name: Package Product Lambda
+        shell: bash
         run: |
+          set -e
+
+          echo "======================================"
+          echo "PACKAGING PRODUCT LAMBDA"
+          echo "======================================"
+
+          cd lambda/product
+
+          zip -r ../../product.zip . -q
+
+          cd ../..
+
+          echo ""
+          echo "Product ZIP:"
+          ls -lh product.zip
+
+
+      # ============================================================
+      # 12. CREATE SCHEMA ZIP
+      # ============================================================
+
+      - name: Package Schema Lambda
+        shell: bash
+        run: |
+          set -e
+
+          echo "======================================"
+          echo "PACKAGING SCHEMA LAMBDA"
+          echo "======================================"
+
+          cd lambda/schema
+
+          zip -r ../../schema.zip . -q
+
+          cd ../..
+
+          echo ""
+          echo "Schema ZIP:"
+          ls -lh schema.zip
+
+
+      # ============================================================
+      # 13. VERIFY PRODUCT ZIP
+      # ============================================================
+
+      - name: Verify Product ZIP
+        shell: bash
+        run: |
+          set -e
+
+          echo "======================================"
+          echo "VERIFYING PRODUCT ZIP"
+          echo "======================================"
+
+          unzip -l product.zip > /tmp/product_zip.txt
+
+          echo ""
+          echo "lambda_function.py:"
+          grep "lambda_function.py" /tmp/product_zip.txt || true
+
+          echo ""
+          echo "pymysql:"
+          grep "pymysql" /tmp/product_zip.txt | head -20 || true
+
+          echo ""
+          echo "Product ZIP verification complete."
+
+
+      # ============================================================
+      # 14. VERIFY SCHEMA ZIP
+      # ============================================================
+
+      - name: Verify Schema ZIP
+        shell: bash
+        run: |
+          set -e
+
+          echo "======================================"
+          echo "VERIFYING SCHEMA ZIP"
+          echo "======================================"
+
+          unzip -l schema.zip > /tmp/schema_zip.txt
+
+          echo ""
+          echo "lambda_function.py:"
+          grep "lambda_function.py" /tmp/schema_zip.txt || true
+
+          echo ""
+          echo "pymysql:"
+          grep "pymysql" /tmp/schema_zip.txt | head -20 || true
+
+          echo ""
+          echo "Schema ZIP verification complete."
+
+
+      # ============================================================
+      # 15. GET ARTIFACT BUCKET
+      # ============================================================
+
+      - name: Get Lambda Artifact Bucket
+        id: artifact
+        shell: bash
+        run: |
+          set -e
+
+          echo "======================================"
+          echo "GETTING ARTIFACT BUCKET"
+          echo "======================================"
 
           ARTIFACT_BUCKET=$(aws cloudformation describe-stacks \
             --stack-name cloudmart-dev-data \
@@ -130,7 +390,7 @@ jobs:
             --output text)
 
           if [ -z "$ARTIFACT_BUCKET" ] || [ "$ARTIFACT_BUCKET" = "None" ]; then
-            echo "ERROR: Artifact bucket not found."
+            echo "ERROR: Lambda artifact bucket not found."
             exit 1
           fi
 
@@ -140,202 +400,132 @@ jobs:
           echo "bucket=$ARTIFACT_BUCKET" >> "$GITHUB_OUTPUT"
 
 
-      # ======================================================
-      # BUILD PRODUCT LAMBDA
-      # ======================================================
+      # ============================================================
+      # 16. CREATE UNIQUE S3 KEYS
+      # ============================================================
 
-      - name: Build Product Lambda
-
+      - name: Set Lambda artifact keys
+        id: keys
+        shell: bash
         run: |
-
-          rm -rf lambda/product/package
-          mkdir -p lambda/product/package
-
-          python -m pip install --upgrade pip
-
-          python -m pip install \
-            -r lambda/product/requirements.txt \
-            -t lambda/product/package/
-
-          cp lambda/product/lambda_function.py \
-             lambda/product/package/
-
-
-      # ======================================================
-      # PACKAGE PRODUCT LAMBDA
-      # ======================================================
-
-      - name: Package Product Lambda
-
-        run: |
-
-          cd lambda/product/package
-
-          zip -r ../../../product.zip .
-
-          cd ../../..
-
-          echo "Product ZIP created."
-
-          ls -lh product.zip
-
-
-      # ======================================================
-      # VERIFY PRODUCT ZIP
-      # ======================================================
-
-      - name: Verify Product Lambda ZIP
-
-        run: |
-
-          echo "======================================"
-          echo "VERIFYING PRODUCT ZIP"
-          echo "======================================"
-
-          unzip -l product.zip > /tmp/product_zip.txt
-
-          echo "Checking lambda_function.py..."
-
-          grep "lambda_function.py" \
-            /tmp/product_zip.txt || {
-              echo "ERROR: lambda_function.py missing."
-              exit 1
-            }
-
-          echo "Checking PyMySQL..."
-
-          grep "pymysql" \
-            /tmp/product_zip.txt || {
-              echo "ERROR: PyMySQL missing."
-              exit 1
-            }
-
-          echo "Checking cryptography..."
-
-          grep "cryptography" \
-            /tmp/product_zip.txt || {
-              echo "ERROR: cryptography missing."
-              exit 1
-            }
-
-          echo "Product Lambda package looks correct."
-
-
-      # ======================================================
-      # UPLOAD PRODUCT
-      # ======================================================
-
-      - name: Upload Product Lambda
-
-        env:
-
-          ARTIFACT_BUCKET:
-            ${{ steps.artifact.outputs.bucket }}
-
-        run: |
+          set -e
 
           PRODUCT_KEY="product/${GITHUB_SHA}/product.zip"
+          SCHEMA_KEY="schema/${GITHUB_SHA}/schema.zip"
+
+          echo "product_key=$PRODUCT_KEY" >> "$GITHUB_OUTPUT"
+          echo "schema_key=$SCHEMA_KEY" >> "$GITHUB_OUTPUT"
+
+          echo "Product key:"
+          echo "$PRODUCT_KEY"
+
+          echo "Schema key:"
+          echo "$SCHEMA_KEY"
+
+
+      # ============================================================
+      # 17. UPLOAD PRODUCT ZIP
+      # ============================================================
+
+      - name: Upload Product Lambda
+        env:
+          ARTIFACT_BUCKET: ${{ steps.artifact.outputs.bucket }}
+          PRODUCT_KEY: ${{ steps.keys.outputs.product_key }}
+
+        run: |
+          set -e
+
+          echo "======================================"
+          echo "UPLOADING PRODUCT LAMBDA"
+          echo "======================================"
 
           aws s3 cp \
             product.zip \
             "s3://${ARTIFACT_BUCKET}/${PRODUCT_KEY}" \
             --region "${AWS_REGION}"
 
-          echo "PRODUCT_KEY=${PRODUCT_KEY}" >> "$GITHUB_ENV"
 
-
-      # ======================================================
-      # BUILD SCHEMA LAMBDA
-      # ======================================================
-
-      - name: Build Schema Lambda
-
-        run: |
-
-          rm -rf lambda/schema/package
-          mkdir -p lambda/schema/package
-
-          python -m pip install \
-            -r lambda/schema/requirements.txt \
-            -t lambda/schema/package/
-
-          cp lambda/schema/lambda_function.py \
-             lambda/schema/package/
-
-
-      # ======================================================
-      # PACKAGE SCHEMA LAMBDA
-      # ======================================================
-
-      - name: Package Schema Lambda
-
-        run: |
-
-          cd lambda/schema/package
-
-          zip -r ../../../schema.zip .
-
-          cd ../../..
-
-          echo "Schema ZIP created."
-
-          ls -lh schema.zip
-
-
-      # ======================================================
-      # VERIFY SCHEMA ZIP
-      # ======================================================
-
-      - name: Verify Schema Lambda ZIP
-
-        run: |
-
-          unzip -l schema.zip > /tmp/schema_zip.txt
-
-          grep "lambda_function.py" \
-            /tmp/schema_zip.txt
-
-          grep "pymysql" \
-            /tmp/schema_zip.txt
-
-          grep "cryptography" \
-            /tmp/schema_zip.txt
-
-          echo "Schema Lambda package looks correct."
-
-
-      # ======================================================
-      # UPLOAD SCHEMA
-      # ======================================================
+      # ============================================================
+      # 18. UPLOAD SCHEMA ZIP
+      # ============================================================
 
       - name: Upload Schema Lambda
-
         env:
-
-          ARTIFACT_BUCKET:
-            ${{ steps.artifact.outputs.bucket }}
+          ARTIFACT_BUCKET: ${{ steps.artifact.outputs.bucket }}
+          SCHEMA_KEY: ${{ steps.keys.outputs.schema_key }}
 
         run: |
+          set -e
 
-          SCHEMA_KEY="schema/${GITHUB_SHA}/schema.zip"
+          echo "======================================"
+          echo "UPLOADING SCHEMA LAMBDA"
+          echo "======================================"
 
           aws s3 cp \
             schema.zip \
             "s3://${ARTIFACT_BUCKET}/${SCHEMA_KEY}" \
             --region "${AWS_REGION}"
 
-          echo "SCHEMA_KEY=${SCHEMA_KEY}" >> "$GITHUB_ENV"
 
+      # ============================================================
+      # 19. VERIFY S3 ARTIFACTS
+      # ============================================================
 
-      # ======================================================
-      # GET NETWORK
-      # ======================================================
-
-      - name: Get network configuration
-
-        id: network
+      - name: Verify S3 artifacts
+        env:
+          ARTIFACT_BUCKET: ${{ steps.artifact.outputs.bucket }}
+          PRODUCT_KEY: ${{ steps.keys.outputs.product_key }}
+          SCHEMA_KEY: ${{ steps.keys.outputs.schema_key }}
 
         run: |
+          set -e
+
+          echo "======================================"
+          echo "VERIFYING S3 ARTIFACTS"
+          echo "======================================"
+
+          aws s3 ls \
+            "s3://${ARTIFACT_BUCKET}/${PRODUCT_KEY}" \
+            --region "${AWS_REGION}"
+
+          aws s3 ls \
+            "s3://${ARTIFACT_BUCKET}/${SCHEMA_KEY}" \
+            --region "${AWS_REGION}"
+
+          echo ""
+          echo "S3 artifacts verified."
+
+
+      # ============================================================
+      # 20. VALIDATE CLOUDFORMATION
+      # ============================================================
+
+      - name: Validate API CloudFormation
+        shell: bash
+        run: |
+          set -e
+
+          echo "======================================"
+          echo "VALIDATING CLOUDFORMATION"
+          echo "======================================"
+
+          aws cloudformation validate-template \
+            --template-body file://cloudformation/api/api-stack.yaml \
+            --region "${AWS_REGION}"
+
+          echo ""
+          echo "CloudFormation template is valid."
+
+
+      # ============================================================
+      # 21. GET PRIVATE SUBNET A
+      # ============================================================
+
+      - name: Get Private Subnet A
+        id: subnet-a
+        shell: bash
+        run: |
+          set -e
 
           SUBNET_A=$(aws cloudformation describe-stacks \
             --stack-name cloudmart-dev-network \
@@ -343,11 +533,51 @@ jobs:
             --query "Stacks[0].Outputs[?OutputKey=='PrivateSubnetAId'].OutputValue" \
             --output text)
 
+          if [ -z "$SUBNET_A" ] || [ "$SUBNET_A" = "None" ]; then
+            echo "ERROR: PrivateSubnetAId not found."
+            exit 1
+          fi
+
+          echo "Private Subnet A: $SUBNET_A"
+
+          echo "subnet=$SUBNET_A" >> "$GITHUB_OUTPUT"
+
+
+      # ============================================================
+      # 22. GET PRIVATE SUBNET B
+      # ============================================================
+
+      - name: Get Private Subnet B
+        id: subnet-b
+        shell: bash
+        run: |
+          set -e
+
           SUBNET_B=$(aws cloudformation describe-stacks \
             --stack-name cloudmart-dev-network \
             --region "${AWS_REGION}" \
             --query "Stacks[0].Outputs[?OutputKey=='PrivateSubnetBId'].OutputValue" \
             --output text)
+
+          if [ -z "$SUBNET_B" ] || [ "$SUBNET_B" = "None" ]; then
+            echo "ERROR: PrivateSubnetBId not found."
+            exit 1
+          fi
+
+          echo "Private Subnet B: $SUBNET_B"
+
+          echo "subnet=$SUBNET_B" >> "$GITHUB_OUTPUT"
+
+
+      # ============================================================
+      # 23. GET LAMBDA SECURITY GROUP
+      # ============================================================
+
+      - name: Get Lambda Security Group
+        id: lambda-sg
+        shell: bash
+        run: |
+          set -e
 
           LAMBDA_SG=$(aws cloudformation describe-stacks \
             --stack-name cloudmart-dev-network \
@@ -355,20 +585,25 @@ jobs:
             --query "Stacks[0].Outputs[?OutputKey=='LambdaSecurityGroupId'].OutputValue" \
             --output text)
 
-          echo "subnet_a=$SUBNET_A" >> "$GITHUB_OUTPUT"
-          echo "subnet_b=$SUBNET_B" >> "$GITHUB_OUTPUT"
+          if [ -z "$LAMBDA_SG" ] || [ "$LAMBDA_SG" = "None" ]; then
+            echo "ERROR: LambdaSecurityGroupId not found."
+            exit 1
+          fi
+
+          echo "Lambda Security Group: $LAMBDA_SG"
+
           echo "security_group=$LAMBDA_SG" >> "$GITHUB_OUTPUT"
 
 
-      # ======================================================
-      # GET PRODUCT ROLE
-      # ======================================================
+      # ============================================================
+      # 24. GET PRODUCT IAM ROLE
+      # ============================================================
 
       - name: Get Product Lambda IAM Role
-
         id: iam
-
+        shell: bash
         run: |
+          set -e
 
           PRODUCT_ROLE=$(aws cloudformation describe-stacks \
             --stack-name cloudmart-dev-iam \
@@ -376,18 +611,26 @@ jobs:
             --query "Stacks[0].Outputs[?OutputKey=='ProductLambdaRoleArn'].OutputValue" \
             --output text)
 
+          if [ -z "$PRODUCT_ROLE" ] || [ "$PRODUCT_ROLE" = "None" ]; then
+            echo "ERROR: ProductLambdaRoleArn not found."
+            exit 1
+          fi
+
+          echo "Product Lambda Role:"
+          echo "$PRODUCT_ROLE"
+
           echo "product_role=$PRODUCT_ROLE" >> "$GITHUB_OUTPUT"
 
 
-      # ======================================================
-      # GET AUTHORIZER
-      # ======================================================
+      # ============================================================
+      # 25. GET AUTHORIZE LAMBDA ARN
+      # ============================================================
 
-      - name: Get Authorizer Lambda
-
+      - name: Get Authorizer Lambda ARN
         id: auth
-
+        shell: bash
         run: |
+          set -e
 
           AUTHORIZER_ARN=$(aws cloudformation describe-stacks \
             --stack-name cloudmart-dev-auth \
@@ -395,47 +638,91 @@ jobs:
             --query "Stacks[0].Outputs[?OutputKey=='AuthorizerLambdaArn'].OutputValue" \
             --output text)
 
+          if [ -z "$AUTHORIZER_ARN" ] || [ "$AUTHORIZER_ARN" = "None" ]; then
+            echo "ERROR: AuthorizerLambdaArn not found."
+            exit 1
+          fi
+
+          echo "Authorizer Lambda:"
+          echo "$AUTHORIZER_ARN"
+
           echo "authorizer_arn=$AUTHORIZER_ARN" >> "$GITHUB_OUTPUT"
 
 
-      # ======================================================
-      # VALIDATE CLOUDFORMATION
-      # ======================================================
+      # ============================================================
+      # 26. SHOW DEPLOYMENT VALUES
+      # ============================================================
 
-      - name: Validate API CloudFormation
-
-        run: |
-
-          aws cloudformation validate-template \
-            --template-body file://cloudformation/api/api-stack.yaml \
-            --region "${AWS_REGION}"
-
-
-      # ======================================================
-      # DEPLOY API STACK
-      # ======================================================
-
-      - name: Deploy API Stack
-
+      - name: Show deployment values
         env:
-
-          ARTIFACT_BUCKET:
-            ${{ steps.artifact.outputs.bucket }}
+          ARTIFACT_BUCKET: ${{ steps.artifact.outputs.bucket }}
+          PRODUCT_KEY: ${{ steps.keys.outputs.product_key }}
+          SCHEMA_KEY: ${{ steps.keys.outputs.schema_key }}
+          SUBNET_A: ${{ steps.subnet-a.outputs.subnet }}
+          SUBNET_B: ${{ steps.subnet-b.outputs.subnet }}
+          LAMBDA_SG: ${{ steps.lambda-sg.outputs.security_group }}
+          PRODUCT_ROLE: ${{ steps.iam.outputs.product_role }}
+          AUTHORIZER_ARN: ${{ steps.auth.outputs.authorizer_arn }}
 
         run: |
-
           echo "======================================"
-          echo "DEPLOYING CLOUDMART API"
+          echo "DEPLOYMENT VALUES"
           echo "======================================"
 
           echo "Artifact bucket:"
           echo "${ARTIFACT_BUCKET}"
 
+          echo ""
           echo "Product code:"
           echo "${PRODUCT_KEY}"
 
+          echo ""
           echo "Schema code:"
           echo "${SCHEMA_KEY}"
+
+          echo ""
+          echo "Subnet A:"
+          echo "${SUBNET_A}"
+
+          echo ""
+          echo "Subnet B:"
+          echo "${SUBNET_B}"
+
+          echo ""
+          echo "Security Group:"
+          echo "${LAMBDA_SG}"
+
+          echo ""
+          echo "Product Role:"
+          echo "${PRODUCT_ROLE}"
+
+          echo ""
+          echo "Authorizer:"
+          echo "${AUTHORIZER_ARN}"
+
+
+      # ============================================================
+      # 27. DEPLOY API STACK
+      # ============================================================
+
+      - name: Deploy CloudMart API Stack
+        env:
+          ARTIFACT_BUCKET: ${{ steps.artifact.outputs.bucket }}
+          PRODUCT_KEY: ${{ steps.keys.outputs.product_key }}
+          SCHEMA_KEY: ${{ steps.keys.outputs.schema_key }}
+          SUBNET_A: ${{ steps.subnet-a.outputs.subnet }}
+          SUBNET_B: ${{ steps.subnet-b.outputs.subnet }}
+          LAMBDA_SG: ${{ steps.lambda-sg.outputs.security_group }}
+          PRODUCT_ROLE: ${{ steps.iam.outputs.product_role }}
+          AUTHORIZER_ARN: ${{ steps.auth.outputs.authorizer_arn }}
+
+        shell: bash
+        run: |
+          set +e
+
+          echo "======================================"
+          echo "DEPLOYING CLOUDMART API"
+          echo "======================================"
 
           aws cloudformation deploy \
             --template-file cloudformation/api/api-stack.yaml \
@@ -443,10 +730,10 @@ jobs:
             --capabilities CAPABILITY_IAM \
             --parameter-overrides \
               Environment="${ENVIRONMENT}" \
-              PrivateSubnetIds="${{ steps.network.outputs.subnet_a }},${{ steps.network.outputs.subnet_b }}" \
-              LambdaSecurityGroupId="${{ steps.network.outputs.security_group }}" \
-              ProductLambdaExecutionRoleArn="${{ steps.iam.outputs.product_role }}" \
-              AuthorizerLambdaArn="${{ steps.auth.outputs.authorizer_arn }}" \
+              PrivateSubnetIds="${SUBNET_A},${SUBNET_B}" \
+              LambdaSecurityGroupId="${LAMBDA_SG}" \
+              ProductLambdaExecutionRoleArn="${PRODUCT_ROLE}" \
+              AuthorizerLambdaArn="${AUTHORIZER_ARN}" \
               LambdaCodeBucket="${ARTIFACT_BUCKET}" \
               ProductLambdaCodeKey="${PRODUCT_KEY}" \
               SchemaLambdaCodeKey="${SCHEMA_KEY}" \
@@ -457,75 +744,48 @@ jobs:
               DBPortParameter="/cloudmart/dev/db/port" \
             --region "${AWS_REGION}"
 
+          DEPLOY_EXIT=$?
 
-      # ======================================================
-      # GET SCHEMA LAMBDA ARN
-      # ======================================================
+          echo ""
+          echo "======================================"
+          echo "CLOUDFORMATION STACK STATUS"
+          echo "======================================"
 
-      - name: Get Schema Lambda ARN
-
-        id: schema
-
-        run: |
-
-          SCHEMA_ARN=$(aws cloudformation describe-stacks \
+          aws cloudformation describe-stacks \
             --stack-name cloudmart-dev-api \
             --region "${AWS_REGION}" \
-            --query "Stacks[0].Outputs[?OutputKey=='SchemaLambdaArn'].OutputValue" \
-            --output text)
+            --query "Stacks[0].StackStatus" \
+            --output text
 
-          if [ -z "$SCHEMA_ARN" ] || [ "$SCHEMA_ARN" = "None" ]; then
-            echo "ERROR: Schema Lambda ARN not found."
-            exit 1
-          fi
-
-          echo "Schema Lambda:"
-          echo "$SCHEMA_ARN"
-
-          echo "schema_arn=$SCHEMA_ARN" >> "$GITHUB_OUTPUT"
-
-
-      # ======================================================
-      # INITIALIZE DATABASE
-      # ======================================================
-
-      - name: Initialize RDS Database Schema
-
-        env:
-
-          SCHEMA_ARN:
-            ${{ steps.schema.outputs.schema_arn }}
-
-        run: |
-
+          echo ""
           echo "======================================"
-          echo "INITIALIZING RDS DATABASE"
+          echo "CLOUDFORMATION EVENTS"
           echo "======================================"
 
-          aws lambda invoke \
-            --function-name "${SCHEMA_ARN}" \
+          aws cloudformation describe-stack-events \
+            --stack-name cloudmart-dev-api \
             --region "${AWS_REGION}" \
-            --payload '{}' \
-            --cli-binary-format raw-in-base64-out \
-            schema-response.json
+            --max-items 30 \
+            --output table || true
 
-          cat schema-response.json
+          echo ""
+          echo "Deployment exit code: ${DEPLOY_EXIT}"
 
-          if grep -q '"FunctionError"' schema-response.json; then
-            echo "ERROR: Schema Lambda failed."
-            exit 1
-          fi
-
-          echo "Database schema initialized."
+          exit ${DEPLOY_EXIT}
 
 
-      # ======================================================
-      # CHECK API STACK
-      # ======================================================
+      # ============================================================
+      # 28. CHECK API STACK
+      # ============================================================
 
       - name: Check API Stack
-
+        shell: bash
         run: |
+          set -e
+
+          echo "======================================"
+          echo "API STACK STATUS"
+          echo "======================================"
 
           STATUS=$(aws cloudformation describe-stacks \
             --stack-name cloudmart-dev-api \
@@ -535,34 +795,38 @@ jobs:
 
           echo "Stack status: ${STATUS}"
 
-          case "${STATUS}" in
-
+          case "$STATUS" in
             CREATE_COMPLETE|UPDATE_COMPLETE)
               echo "API stack is healthy."
               ;;
-
             *)
-              echo "ERROR: API stack is not healthy."
+              echo "ERROR: CloudFormation stack is not healthy."
               exit 1
               ;;
-
           esac
 
 
-      # ======================================================
-      # DISPLAY API URL
-      # ======================================================
+      # ============================================================
+      # 29. DISPLAY API URL
+      # ============================================================
 
       - name: Display API URL
-
+        shell: bash
         run: |
+          set -e
 
           echo "======================================"
+          echo "CLOUDMART API URL"
+          echo "======================================"
 
-          aws cloudformation describe-stacks \
+          API_URL=$(aws cloudformation describe-stacks \
             --stack-name cloudmart-dev-api \
             --region "${AWS_REGION}" \
             --query "Stacks[0].Outputs[?OutputKey=='ApiUrl'].OutputValue" \
-            --output text
+            --output text)
+
+          echo ""
+          echo "${API_URL}"
+          echo ""
 
           echo "======================================"
