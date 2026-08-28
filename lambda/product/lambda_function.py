@@ -1,6 +1,5 @@
 import json
 import os
-
 import boto3
 import pymysql
 
@@ -13,32 +12,17 @@ ssm = boto3.client("ssm")
 
 
 # ============================================================
-# RESPONSE
-# ============================================================
-
-def response(status_code, body):
-
-    return {
-        "statusCode": status_code,
-        "headers": {
-            "Content-Type": "application/json"
-        },
-        "body": json.dumps(body, default=str)
-    }
-
-
-# ============================================================
-# SSM PARAMETER
+# SSM PARAMETER HELPER
 # ============================================================
 
 def get_parameter(name, secure=False):
 
-    result = ssm.get_parameter(
+    response = ssm.get_parameter(
         Name=name,
         WithDecryption=secure
     )
 
-    return result["Parameter"]["Value"]
+    return response["Parameter"]["Value"]
 
 
 # ============================================================
@@ -47,36 +31,27 @@ def get_parameter(name, secure=False):
 
 def get_database_connection():
 
-    host_parameter = os.environ["DB_HOST_PARAMETER"]
-    name_parameter = os.environ["DB_NAME_PARAMETER"]
-    username_parameter = os.environ["DB_USERNAME_PARAMETER"]
-    password_parameter = os.environ["DB_PASSWORD_PARAMETER"]
-    port_parameter = os.environ["DB_PORT_PARAMETER"]
-
     host = get_parameter(
-        host_parameter,
-        secure=False
+        os.environ["DB_HOST_PARAMETER"]
     )
 
     database = get_parameter(
-        name_parameter,
-        secure=False
+        os.environ["DB_NAME_PARAMETER"]
     )
 
     username = get_parameter(
-        username_parameter,
+        os.environ["DB_USERNAME_PARAMETER"],
         secure=True
     )
 
     password = get_parameter(
-        password_parameter,
+        os.environ["DB_PASSWORD_PARAMETER"],
         secure=True
     )
 
     port = int(
         get_parameter(
-            port_parameter,
-            secure=False
+            os.environ["DB_PORT_PARAMETER"]
         )
     )
 
@@ -87,10 +62,33 @@ def get_database_connection():
         database=database,
         port=port,
         cursorclass=pymysql.cursors.DictCursor,
-        connect_timeout=10
+        connect_timeout=10,
+        read_timeout=10,
+        write_timeout=10,
+        autocommit=False
     )
 
     return connection
+
+
+# ============================================================
+# JSON RESPONSE
+# ============================================================
+
+def response(status_code, body):
+
+    return {
+        "statusCode": status_code,
+
+        "headers": {
+            "Content-Type": "application/json"
+        },
+
+        "body": json.dumps(
+            body,
+            default=str
+        )
+    }
 
 
 # ============================================================
@@ -101,17 +99,16 @@ def lambda_handler(event, context):
 
     request_id = context.aws_request_id
 
-    method = event.get("httpMethod")
-    path = event.get("path")
-
     print(json.dumps({
         "level": "INFO",
         "message": "Product Lambda invoked",
         "environment": os.environ.get("ENVIRONMENT"),
         "request_id": request_id,
-        "http_method": method,
-        "path": path
+        "http_method": event.get("httpMethod"),
+        "path": event.get("path")
     }))
+
+    method = event.get("httpMethod")
 
     path_parameters = event.get("pathParameters") or {}
 
@@ -120,6 +117,7 @@ def lambda_handler(event, context):
     try:
 
         # ====================================================
+        # CREATE PRODUCT
         # POST /products
         # ====================================================
 
@@ -153,8 +151,7 @@ def lambda_handler(event, context):
 
                 with connection.cursor() as cursor:
 
-                    cursor.execute(
-                        """
+                    sql = """
                         INSERT INTO products
                         (
                             name,
@@ -171,7 +168,10 @@ def lambda_handler(event, context):
                             %s,
                             %s
                         )
-                        """,
+                    """
+
+                    cursor.execute(
+                        sql,
                         (
                             name,
                             description,
@@ -205,6 +205,7 @@ def lambda_handler(event, context):
             )
 
         # ====================================================
+        # GET ALL PRODUCTS
         # GET /products
         # ====================================================
 
@@ -246,6 +247,7 @@ def lambda_handler(event, context):
             )
 
         # ====================================================
+        # GET PRODUCT BY ID
         # GET /products/{id}
         # ====================================================
 
@@ -295,6 +297,7 @@ def lambda_handler(event, context):
             )
 
         # ====================================================
+        # UPDATE PRODUCT
         # PUT /products/{id}
         # ====================================================
 
@@ -391,6 +394,7 @@ def lambda_handler(event, context):
             )
 
         # ====================================================
+        # DELETE PRODUCT
         # DELETE /products/{id}
         # ====================================================
 
