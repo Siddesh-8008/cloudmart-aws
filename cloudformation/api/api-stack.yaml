@@ -1,4 +1,4 @@
-```yaml
+yaml
 AWSTemplateFormatVersion: '2010-09-09'
 
 Description: >
@@ -460,4 +460,4 @@ Outputs:
   LowStockTopicArn:
     Description: Low stock SNS topic ARN
     Value: !Ref LowStockTopic
-```
+

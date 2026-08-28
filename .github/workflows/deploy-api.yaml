@@ -1,4 +1,4 @@
-```yaml
+yaml
 name: CloudMart API Infrastructure
 
 on:
@@ -642,4 +642,4 @@ jobs:
           echo "API URL:"
           echo "$API_URL"
           echo ""
-```
+
