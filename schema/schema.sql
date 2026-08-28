@@ -1,14 +1,6 @@
--- ============================================================
--- CloudMart Database Schema
--- ============================================================
-
 CREATE DATABASE IF NOT EXISTS cloudmart;
 
 USE cloudmart;
-
--- ============================================================
--- PRODUCTS TABLE
--- ============================================================
 
 CREATE TABLE IF NOT EXISTS products (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,

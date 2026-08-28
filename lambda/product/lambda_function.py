@@ -1,5 +1,6 @@
 import json
 import os
+
 import boto3
 import pymysql
 
@@ -12,7 +13,7 @@ ssm = boto3.client("ssm")
 
 
 # ============================================================
-# SSM PARAMETER HELPER
+# DATABASE CONFIGURATION
 # ============================================================
 
 def get_parameter(name, secure=False):
@@ -24,10 +25,6 @@ def get_parameter(name, secure=False):
 
     return response["Parameter"]["Value"]
 
-
-# ============================================================
-# DATABASE CONNECTION
-# ============================================================
 
 def get_database_connection():
 
@@ -62,10 +59,7 @@ def get_database_connection():
         database=database,
         port=port,
         cursorclass=pymysql.cursors.DictCursor,
-        connect_timeout=10,
-        read_timeout=10,
-        write_timeout=10,
-        autocommit=False
+        connect_timeout=10
     )
 
     return connection
@@ -79,15 +73,10 @@ def response(status_code, body):
 
     return {
         "statusCode": status_code,
-
         "headers": {
             "Content-Type": "application/json"
         },
-
-        "body": json.dumps(
-            body,
-            default=str
-        )
+        "body": json.dumps(body, default=str)
     }
 
 
@@ -97,13 +86,11 @@ def response(status_code, body):
 
 def lambda_handler(event, context):
 
-    request_id = context.aws_request_id
-
     print(json.dumps({
         "level": "INFO",
         "message": "Product Lambda invoked",
         "environment": os.environ.get("ENVIRONMENT"),
-        "request_id": request_id,
+        "request_id": context.aws_request_id,
         "http_method": event.get("httpMethod"),
         "path": event.get("path")
     }))
@@ -131,6 +118,7 @@ def lambda_handler(event, context):
             description = body.get("description")
             price = body.get("price")
             stock = body.get("stock", 0)
+
             low_stock_threshold = body.get(
                 "lowStockThreshold",
                 5
@@ -181,7 +169,7 @@ def lambda_handler(event, context):
                         )
                     )
 
-                    new_product_id = cursor.lastrowid
+                    product_id = cursor.lastrowid
 
                 connection.commit()
 
@@ -192,15 +180,14 @@ def lambda_handler(event, context):
             print(json.dumps({
                 "level": "INFO",
                 "message": "Product created",
-                "product_id": new_product_id,
-                "request_id": request_id
+                "product_id": product_id
             }))
 
             return response(
                 201,
                 {
                     "message": "Product created",
-                    "productId": new_product_id
+                    "productId": product_id
                 }
             )
 
@@ -307,53 +294,53 @@ def lambda_handler(event, context):
                 event.get("body") or "{}"
             )
 
-            fields = []
-            values = []
-
-            if "name" in body:
-
-                fields.append("name = %s")
-                values.append(body["name"])
-
-            if "description" in body:
-
-                fields.append("description = %s")
-                values.append(body["description"])
-
-            if "price" in body:
-
-                fields.append("price = %s")
-                values.append(body["price"])
-
-            if "stock" in body:
-
-                fields.append("stock = %s")
-                values.append(body["stock"])
-
-            if "lowStockThreshold" in body:
-
-                fields.append(
-                    "low_stock_threshold = %s"
-                )
-
-                values.append(
-                    body["lowStockThreshold"]
-                )
-
-            if not fields:
-
-                return response(
-                    400,
-                    {
-                        "message": "No fields to update"
-                    }
-                )
-
             connection = get_database_connection()
 
             try:
 
                 with connection.cursor() as cursor:
+
+                    fields = []
+                    values = []
+
+                    if "name" in body:
+
+                        fields.append("name = %s")
+                        values.append(body["name"])
+
+                    if "description" in body:
+
+                        fields.append("description = %s")
+                        values.append(body["description"])
+
+                    if "price" in body:
+
+                        fields.append("price = %s")
+                        values.append(body["price"])
+
+                    if "stock" in body:
+
+                        fields.append("stock = %s")
+                        values.append(body["stock"])
+
+                    if "lowStockThreshold" in body:
+
+                        fields.append(
+                            "low_stock_threshold = %s"
+                        )
+
+                        values.append(
+                            body["lowStockThreshold"]
+                        )
+
+                    if not fields:
+
+                        return response(
+                            400,
+                            {
+                                "message": "No fields to update"
+                            }
+                        )
 
                     values.append(product_id)
 
@@ -369,8 +356,6 @@ def lambda_handler(event, context):
                     )
 
                     if cursor.rowcount == 0:
-
-                        connection.rollback()
 
                         return response(
                             404,
@@ -416,8 +401,6 @@ def lambda_handler(event, context):
 
                     if cursor.rowcount == 0:
 
-                        connection.rollback()
-
                         return response(
                             404,
                             {
@@ -440,7 +423,7 @@ def lambda_handler(event, context):
             )
 
         # ====================================================
-        # UNSUPPORTED METHOD
+        # UNSUPPORTED REQUEST
         # ====================================================
 
         return response(
@@ -456,13 +439,13 @@ def lambda_handler(event, context):
             "level": "ERROR",
             "message": "Product Lambda failed",
             "error": str(error),
-            "request_id": request_id
+            "request_id": context.aws_request_id
         }))
 
         return response(
             500,
             {
                 "message": "Internal server error",
-                "requestId": request_id
+                "requestId": context.aws_request_id
             }
         )
