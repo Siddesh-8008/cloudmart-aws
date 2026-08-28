@@ -9,6 +9,7 @@ on:
     paths:
       - "cloudformation/api/api-stack.yaml"
       - "lambda/product/**"
+      - "lambda/schema/**"
       - "schema/**"
       - ".github/workflows/deploy-api.yaml"
 
@@ -59,6 +60,7 @@ jobs:
 
 
     steps:
+
 
       # ======================================================
       # 1. CHECKOUT
@@ -115,8 +117,12 @@ jobs:
           aws sts get-caller-identity
 
           echo ""
-          echo "Region: ${AWS_REGION}"
-          echo "Environment: ${ENVIRONMENT}"
+          echo "AWS Region:"
+          echo "${AWS_REGION}"
+
+          echo ""
+          echo "Environment:"
+          echo "${ENVIRONMENT}"
 
 
       # ======================================================
@@ -143,7 +149,8 @@ jobs:
           do
 
             echo ""
-            echo "Checking stack: ${STACK}"
+            echo "Checking stack:"
+            echo "${STACK}"
 
             STATUS=$(aws cloudformation describe-stacks \
               --stack-name "${STACK}" \
@@ -151,7 +158,8 @@ jobs:
               --query "Stacks[0].StackStatus" \
               --output text)
 
-            echo "Status: ${STATUS}"
+            echo "Status:"
+            echo "${STATUS}"
 
             case "${STATUS}" in
 
@@ -225,8 +233,7 @@ jobs:
             --query "Stacks[0].Outputs[?OutputKey=='LambdaArtifactBucketName'].OutputValue | [0]" \
             --output text)
 
-          if [ -z "${BUCKET_NAME}" ] || \
-             [ "${BUCKET_NAME}" = "None" ]; then
+          if [ -z "${BUCKET_NAME}" ] || [ "${BUCKET_NAME}" = "None" ]; then
 
             echo ""
             echo "ERROR: LambdaArtifactBucketName was not found."
@@ -267,21 +274,22 @@ jobs:
           echo "PACKAGING PRODUCT LAMBDA"
           echo "======================================"
 
-          rm -rf build
+          rm -rf build/product
 
           rm -f product.zip
 
           mkdir -p build/product
 
+
           echo ""
-          echo "Copying Lambda source..."
+          echo "Copying Product Lambda source..."
 
           cp lambda/product/lambda_function.py \
              build/product/
 
 
           echo ""
-          echo "Checking requirements..."
+          echo "Checking Product Lambda requirements..."
 
           if [ -f lambda/product/requirements.txt ]; then
 
@@ -297,13 +305,13 @@ jobs:
 
             else
 
-              echo "requirements.txt is empty."
+              echo "Product requirements.txt is empty."
 
             fi
 
           else
 
-            echo "No requirements.txt found."
+            echo "No Product requirements.txt found."
 
           fi
 
@@ -327,7 +335,7 @@ jobs:
 
 
           echo ""
-          echo "ZIP CONTENTS:"
+          echo "PRODUCT ZIP CONTENTS:"
 
           unzip -l product.zip | head -100
 
@@ -362,7 +370,7 @@ jobs:
 
           if ! unzip -l product.zip | grep -q "lambda_function.py"; then
 
-            echo "ERROR: lambda_function.py is missing."
+            echo "ERROR: Product lambda_function.py is missing."
 
             exit 1
 
@@ -374,7 +382,130 @@ jobs:
 
 
       # ======================================================
-      # 10. UPLOAD PRODUCT ZIP
+      # 10. PACKAGE SCHEMA LAMBDA
+      # ======================================================
+
+      - name: Package Schema Lambda
+
+        shell: bash
+
+        run: |
+
+          set -e
+
+          echo "======================================"
+          echo "PACKAGING SCHEMA LAMBDA"
+          echo "======================================"
+
+          rm -rf build/schema
+
+          rm -f schema.zip
+
+          mkdir -p build/schema
+
+
+          echo ""
+          echo "Copying Schema Lambda source..."
+
+          cp lambda/schema/lambda_function.py \
+             build/schema/
+
+
+          echo ""
+          echo "Checking Schema Lambda requirements..."
+
+          if [ -f lambda/schema/requirements.txt ]; then
+
+            if [ -s lambda/schema/requirements.txt ]; then
+
+              echo "Installing Schema Lambda dependencies..."
+
+              python -m pip install \
+                -r lambda/schema/requirements.txt \
+                -t build/schema \
+                --upgrade \
+                --no-cache-dir
+
+            else
+
+              echo "Schema requirements.txt is empty."
+
+            fi
+
+          else
+
+            echo "No Schema requirements.txt found."
+
+          fi
+
+
+          echo ""
+          echo "Creating schema.zip..."
+
+          cd build/schema
+
+          zip -r ../../schema.zip .
+
+          cd ../..
+
+
+          echo ""
+          echo "======================================"
+          echo "SCHEMA ZIP CREATED"
+          echo "======================================"
+
+          ls -lh schema.zip
+
+
+          echo ""
+          echo "SCHEMA ZIP CONTENTS:"
+
+          unzip -l schema.zip | head -100
+
+
+      # ======================================================
+      # 11. VERIFY SCHEMA ZIP
+      # ======================================================
+
+      - name: Verify Schema Lambda package
+
+        shell: bash
+
+        run: |
+
+          set -e
+
+          echo "======================================"
+          echo "VERIFYING SCHEMA LAMBDA PACKAGE"
+          echo "======================================"
+
+          if [ ! -f schema.zip ]; then
+
+            echo "ERROR: schema.zip was not created."
+
+            exit 1
+
+          fi
+
+
+          unzip -t schema.zip >/dev/null
+
+
+          if ! unzip -l schema.zip | grep -q "lambda_function.py"; then
+
+            echo "ERROR: Schema lambda_function.py is missing."
+
+            exit 1
+
+          fi
+
+
+          echo ""
+          echo "Schema Lambda package is valid."
+
+
+      # ======================================================
+      # 12. UPLOAD PRODUCT LAMBDA
       # ======================================================
 
       - name: Upload Product Lambda package
@@ -411,7 +542,44 @@ jobs:
 
 
       # ======================================================
-      # 11. VERIFY S3 PACKAGE
+      # 13. UPLOAD SCHEMA LAMBDA
+      # ======================================================
+
+      - name: Upload Schema Lambda package
+
+        shell: bash
+
+        run: |
+
+          set -e
+
+          BUCKET_NAME="${{ steps.artifact-bucket.outputs.bucket }}"
+
+
+          echo "======================================"
+          echo "UPLOADING SCHEMA LAMBDA"
+          echo "======================================"
+
+          echo ""
+          echo "Bucket:"
+          echo "${BUCKET_NAME}"
+
+
+          aws s3 cp \
+            schema.zip \
+            "s3://${BUCKET_NAME}/schema/schema.zip"
+
+
+          echo ""
+          echo "Schema Lambda uploaded successfully."
+
+
+          aws s3 ls \
+            "s3://${BUCKET_NAME}/schema/schema.zip"
+
+
+      # ======================================================
+      # 14. VERIFY PRODUCT PACKAGE IN S3
       # ======================================================
 
       - name: Verify Product Lambda package in S3
@@ -426,7 +594,7 @@ jobs:
 
 
           echo "======================================"
-          echo "VERIFYING S3 PRODUCT PACKAGE"
+          echo "VERIFYING PRODUCT PACKAGE IN S3"
           echo "======================================"
 
 
@@ -436,11 +604,40 @@ jobs:
 
 
           echo ""
-          echo "S3 package verified."
+          echo "Product package verified in S3."
 
 
       # ======================================================
-      # 12. SHOW NETWORK OUTPUTS
+      # 15. VERIFY SCHEMA PACKAGE IN S3
+      # ======================================================
+
+      - name: Verify Schema Lambda package in S3
+
+        shell: bash
+
+        run: |
+
+          set -e
+
+          BUCKET_NAME="${{ steps.artifact-bucket.outputs.bucket }}"
+
+
+          echo "======================================"
+          echo "VERIFYING SCHEMA PACKAGE IN S3"
+          echo "======================================"
+
+
+          aws s3api head-object \
+            --bucket "${BUCKET_NAME}" \
+            --key "schema/schema.zip"
+
+
+          echo ""
+          echo "Schema package verified in S3."
+
+
+      # ======================================================
+      # 16. SHOW NETWORK OUTPUTS
       # ======================================================
 
       - name: Show Network Stack Outputs
@@ -463,7 +660,7 @@ jobs:
 
 
       # ======================================================
-      # 13. GET PRIVATE SUBNET A
+      # 17. GET PRIVATE SUBNET A
       # ======================================================
 
       - name: Get Private Subnet A
@@ -483,8 +680,7 @@ jobs:
             --output text)
 
 
-          if [ -z "${SUBNET_A}" ] || \
-             [ "${SUBNET_A}" = "None" ]; then
+          if [ -z "${SUBNET_A}" ] || [ "${SUBNET_A}" = "None" ]; then
 
             echo "ERROR: PrivateSubnetAId not found."
 
@@ -493,13 +689,15 @@ jobs:
           fi
 
 
-          echo "Private Subnet A: ${SUBNET_A}"
+          echo "Private Subnet A:"
+          echo "${SUBNET_A}"
+
 
           echo "subnet=${SUBNET_A}" >> "${GITHUB_OUTPUT}"
 
 
       # ======================================================
-      # 14. GET PRIVATE SUBNET B
+      # 18. GET PRIVATE SUBNET B
       # ======================================================
 
       - name: Get Private Subnet B
@@ -519,8 +717,7 @@ jobs:
             --output text)
 
 
-          if [ -z "${SUBNET_B}" ] || \
-             [ "${SUBNET_B}" = "None" ]; then
+          if [ -z "${SUBNET_B}" ] || [ "${SUBNET_B}" = "None" ]; then
 
             echo "ERROR: PrivateSubnetBId not found."
 
@@ -529,13 +726,15 @@ jobs:
           fi
 
 
-          echo "Private Subnet B: ${SUBNET_B}"
+          echo "Private Subnet B:"
+          echo "${SUBNET_B}"
+
 
           echo "subnet=${SUBNET_B}" >> "${GITHUB_OUTPUT}"
 
 
       # ======================================================
-      # 15. GET LAMBDA SECURITY GROUP
+      # 19. GET LAMBDA SECURITY GROUP
       # ======================================================
 
       - name: Get Lambda Security Group
@@ -555,8 +754,7 @@ jobs:
             --output text)
 
 
-          if [ -z "${SECURITY_GROUP}" ] || \
-             [ "${SECURITY_GROUP}" = "None" ]; then
+          if [ -z "${SECURITY_GROUP}" ] || [ "${SECURITY_GROUP}" = "None" ]; then
 
             echo "ERROR: LambdaSecurityGroupId not found."
 
@@ -565,13 +763,15 @@ jobs:
           fi
 
 
-          echo "Lambda Security Group: ${SECURITY_GROUP}"
+          echo "Lambda Security Group:"
+          echo "${SECURITY_GROUP}"
+
 
           echo "security_group=${SECURITY_GROUP}" >> "${GITHUB_OUTPUT}"
 
 
       # ======================================================
-      # 16. GET PRODUCT LAMBDA IAM ROLE
+      # 20. GET PRODUCT LAMBDA IAM ROLE
       # ======================================================
 
       - name: Get Product Lambda IAM Role
@@ -607,8 +807,7 @@ jobs:
             --output text)
 
 
-          if [ -z "${PRODUCT_ROLE_ARN}" ] || \
-             [ "${PRODUCT_ROLE_ARN}" = "None" ]; then
+          if [ -z "${PRODUCT_ROLE_ARN}" ] || [ "${PRODUCT_ROLE_ARN}" = "None" ]; then
 
             echo ""
             echo "ERROR: ProductLambdaRoleArn not found."
@@ -619,7 +818,7 @@ jobs:
 
 
           echo ""
-          echo "Product Lambda Role ARN:"
+          echo "Product Lambda IAM Role:"
           echo "${PRODUCT_ROLE_ARN}"
 
 
@@ -627,7 +826,7 @@ jobs:
 
 
       # ======================================================
-      # 17. GET AUTHORIZER LAMBDA ARN
+      # 21. GET AUTHORIZER LAMBDA ARN
       # ======================================================
 
       - name: Get Authorizer Lambda ARN
@@ -663,8 +862,7 @@ jobs:
             --output text)
 
 
-          if [ -z "${AUTHORIZE_ARN}" ] || \
-             [ "${AUTHORIZE_ARN}" = "None" ]; then
+          if [ -z "${AUTHORIZE_ARN}" ] || [ "${AUTHORIZE_ARN}" = "None" ]; then
 
             echo ""
             echo "ERROR: AuthorizerLambdaArn not found."
@@ -675,7 +873,7 @@ jobs:
 
 
           echo ""
-          echo "Authorizer Lambda ARN:"
+          echo "Authorizer Lambda:"
           echo "${AUTHORIZE_ARN}"
 
 
@@ -683,7 +881,7 @@ jobs:
 
 
       # ======================================================
-      # 18. VALIDATE API CLOUDFORMATION
+      # 22. VALIDATE API CLOUDFORMATION
       # ======================================================
 
       - name: Validate API CloudFormation
@@ -709,7 +907,7 @@ jobs:
 
 
       # ======================================================
-      # 19. DEPLOY API STACK
+      # 23. DEPLOY API STACK
       # ======================================================
 
       - name: Deploy API CloudFormation
@@ -760,7 +958,7 @@ jobs:
 
 
           echo ""
-          echo "Product Lambda Role:"
+          echo "Product Lambda IAM Role:"
           echo "${PRODUCT_ROLE}"
 
 
@@ -770,24 +968,13 @@ jobs:
 
 
           echo ""
-          echo "Product Lambda Artifact Bucket:"
+          echo "Lambda Artifact Bucket:"
           echo "${PRODUCT_BUCKET}"
 
 
           echo ""
           echo "Starting CloudFormation deployment..."
 
-
-          # --------------------------------------------------
-          # IMPORTANT:
-          #
-          # ProductLambdaCodeBucket is now passed.
-          #
-          # This fixes:
-          #
-          # Parameters:
-          # [ProductLambdaCodeBucket] must have values
-          # --------------------------------------------------
 
           aws cloudformation deploy \
             --stack-name "${API_STACK_NAME}" \
@@ -802,6 +989,7 @@ jobs:
               AuthorizerLambdaArn="${AUTHORIZE_ARN}" \
               ProductLambdaCodeBucket="${PRODUCT_BUCKET}" \
               ProductLambdaCodeKey="product/product.zip" \
+              SchemaLambdaCodeKey="schema/schema.zip" \
               DBHostParameter="/cloudmart/dev/db/host" \
               DBNameParameter="/cloudmart/dev/db/name" \
               DBUsernameParameter="/cloudmart/dev/db/username" \
@@ -818,7 +1006,7 @@ jobs:
 
 
       # ======================================================
-      # 20. SHOW STACK STATUS
+      # 24. SHOW API STACK STATUS
       # ======================================================
 
       - name: Show API Stack status
@@ -840,7 +1028,7 @@ jobs:
 
 
       # ======================================================
-      # 21. SHOW STACK OUTPUTS
+      # 25. SHOW API STACK OUTPUTS
       # ======================================================
 
       - name: Show API Stack outputs
@@ -862,7 +1050,7 @@ jobs:
 
 
       # ======================================================
-      # 22. SHOW CLOUDFORMATION EVENTS
+      # 26. SHOW CLOUDFORMATION EVENTS
       # ======================================================
 
       - name: Show CloudFormation events
