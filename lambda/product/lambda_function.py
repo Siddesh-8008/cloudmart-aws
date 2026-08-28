@@ -1,5 +1,6 @@
 import json
 import os
+
 import boto3
 import pymysql
 
@@ -31,12 +32,6 @@ def get_database_connection():
         os.environ["DB_HOST_PARAMETER"]
     )
 
-    port = int(
-        get_parameter(
-            os.environ["DB_PORT_PARAMETER"]
-        )
-    )
-
     database = get_parameter(
         os.environ["DB_NAME_PARAMETER"]
     )
@@ -51,12 +46,21 @@ def get_database_connection():
         secure=True
     )
 
+    port_parameter = os.environ.get(
+        "DB_PORT_PARAMETER",
+        "/cloudmart/dev/db/port"
+    )
+
+    port = int(
+        get_parameter(port_parameter)
+    )
+
     connection = pymysql.connect(
         host=host,
-        port=port,
         user=username,
         password=password,
         database=database,
+        port=port,
         cursorclass=pymysql.cursors.DictCursor,
         connect_timeout=10
     )
@@ -72,15 +76,10 @@ def response(status_code, body):
 
     return {
         "statusCode": status_code,
-
         "headers": {
             "Content-Type": "application/json"
         },
-
-        "body": json.dumps(
-            body,
-            default=str
-        )
+        "body": json.dumps(body, default=str)
     }
 
 
@@ -122,7 +121,6 @@ def lambda_handler(event, context):
             description = body.get("description")
             price = body.get("price")
             stock = body.get("stock", 0)
-
             low_stock_threshold = body.get(
                 "lowStockThreshold",
                 5
@@ -195,7 +193,6 @@ def lambda_handler(event, context):
                 }
             )
 
-
         # ====================================================
         # GET ALL PRODUCTS
         # GET /products
@@ -237,7 +234,6 @@ def lambda_handler(event, context):
                     "products": products
                 }
             )
-
 
         # ====================================================
         # GET PRODUCT BY ID
@@ -289,7 +285,6 @@ def lambda_handler(event, context):
                 product
             )
 
-
         # ====================================================
         # UPDATE PRODUCT
         # PUT /products/{id}
@@ -311,31 +306,25 @@ def lambda_handler(event, context):
                     values = []
 
                     if "name" in body:
-
                         fields.append("name = %s")
                         values.append(body["name"])
 
                     if "description" in body:
-
                         fields.append("description = %s")
                         values.append(body["description"])
 
                     if "price" in body:
-
                         fields.append("price = %s")
                         values.append(body["price"])
 
                     if "stock" in body:
-
                         fields.append("stock = %s")
                         values.append(body["stock"])
 
                     if "lowStockThreshold" in body:
-
                         fields.append(
                             "low_stock_threshold = %s"
                         )
-
                         values.append(
                             body["lowStockThreshold"]
                         )
@@ -385,7 +374,6 @@ def lambda_handler(event, context):
                 }
             )
 
-
         # ====================================================
         # DELETE PRODUCT
         # DELETE /products/{id}
@@ -430,7 +418,6 @@ def lambda_handler(event, context):
                 }
             )
 
-
         # ====================================================
         # UNSUPPORTED REQUEST
         # ====================================================
@@ -441,7 +428,6 @@ def lambda_handler(event, context):
                 "message": "Method not supported"
             }
         )
-
 
     except Exception as error:
 
