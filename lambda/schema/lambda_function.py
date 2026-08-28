@@ -1,5 +1,5 @@
-import json
 import os
+import json
 import boto3
 import pymysql
 
@@ -49,15 +49,17 @@ def get_database_connection():
         password=password,
         database=database,
         port=port,
+        cursorclass=pymysql.cursors.DictCursor,
         connect_timeout=10
     )
 
 
 def lambda_handler(event, context):
 
-    print("======================================")
-    print("CloudMart Schema Lambda")
-    print("======================================")
+    print(json.dumps({
+        "message": "Schema Lambda invoked",
+        "request_id": context.aws_request_id
+    }))
 
     connection = None
 
@@ -67,59 +69,43 @@ def lambda_handler(event, context):
 
         with connection.cursor() as cursor:
 
-            cursor.execute("""
+            cursor.execute(
+                """
                 CREATE TABLE IF NOT EXISTS products (
-                    id BIGINT NOT NULL AUTO_INCREMENT,
+                    id BIGINT AUTO_INCREMENT PRIMARY KEY,
                     name VARCHAR(255) NOT NULL,
-                    description TEXT NULL,
+                    description TEXT,
                     price DECIMAL(10,2) NOT NULL,
                     stock INT NOT NULL DEFAULT 0,
                     low_stock_threshold INT NOT NULL DEFAULT 5,
-
-                    created_at TIMESTAMP NOT NULL
-                        DEFAULT CURRENT_TIMESTAMP,
-
-                    updated_at TIMESTAMP NOT NULL
-                        DEFAULT CURRENT_TIMESTAMP
-                        ON UPDATE CURRENT_TIMESTAMP,
-
-                    PRIMARY KEY (id)
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                        ON UPDATE CURRENT_TIMESTAMP
                 )
-                ENGINE=InnoDB
-                DEFAULT CHARSET=utf8mb4
-                COLLATE=utf8mb4_unicode_ci
-            """)
+                """
+            )
 
         connection.commit()
 
-        print("Products table created/verified successfully.")
+        print("Products table created successfully.")
 
         return {
             "statusCode": 200,
             "body": json.dumps({
-                "message": "CloudMart database schema initialized successfully",
-                "table": "products"
+                "message": "Products table created successfully"
             })
         }
 
     except Exception as error:
 
-        print(
-            json.dumps({
-                "level": "ERROR",
-                "message": "Schema initialization failed",
-                "error": str(error),
-                "request_id": context.aws_request_id
-            })
-        )
+        print(json.dumps({
+            "level": "ERROR",
+            "message": "Schema initialization failed",
+            "error": str(error),
+            "request_id": context.aws_request_id
+        }))
 
-        return {
-            "statusCode": 500,
-            "body": json.dumps({
-                "message": "Schema initialization failed",
-                "error": str(error)
-            })
-        }
+        raise
 
     finally:
 
