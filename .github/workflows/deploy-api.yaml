@@ -370,17 +370,22 @@ jobs:
           echo "LOW_STOCK_EMAIL secret is configured."
 
 
-      # ========================================================
+           # ========================================================
       # 19. DEPLOY API STACK
       # ========================================================
 
       - name: Deploy API Stack
+        id: deploy
         env:
           LOW_STOCK_EMAIL: ${{ secrets.LOW_STOCK_EMAIL }}
 
         run: |
 
-          echo "Deploying CloudMart API stack..."
+          echo "======================================"
+          echo "Deploying CloudMart API stack"
+          echo "======================================"
+
+          set +e
 
           aws cloudformation deploy \
             --template-file cloudformation/api/api-stack.yaml \
@@ -401,7 +406,33 @@ jobs:
               LowStockEmail="${LOW_STOCK_EMAIL}" \
             --region "${AWS_REGION}"
 
-          echo "API stack deployment completed."
+          DEPLOY_EXIT_CODE=$?
+
+          echo ""
+          echo "======================================"
+          echo "CloudFormation Events"
+          echo "======================================"
+
+          aws cloudformation describe-events \
+            --stack-name cloudmart-dev-api \
+            --region "${AWS_REGION}" \
+            --output json || true
+
+          echo ""
+          echo "======================================"
+          echo "Stack Events"
+          echo "======================================"
+
+          aws cloudformation describe-stack-events \
+            --stack-name cloudmart-dev-api \
+            --region "${AWS_REGION}" \
+            --query "StackEvents[].[Timestamp,LogicalResourceId,ResourceType,ResourceStatus,ResourceStatusReason]" \
+            --output table || true
+
+          echo ""
+          echo "Deployment exit code: ${DEPLOY_EXIT_CODE}"
+
+          exit ${DEPLOY_EXIT_CODE}
 
 
       # ========================================================
