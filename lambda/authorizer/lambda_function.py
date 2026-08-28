@@ -2,38 +2,100 @@ import json
 import os
 import boto3
 
+
 ssm = boto3.client("ssm")
+
 
 PARAMETER_NAME = os.environ["AUTH_TOKEN_PARAMETER"]
 
 
-def generate_policy(effect, principal_id, method_arn):
+# ============================================================
+# GENERATE IAM POLICY
+# ============================================================
+
+def generate_policy(effect, principal_id, resource):
+
     return {
         "principalId": principal_id,
+
         "policyDocument": {
             "Version": "2012-10-17",
+
             "Statement": [
                 {
                     "Action": "execute-api:Invoke",
                     "Effect": effect,
-                    "Resource": method_arn
+                    "Resource": resource
                 }
             ]
         }
     }
 
 
+# ============================================================
+# CREATE WILDCARD API RESOURCE
+# ============================================================
+
+def get_wildcard_resource(method_arn):
+
+    """
+    Converts:
+
+    arn:aws:execute-api:ap-south-1:ACCOUNT_ID:API_ID/dev/GET/products
+
+    into:
+
+    arn:aws:execute-api:ap-south-1:ACCOUNT_ID:API_ID/dev/*/*
+    """
+
+    parts = method_arn.split("/")
+
+    if len(parts) < 3:
+        return method_arn
+
+    wildcard_resource = (
+        parts[0]
+        + "/"
+        + parts[1]
+        + "/*/*"
+    )
+
+    return wildcard_resource
+
+
+# ============================================================
+# AUTHORIZE
+# ============================================================
+
 def handler(event, context):
+
+    print(json.dumps({
+        "level": "INFO",
+        "event": "authorizer_invoked",
+        "request_id": context.aws_request_id
+    }))
+
+
+    # --------------------------------------------------------
+    # METHOD ARN
+    # --------------------------------------------------------
 
     method_arn = event.get("methodArn", "*")
 
+
+    # --------------------------------------------------------
+    # GET AUTHORIZATION TOKEN
+    # --------------------------------------------------------
+
     authorization_token = event.get("authorizationToken")
 
-    # ------------------------------------------------
-    # Missing token
-    # ------------------------------------------------
+
+    # --------------------------------------------------------
+    # MISSING TOKEN
+    # --------------------------------------------------------
 
     if not authorization_token:
+
         print(json.dumps({
             "level": "WARN",
             "event": "token_validation",
@@ -43,11 +105,12 @@ def handler(event, context):
         raise Exception("Unauthorized")
 
 
-    # ------------------------------------------------
-    # Validate Bearer format
-    # ------------------------------------------------
+    # --------------------------------------------------------
+    # VALIDATE BEARER FORMAT
+    # --------------------------------------------------------
 
     if not authorization_token.startswith("Bearer "):
+
         print(json.dumps({
             "level": "WARN",
             "event": "token_validation",
@@ -60,7 +123,12 @@ def handler(event, context):
     supplied_token = authorization_token[7:].strip()
 
 
+    # --------------------------------------------------------
+    # EMPTY TOKEN
+    # --------------------------------------------------------
+
     if not supplied_token:
+
         print(json.dumps({
             "level": "WARN",
             "event": "token_validation",
@@ -70,9 +138,9 @@ def handler(event, context):
         raise Exception("Unauthorized")
 
 
-    # ------------------------------------------------
-    # Read expected token from SSM
-    # ------------------------------------------------
+    # --------------------------------------------------------
+    # READ TOKEN FROM SSM
+    # --------------------------------------------------------
 
     try:
 
@@ -83,20 +151,22 @@ def handler(event, context):
 
         expected_token = parameter["Parameter"]["Value"]
 
+
     except Exception as error:
 
         print(json.dumps({
             "level": "ERROR",
             "event": "token_validation",
-            "result": "configuration_error"
+            "result": "configuration_error",
+            "error": str(error)
         }))
 
         raise Exception("Unauthorized")
 
 
-    # ------------------------------------------------
-    # Compare token
-    # ------------------------------------------------
+    # --------------------------------------------------------
+    # COMPARE TOKEN
+    # --------------------------------------------------------
 
     if supplied_token != expected_token:
 
@@ -109,9 +179,9 @@ def handler(event, context):
         raise Exception("Unauthorized")
 
 
-    # ------------------------------------------------
-    # Valid token
-    # ------------------------------------------------
+    # --------------------------------------------------------
+    # VALID TOKEN
+    # --------------------------------------------------------
 
     print(json.dumps({
         "level": "INFO",
@@ -120,8 +190,29 @@ def handler(event, context):
     }))
 
 
+    # --------------------------------------------------------
+    # CREATE WILDCARD RESOURCE
+    # --------------------------------------------------------
+
+    wildcard_resource = get_wildcard_resource(
+        method_arn
+    )
+
+
+    print(json.dumps({
+        "level": "INFO",
+        "event": "authorization",
+        "result": "allowed",
+        "resource": wildcard_resource
+    }))
+
+
+    # --------------------------------------------------------
+    # RETURN ALLOW POLICY
+    # --------------------------------------------------------
+
     return generate_policy(
         "Allow",
         "cloudmart-authenticated-client",
-        method_arn
+        wildcard_resource
     )
