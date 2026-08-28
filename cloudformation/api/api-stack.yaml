@@ -460,4 +460,4 @@ Outputs:
   LowStockTopicArn:
     Description: Low stock SNS topic ARN
     Value: !Ref LowStockTopic
-
+```
