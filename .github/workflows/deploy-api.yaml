@@ -1,29 +1,23 @@
 name: CloudMart API Infrastructure
 
-
 on:
-
   push:
     branches:
       - milestone-3
-
     paths:
       - "cloudformation/api/api-stack.yaml"
-      - "lambda/product/**"
+      - "lambda/**"
       - ".github/workflows/deploy-api.yaml"
 
   workflow_dispatch:
-
 
 permissions:
   id-token: write
   contents: read
 
-
 env:
   AWS_REGION: ap-south-1
   ENVIRONMENT: dev
-
 
 jobs:
 
@@ -32,7 +26,6 @@ jobs:
     name: Build and Deploy API Stack
 
     runs-on: ubuntu-latest
-
 
     steps:
 
@@ -45,59 +38,54 @@ jobs:
 
 
       # ========================================================
-      # 2. AWS CREDENTIALS
+      # 2. CONFIGURE AWS CREDENTIALS
       # ========================================================
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
-
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
 
       # ========================================================
-      # 3. VERIFY AWS
+      # 3. VERIFY AWS ACCESS
       # ========================================================
 
       - name: Verify AWS access
         run: |
-
           echo "AWS Region: ${AWS_REGION}"
           echo "Environment: ${ENVIRONMENT}"
-
           aws sts get-caller-identity
 
 
       # ========================================================
       # 4. SETUP PYTHON 3.12
+      # Lambda runtime is Python 3.12
       # ========================================================
 
       - name: Setup Python
         uses: actions/setup-python@v5
-
         with:
           python-version: "3.12"
 
 
       # ========================================================
-      # 5. VERIFY PRODUCT LAMBDA
+      # 5. VERIFY PRODUCT LAMBDA FILES
       # ========================================================
 
       - name: Verify Product Lambda files
         run: |
 
-          echo "Repository root:"
-          pwd
+          echo "Repository structure:"
+          find lambda -maxdepth 3 -type f -print
 
-          echo "Repository files:"
-          ls -la
+          echo "Checking Product Lambda..."
 
-          echo "Lambda directory:"
-          ls -la lambda
-
-          echo "Product Lambda directory:"
-          ls -la lambda/product
+          if [ ! -d "lambda/product" ]; then
+            echo "ERROR: lambda/product directory not found."
+            exit 1
+          fi
 
           if [ ! -f "lambda/product/lambda_function.py" ]; then
             echo "ERROR: lambda_function.py not found."
@@ -109,32 +97,38 @@ jobs:
             exit 1
           fi
 
-          echo "======================================"
-          echo "requirements.txt:"
-          echo "======================================"
-
-          cat lambda/product/requirements.txt
+          echo "Product Lambda files found."
 
 
       # ========================================================
-      # 6. CLEAN OLD DEPENDENCIES
+      # 6. SHOW REQUIREMENTS
       # ========================================================
 
-      - name: Clean Product Lambda directory
+      - name: Verify Product Lambda requirements
         run: |
 
-          find lambda/product \
-            -mindepth 1 \
-            -maxdepth 1 \
-            ! -name "lambda_function.py" \
-            ! -name "requirements.txt" \
-            -exec rm -rf {} +
+          echo "requirements.txt:"
+          cat lambda/product/requirements.txt
 
-          echo "Cleaned old dependencies."
+          if ! grep -qi "^cryptography" lambda/product/requirements.txt; then
+            echo "ERROR: cryptography dependency is missing."
+            echo "Add the following to requirements.txt:"
+            echo "cryptography"
+            exit 1
+          fi
+
+          if ! grep -qi "^PyMySQL" lambda/product/requirements.txt; then
+            echo "ERROR: PyMySQL dependency is missing."
+            echo "Add the following to requirements.txt:"
+            echo "PyMySQL==1.1.1"
+            exit 1
+          fi
+
+          echo "Required dependencies found."
 
 
       # ========================================================
-      # 7. INSTALL DEPENDENCIES
+      # 7. INSTALL PRODUCT LAMBDA DEPENDENCIES
       # ========================================================
 
       - name: Install Product Lambda dependencies
@@ -146,30 +140,11 @@ jobs:
             -r lambda/product/requirements.txt \
             -t lambda/product/
 
-          echo "======================================"
-          echo "Installed packages:"
-          echo "======================================"
-
-          ls -la lambda/product
-
-          echo "======================================"
-          echo "Checking cryptography:"
-          echo "======================================"
-
-          python -c "
-          import sys
-          sys.path.insert(0, 'lambda/product')
-          import cryptography
-          import pymysql
-
-          print('Python:', sys.version)
-          print('cryptography:', cryptography.__version__)
-          print('PyMySQL:', pymysql.__version__)
-          "
+          echo "Dependencies installed."
 
 
       # ========================================================
-      # 8. CREATE ZIP
+      # 8. CREATE PRODUCT LAMBDA ZIP
       # ========================================================
 
       - name: Package Product Lambda
@@ -181,21 +156,13 @@ jobs:
 
           cd ../..
 
-          echo "======================================"
-          echo "Product Lambda ZIP:"
-          echo "======================================"
+          echo "Product Lambda package created."
 
           ls -lh product.zip
 
-          echo "======================================"
-          echo "Checking ZIP contents:"
-          echo "======================================"
-
-          unzip -l product.zip | grep -E "cryptography|pymysql" | head -30
-
 
       # ========================================================
-      # 9. GET ARTIFACT BUCKET
+      # 9. GET LAMBDA ARTIFACT BUCKET
       # ========================================================
 
       - name: Get Lambda Artifact Bucket
@@ -219,7 +186,7 @@ jobs:
 
 
       # ========================================================
-      # 10. UPLOAD ZIP
+      # 10. UPLOAD PRODUCT ZIP TO S3
       # ========================================================
 
       - name: Upload Product Lambda package
@@ -233,9 +200,11 @@ jobs:
             "s3://${ARTIFACT_BUCKET}/product/product.zip" \
             --region "${AWS_REGION}"
 
+          echo "Product Lambda uploaded."
+
 
       # ========================================================
-      # 11. VERIFY S3
+      # 11. VERIFY ZIP IN S3
       # ========================================================
 
       - name: Verify Product Lambda package
@@ -260,14 +229,15 @@ jobs:
             --template-body file://cloudformation/api/api-stack.yaml \
             --region "${AWS_REGION}"
 
+          echo "CloudFormation template validation successful."
+
 
       # ========================================================
-      # 13. PRIVATE SUBNET A
+      # 13. GET PRIVATE SUBNET A
       # ========================================================
 
       - name: Get Private Subnet A
         id: subnet-a
-
         run: |
 
           SUBNET_A=$(aws cloudformation describe-stacks \
@@ -287,12 +257,11 @@ jobs:
 
 
       # ========================================================
-      # 14. PRIVATE SUBNET B
+      # 14. GET PRIVATE SUBNET B
       # ========================================================
 
       - name: Get Private Subnet B
         id: subnet-b
-
         run: |
 
           SUBNET_B=$(aws cloudformation describe-stacks \
@@ -312,12 +281,11 @@ jobs:
 
 
       # ========================================================
-      # 15. LAMBDA SECURITY GROUP
+      # 15. GET LAMBDA SECURITY GROUP
       # ========================================================
 
       - name: Get Lambda Security Group
         id: lambda-sg
-
         run: |
 
           LAMBDA_SG=$(aws cloudformation describe-stacks \
@@ -337,12 +305,11 @@ jobs:
 
 
       # ========================================================
-      # 16. PRODUCT IAM ROLE
+      # 16. GET PRODUCT LAMBDA IAM ROLE
       # ========================================================
 
       - name: Get Product Lambda IAM Role
         id: iam
-
         run: |
 
           PRODUCT_ROLE=$(aws cloudformation describe-stacks \
@@ -362,12 +329,11 @@ jobs:
 
 
       # ========================================================
-      # 17. AUTHORIZER ARN
+      # 17. GET AUTHORIZER LAMBDA ARN
       # ========================================================
 
       - name: Get Authorizer Lambda ARN
         id: auth
-
         run: |
 
           AUTHORIZER_ARN=$(aws cloudformation describe-stacks \
@@ -387,15 +353,39 @@ jobs:
 
 
       # ========================================================
-      # 18. DEPLOY API STACK
+      # 18. VERIFY LOW STOCK EMAIL SECRET
+      # ========================================================
+
+      - name: Verify Low Stock Email
+        env:
+          LOW_STOCK_EMAIL: ${{ secrets.LOW_STOCK_EMAIL }}
+
+        run: |
+
+          if [ -z "$LOW_STOCK_EMAIL" ]; then
+            echo "ERROR: LOW_STOCK_EMAIL GitHub secret is not configured."
+            exit 1
+          fi
+
+          echo "LOW_STOCK_EMAIL secret is configured."
+
+
+      # ========================================================
+      # 19. DEPLOY API STACK
       # ========================================================
 
       - name: Deploy API Stack
+        env:
+          LOW_STOCK_EMAIL: ${{ secrets.LOW_STOCK_EMAIL }}
+
         run: |
+
+          echo "Deploying CloudMart API stack..."
 
           aws cloudformation deploy \
             --template-file cloudformation/api/api-stack.yaml \
             --stack-name cloudmart-dev-api \
+            --capabilities CAPABILITY_IAM \
             --parameter-overrides \
               Environment="${ENVIRONMENT}" \
               PrivateSubnetIds="${{ steps.subnet-a.outputs.subnet }},${{ steps.subnet-b.outputs.subnet }}" \
@@ -408,16 +398,20 @@ jobs:
               DBNameParameter="/cloudmart/dev/db/name" \
               DBUsernameParameter="/cloudmart/dev/db/username" \
               DBPasswordParameter="/cloudmart/dev/db/password" \
-              LowStockEmail="${{ secrets.LOW_STOCK_EMAIL }}" \
+              LowStockEmail="${LOW_STOCK_EMAIL}" \
             --region "${AWS_REGION}"
+
+          echo "API stack deployment completed."
 
 
       # ========================================================
-      # 19. CHECK STACK
+      # 20. CHECK API STACK
       # ========================================================
 
       - name: Check API Stack
         run: |
+
+          echo "Checking CloudFormation stack..."
 
           aws cloudformation describe-stacks \
             --stack-name cloudmart-dev-api \
@@ -427,7 +421,7 @@ jobs:
 
 
       # ========================================================
-      # 20. DISPLAY API URL
+      # 21. DISPLAY API URL
       # ========================================================
 
       - name: Display API URL
@@ -437,10 +431,15 @@ jobs:
           echo "CloudMart API URL"
           echo "======================================"
 
-          aws cloudformation describe-stacks \
+          API_URL=$(aws cloudformation describe-stacks \
             --stack-name cloudmart-dev-api \
             --region "${AWS_REGION}" \
             --query "Stacks[0].Outputs[?OutputKey=='ApiUrl'].OutputValue" \
-            --output text
+            --output text)
 
+          echo "$API_URL"
+
+          echo "======================================"
+          echo "GET endpoint:"
+          echo "${API_URL}/products"
           echo "======================================"
