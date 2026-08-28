@@ -15,6 +15,18 @@ PARAMETER_NAME = os.environ["AUTH_TOKEN_PARAMETER"]
 
 def generate_policy(effect, principal_id, resource):
 
+    arn_parts = method_arn.split(":")
+
+    api_gateway_arn = ":".join(arn_parts[:5])
+
+    api_stage = arn_parts[5].split("/")
+
+    api_id = api_stage[0]
+    stage = api_stage[1]
+
+    resource = f"{api_gateway_arn}:{api_id}/{stage}/*/*"
+
+
     return {
         "principalId": principal_id,
 
