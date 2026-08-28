@@ -46,11 +46,7 @@ def get_database_connection():
         secure=True
     )
 
-    port = int(
-        get_parameter(
-            os.environ["DB_PORT_PARAMETER"]
-        )
-    )
+    port = 3306
 
     connection = pymysql.connect(
         host=host,
