@@ -13,46 +13,71 @@ ssm = boto3.client("ssm")
 
 
 # ============================================================
-# DATABASE CONFIGURATION
+# RESPONSE
+# ============================================================
+
+def response(status_code, body):
+
+    return {
+        "statusCode": status_code,
+        "headers": {
+            "Content-Type": "application/json"
+        },
+        "body": json.dumps(body, default=str)
+    }
+
+
+# ============================================================
+# SSM PARAMETER
 # ============================================================
 
 def get_parameter(name, secure=False):
 
-    response = ssm.get_parameter(
+    result = ssm.get_parameter(
         Name=name,
         WithDecryption=secure
     )
 
-    return response["Parameter"]["Value"]
+    return result["Parameter"]["Value"]
 
+
+# ============================================================
+# DATABASE CONNECTION
+# ============================================================
 
 def get_database_connection():
 
+    host_parameter = os.environ["DB_HOST_PARAMETER"]
+    name_parameter = os.environ["DB_NAME_PARAMETER"]
+    username_parameter = os.environ["DB_USERNAME_PARAMETER"]
+    password_parameter = os.environ["DB_PASSWORD_PARAMETER"]
+    port_parameter = os.environ["DB_PORT_PARAMETER"]
+
     host = get_parameter(
-        os.environ["DB_HOST_PARAMETER"]
+        host_parameter,
+        secure=False
     )
 
     database = get_parameter(
-        os.environ["DB_NAME_PARAMETER"]
+        name_parameter,
+        secure=False
     )
 
     username = get_parameter(
-        os.environ["DB_USERNAME_PARAMETER"],
+        username_parameter,
         secure=True
     )
 
     password = get_parameter(
-        os.environ["DB_PASSWORD_PARAMETER"],
+        password_parameter,
         secure=True
     )
 
-    port_parameter = os.environ.get(
-        "DB_PORT_PARAMETER",
-        "/cloudmart/dev/db/port"
-    )
-
     port = int(
-        get_parameter(port_parameter)
+        get_parameter(
+            port_parameter,
+            secure=False
+        )
     )
 
     connection = pymysql.connect(
@@ -69,36 +94,24 @@ def get_database_connection():
 
 
 # ============================================================
-# JSON RESPONSE
-# ============================================================
-
-def response(status_code, body):
-
-    return {
-        "statusCode": status_code,
-        "headers": {
-            "Content-Type": "application/json"
-        },
-        "body": json.dumps(body, default=str)
-    }
-
-
-# ============================================================
 # LAMBDA HANDLER
 # ============================================================
 
 def lambda_handler(event, context):
 
+    request_id = context.aws_request_id
+
+    method = event.get("httpMethod")
+    path = event.get("path")
+
     print(json.dumps({
         "level": "INFO",
         "message": "Product Lambda invoked",
         "environment": os.environ.get("ENVIRONMENT"),
-        "request_id": context.aws_request_id,
-        "http_method": event.get("httpMethod"),
-        "path": event.get("path")
+        "request_id": request_id,
+        "http_method": method,
+        "path": path
     }))
-
-    method = event.get("httpMethod")
 
     path_parameters = event.get("pathParameters") or {}
 
@@ -107,7 +120,6 @@ def lambda_handler(event, context):
     try:
 
         # ====================================================
-        # CREATE PRODUCT
         # POST /products
         # ====================================================
 
@@ -141,7 +153,8 @@ def lambda_handler(event, context):
 
                 with connection.cursor() as cursor:
 
-                    sql = """
+                    cursor.execute(
+                        """
                         INSERT INTO products
                         (
                             name,
@@ -158,10 +171,7 @@ def lambda_handler(event, context):
                             %s,
                             %s
                         )
-                    """
-
-                    cursor.execute(
-                        sql,
+                        """,
                         (
                             name,
                             description,
@@ -171,7 +181,7 @@ def lambda_handler(event, context):
                         )
                     )
 
-                    product_id = cursor.lastrowid
+                    new_product_id = cursor.lastrowid
 
                 connection.commit()
 
@@ -182,19 +192,19 @@ def lambda_handler(event, context):
             print(json.dumps({
                 "level": "INFO",
                 "message": "Product created",
-                "product_id": product_id
+                "product_id": new_product_id,
+                "request_id": request_id
             }))
 
             return response(
                 201,
                 {
                     "message": "Product created",
-                    "productId": product_id
+                    "productId": new_product_id
                 }
             )
 
         # ====================================================
-        # GET ALL PRODUCTS
         # GET /products
         # ====================================================
 
@@ -236,7 +246,6 @@ def lambda_handler(event, context):
             )
 
         # ====================================================
-        # GET PRODUCT BY ID
         # GET /products/{id}
         # ====================================================
 
@@ -286,7 +295,6 @@ def lambda_handler(event, context):
             )
 
         # ====================================================
-        # UPDATE PRODUCT
         # PUT /products/{id}
         # ====================================================
 
@@ -296,47 +304,53 @@ def lambda_handler(event, context):
                 event.get("body") or "{}"
             )
 
+            fields = []
+            values = []
+
+            if "name" in body:
+
+                fields.append("name = %s")
+                values.append(body["name"])
+
+            if "description" in body:
+
+                fields.append("description = %s")
+                values.append(body["description"])
+
+            if "price" in body:
+
+                fields.append("price = %s")
+                values.append(body["price"])
+
+            if "stock" in body:
+
+                fields.append("stock = %s")
+                values.append(body["stock"])
+
+            if "lowStockThreshold" in body:
+
+                fields.append(
+                    "low_stock_threshold = %s"
+                )
+
+                values.append(
+                    body["lowStockThreshold"]
+                )
+
+            if not fields:
+
+                return response(
+                    400,
+                    {
+                        "message": "No fields to update"
+                    }
+                )
+
             connection = get_database_connection()
 
             try:
 
                 with connection.cursor() as cursor:
-
-                    fields = []
-                    values = []
-
-                    if "name" in body:
-                        fields.append("name = %s")
-                        values.append(body["name"])
-
-                    if "description" in body:
-                        fields.append("description = %s")
-                        values.append(body["description"])
-
-                    if "price" in body:
-                        fields.append("price = %s")
-                        values.append(body["price"])
-
-                    if "stock" in body:
-                        fields.append("stock = %s")
-                        values.append(body["stock"])
-
-                    if "lowStockThreshold" in body:
-                        fields.append(
-                            "low_stock_threshold = %s"
-                        )
-                        values.append(
-                            body["lowStockThreshold"]
-                        )
-
-                    if not fields:
-
-                        return response(
-                            400,
-                            {
-                                "message": "No fields to update"
-                            }
-                        )
 
                     values.append(product_id)
 
@@ -352,6 +366,8 @@ def lambda_handler(event, context):
                     )
 
                     if cursor.rowcount == 0:
+
+                        connection.rollback()
 
                         return response(
                             404,
@@ -375,7 +391,6 @@ def lambda_handler(event, context):
             )
 
         # ====================================================
-        # DELETE PRODUCT
         # DELETE /products/{id}
         # ====================================================
 
@@ -396,6 +411,8 @@ def lambda_handler(event, context):
                     )
 
                     if cursor.rowcount == 0:
+
+                        connection.rollback()
 
                         return response(
                             404,
@@ -419,7 +436,7 @@ def lambda_handler(event, context):
             )
 
         # ====================================================
-        # UNSUPPORTED REQUEST
+        # UNSUPPORTED METHOD
         # ====================================================
 
         return response(
@@ -435,13 +452,13 @@ def lambda_handler(event, context):
             "level": "ERROR",
             "message": "Product Lambda failed",
             "error": str(error),
-            "request_id": context.aws_request_id
+            "request_id": request_id
         }))
 
         return response(
             500,
             {
                 "message": "Internal server error",
-                "requestId": context.aws_request_id
+                "requestId": request_id
             }
         )
