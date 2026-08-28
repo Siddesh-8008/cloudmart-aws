@@ -1,0 +1,59 @@
+name: Deploy CloudMart EventBridge and SNS
+
+on:
+  push:
+    branches:
+      - milestone-3
+    paths:
+      - 'cloudformation/eventbridge/eventbridge-stack.yaml'
+      - '.github/workflows/deploy-eventbridge.yaml'
+
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: ap-south-1
+  STACK_NAME: CloudMart-dev-eventbridge
+  ENVIRONMENT: dev
+
+jobs:
+
+  deploy-eventbridge:
+    name: Deploy EventBridge and SNS Stack
+    runs-on: ubuntu-latest
+
+    steps:
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Validate CloudFormation template
+        run: |
+          aws cloudformation validate-template \
+            --template-body file://cloudformation/eventbridge/eventbridge-stack.yaml
+
+      - name: Deploy EventBridge and SNS stack
+        run: |
+          aws cloudformation deploy \
+            --template-file cloudformation/eventbridge/eventbridge-stack.yaml \
+            --stack-name ${{ env.STACK_NAME }} \
+            --parameter-overrides \
+              Environment=${{ env.ENVIRONMENT }} \
+              LowStockEmail=${{ secrets.LOW_STOCK_EMAIL }} \
+            --capabilities CAPABILITY_NAMED_IAM
+
+      - name: Get stack outputs
+        run: |
+          aws cloudformation describe-stacks \
+            --stack-name ${{ env.STACK_NAME }} \
+            --query "Stacks[0].Outputs" \
+            --output table
