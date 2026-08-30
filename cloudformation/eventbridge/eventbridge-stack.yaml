@@ -14,125 +14,70 @@ Parameters:
   LowStockEmail:
     Type: String
 
-
 Resources:
-
-  LowStockTopic:
-    Type: AWS::SNS::Topic
-    Properties:
-      TopicName: !Sub cloudmart-${Environment}-low-stock-alerts
-      DisplayName: !Sub CloudMart ${Environment} Low Stock Alerts
-
-
-  LowStockEmailSubscription:
-    Type: AWS::SNS::Subscription
-    Properties:
-      TopicArn: !Ref LowStockTopic
-      Protocol: email
-      Endpoint: !Ref LowStockEmail
-
 
   CloudMartEventBus:
     Type: AWS::Events::EventBus
     Properties:
       Name: !Sub cloudmart-${Environment}-event-bus
 
-
-  EventBridgeSNSRole:
-    Type: AWS::IAM::Role
-    Properties:
-
-      RoleName: !Sub CloudMart-${Environment}-eventbridge-sns-role
-
-      AssumeRolePolicyDocument:
-        Version: '2012-10-17'
-
-        Statement:
-          - Effect: Allow
-            Principal:
-              Service:
-                - events.amazonaws.com
-            Action:
-              - sts:AssumeRole
-
-      Policies:
-
-        - PolicyName: PublishLowStockSNS
-
-          PolicyDocument:
-            Version: '2012-10-17'
-
-            Statement:
-              - Effect: Allow
-                Action:
-                  - sns:Publish
-                Resource:
-                  !Ref LowStockTopic
-
-
   LowStockEventRule:
     Type: AWS::Events::Rule
-
     Properties:
-
       Name: !Sub cloudmart-${Environment}-low-stock-rule
-
-      EventBusName:
-        !Ref CloudMartEventBus
-
+      EventBusName: !Ref CloudMartEventBus
       State: ENABLED
 
       EventPattern:
-
         source:
           - cloudmart.product
-
         detail-type:
           - Low Stock Alert
 
       Targets:
-
         - Id: LowStockSNSTarget
-
           Arn:
-            !Ref LowStockTopic
+            Fn::ImportValue:
+              !Sub CloudMart-${Environment}-LowStockTopicArn
 
-          RoleArn:
-            !GetAtt EventBridgeSNSRole.Arn
+  LowStockSNSTopicPolicy:
+    Type: AWS::SNS::TopicPolicy
+    Properties:
+      Topics:
+        - Fn::ImportValue:
+            !Sub CloudMart-${Environment}-LowStockTopicArn
 
+      PolicyDocument:
+        Version: '2012-10-17'
+
+        Statement:
+          - Sid: AllowEventBridgePublish
+            Effect: Allow
+
+            Principal:
+              Service:
+                - events.amazonaws.com
+
+            Action:
+              - sns:Publish
+
+            Resource:
+              Fn::ImportValue:
+                !Sub CloudMart-${Environment}-LowStockTopicArn
 
 Outputs:
 
-  LowStockTopicArn:
-    Value: !Ref LowStockTopic
-
-    Export:
-      Name: !Sub CloudMart-${Environment}-EventBridgeLowStockTopicArn
-
-
   CloudMartEventBusArn:
     Value: !GetAtt CloudMartEventBus.Arn
-
     Export:
       Name: !Sub CloudMart-${Environment}-EventBusArn
 
-
   CloudMartEventBusName:
     Value: !Ref CloudMartEventBus
-
     Export:
       Name: !Sub CloudMart-${Environment}-EventBusName
 
-
-  LowStockEventRuleArn:
+  LowStockRuleArn:
     Value: !GetAtt LowStockEventRule.Arn
-
     Export:
       Name: !Sub CloudMart-${Environment}-LowStockRuleArn
-
-
-  EventBridgeSNSRoleArn:
-    Value: !GetAtt EventBridgeSNSRole.Arn
-
-    Export:
-      Name: !Sub CloudMart-${Environment}-EventBridgeSNSRoleArn
