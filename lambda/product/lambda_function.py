@@ -10,7 +10,11 @@ import pymysql
 # ============================================================
 
 ssm = boto3.client("ssm")
-
+events = boto3.client("events")
+EVENT_BUS_NAME = os.environ.get(
+    "EVENT_BUS_NAME",
+    "cloudmart-dev-event-bus"
+)
 
 # ============================================================
 # DATABASE CONFIGURATION
@@ -47,7 +51,6 @@ def get_database_connection():
     )
 
     port = 3306
-
     connection = pymysql.connect(
         host=host,
         user=username,
@@ -284,6 +287,11 @@ def lambda_handler(event, context):
         # PUT /products/{id}
         # ====================================================
 
+        # ====================================================
+        # UPDATE PRODUCT
+        # PUT /products/{id}
+        # ====================================================
+
         if method == "PUT" and product_id:
 
             body = json.loads(
@@ -296,6 +304,45 @@ def lambda_handler(event, context):
 
                 with connection.cursor() as cursor:
 
+                    # --------------------------------------------
+                    # Get current product information
+                    # --------------------------------------------
+
+                    cursor.execute(
+                        """
+                        SELECT
+                            id,
+                            name,
+                            stock,
+                            low_stock_threshold
+                        FROM products
+                        WHERE id = %s
+                        """,
+                        (product_id,)
+                    )
+
+                    existing_product = cursor.fetchone()
+
+                    if not existing_product:
+
+                        return response(
+                            404,
+                            {
+                                "message": "Product not found"
+                            }
+                        )
+
+                    old_stock = existing_product["stock"]
+                    product_name = existing_product["name"]
+
+                    old_threshold = existing_product[
+                        "low_stock_threshold"
+                    ]
+
+                    # --------------------------------------------
+                    # Build update fields
+                    # --------------------------------------------
+
                     fields = []
                     values = []
 
@@ -303,6 +350,8 @@ def lambda_handler(event, context):
 
                         fields.append("name = %s")
                         values.append(body["name"])
+
+                        product_name = body["name"]
 
                     if "description" in body:
 
@@ -338,6 +387,24 @@ def lambda_handler(event, context):
                             }
                         )
 
+                    # --------------------------------------------
+                    # Determine new stock and threshold
+                    # --------------------------------------------
+
+                    new_stock = body.get(
+                        "stock",
+                        old_stock
+                    )
+
+                    new_threshold = body.get(
+                        "lowStockThreshold",
+                        old_threshold
+                    )
+
+                    # --------------------------------------------
+                    # Update product
+                    # --------------------------------------------
+
                     values.append(product_id)
 
                     sql = f"""
@@ -351,20 +418,62 @@ def lambda_handler(event, context):
                         values
                     )
 
-                    if cursor.rowcount == 0:
-
-                        return response(
-                            404,
-                            {
-                                "message": "Product not found"
-                            }
-                        )
-
-                connection.commit()
+                    connection.commit()
 
             finally:
 
                 connection.close()
+
+            # ====================================================
+            # LOW STOCK EVENT
+            # ====================================================
+
+            # Trigger only when stock moves from above the
+            # threshold to at/below the threshold.
+
+            if (
+                "stock" in body
+                and old_stock > new_threshold
+                and new_stock <= new_threshold
+            ):
+
+                try:
+
+                    event_detail = {
+                        "productId": product_id,
+                        "productName": product_name,
+                        "stock": new_stock,
+                        "lowStockThreshold": new_threshold
+                    }
+
+                    event_response = events.put_events(
+                        Entries=[
+                            {
+                                "EventBusName": EVENT_BUS_NAME,
+                                "Source": "cloudmart.product",
+                                "DetailType": "Low Stock Alert",
+                                "Detail": json.dumps(event_detail)
+                            }
+                        ]
+                    )
+
+                    print(json.dumps({
+                        "level": "INFO",
+                        "message": "Low stock event published",
+                        "product_id": product_id,
+                        "stock": new_stock,
+                        "threshold": new_threshold,
+                        "event_id": event_response["Entries"][0].get("EventId")
+                    }))
+
+                except Exception as event_error:
+
+                    print(json.dumps({
+                        "level": "ERROR",
+                        "message": "Failed to publish low stock event",
+                        "product_id": product_id,
+                        "error": str(event_error)
+                    }))
 
             return response(
                 200,
