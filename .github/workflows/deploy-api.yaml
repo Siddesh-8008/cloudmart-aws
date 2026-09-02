@@ -59,7 +59,6 @@ jobs:
 
     runs-on: ubuntu-latest
 
-
     steps:
 
 
@@ -321,7 +320,7 @@ jobs:
 
           zip -r ../../product.zip .
 
-          cd ../.."
+          cd ../..
 
           echo ""
           echo "======================================"
@@ -436,7 +435,7 @@ jobs:
 
           zip -r ../../schema.zip .
 
-          cd ../.."
+          cd ../..
 
           echo ""
           echo "======================================"
@@ -491,18 +490,6 @@ jobs:
 
       # ======================================================
       # 12. PACKAGE SINGLE ORDER PROCESSOR LAMBDA
-      # ======================================================
-      #
-      # IMPORTANT:
-      #
-      # There is NO separate Order Lambda anymore.
-      #
-      # This Lambda handles:
-      #
-      # POST /orders
-      # GET /orders/{id}
-      # GET /orders?customerId=X
-      #
       # ======================================================
 
       - name: Package Order Processor Lambda
@@ -574,7 +561,7 @@ jobs:
 
           zip -r ../../order-processor.zip .
 
-          cd ../.."
+          cd ../..
 
           echo ""
           echo "======================================"
@@ -953,7 +940,6 @@ jobs:
             --query "Stacks[0].Outputs[?OutputKey=='OrderProcessorLambdaRoleArn'].OutputValue | [0]" \
             --output text)
 
-
           if [ -z "${PRODUCT_ROLE_ARN}" ] || [ "${PRODUCT_ROLE_ARN}" = "None" ]; then
 
             echo "ERROR: ProductLambdaRoleArn not found."
@@ -961,7 +947,6 @@ jobs:
             exit 1
 
           fi
-
 
           if [ -z "${ORDER_PROCESSOR_ROLE_ARN}" ] || [ "${ORDER_PROCESSOR_ROLE_ARN}" = "None" ]; then
 
@@ -975,7 +960,6 @@ jobs:
 
           fi
 
-
           echo ""
           echo "Product Lambda Role:"
           echo "${PRODUCT_ROLE_ARN}"
@@ -983,7 +967,6 @@ jobs:
           echo ""
           echo "Order Processor Lambda Role:"
           echo "${ORDER_PROCESSOR_ROLE_ARN}"
-
 
           echo "product_role_arn=${PRODUCT_ROLE_ARN}" >> "${GITHUB_OUTPUT}"
 
@@ -1075,7 +1058,6 @@ jobs:
           echo "DEPLOYING CLOUDMART API"
           echo "======================================"
 
-
           PRIVATE_SUBNET_A="${{ steps.subnet-a.outputs.subnet }}"
 
           PRIVATE_SUBNET_B="${{ steps.subnet-b.outputs.subnet }}"
@@ -1091,7 +1073,6 @@ jobs:
           AUTHORIZE_ARN="${{ steps.authorizer.outputs.authorizer_arn }}"
 
           PRODUCT_BUCKET="${{ steps.artifact-bucket.outputs.bucket }}"
-
 
           echo ""
           echo "Environment:"
@@ -1121,10 +1102,8 @@ jobs:
           echo "Lambda Artifact Bucket:"
           echo "${PRODUCT_BUCKET}"
 
-
           echo ""
           echo "Starting CloudFormation deployment..."
-
 
           aws cloudformation deploy \
             --stack-name "${API_STACK_NAME}" \
@@ -1152,7 +1131,6 @@ jobs:
               LowStockEmail="${{ secrets.LOW_STOCK_EMAIL }}" \
             --no-fail-on-empty-changeset
 
-
           echo ""
           echo "======================================"
           echo "API DEPLOYMENT COMPLETE"
@@ -1175,14 +1153,11 @@ jobs:
           echo "INITIALIZING DATABASE SCHEMA"
           echo "======================================"
 
-
           SCHEMA_LAMBDA_NAME="CloudMart-${ENVIRONMENT}-schema"
-
 
           echo ""
           echo "Invoking:"
           echo "${SCHEMA_LAMBDA_NAME}"
-
 
           aws lambda invoke \
             --function-name "${SCHEMA_LAMBDA_NAME}" \
@@ -1191,14 +1166,12 @@ jobs:
             --payload '{}' \
             schema-response.json
 
-
           echo ""
           echo "Schema Lambda response:"
 
           cat schema-response.json
 
           echo ""
-
 
           if grep -q '"errorMessage"' schema-response.json; then
 
@@ -1208,7 +1181,6 @@ jobs:
             exit 1
 
           fi
-
 
           echo ""
           echo "Database schema initialization completed."
@@ -1227,7 +1199,6 @@ jobs:
           echo "======================================"
           echo "CLOUDFORMATION STACK STATUS"
           echo "======================================"
-
 
           aws cloudformation describe-stacks \
             --stack-name "${API_STACK_NAME}" \
@@ -1249,7 +1220,6 @@ jobs:
           echo "======================================"
           echo "API STACK OUTPUTS"
           echo "======================================"
-
 
           aws cloudformation describe-stacks \
             --stack-name "${API_STACK_NAME}" \
@@ -1273,7 +1243,6 @@ jobs:
           echo "======================================"
           echo "CLOUDFORMATION EVENTS"
           echo "======================================"
-
 
           aws cloudformation describe-stack-events \
             --stack-name "${API_STACK_NAME}" \
