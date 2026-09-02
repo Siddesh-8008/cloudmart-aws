@@ -2,9 +2,14 @@ AWSTemplateFormatVersion: '2010-09-09'
 
 Description: >
   CloudMart Milestone 4 API Stack.
-  Creates Product Lambda, Schema Lambda, Order Lambda,
-  Order Processor Lambda, API Gateway, Lambda Authorizer
-  integration and low-stock SNS alerts.
+  Creates Product Lambda, Schema Lambda,
+  single Order Processor Lambda, API Gateway,
+  Lambda Authorizer and low-stock SNS alerts.
+
+
+# ==============================================================
+# PARAMETERS
+# ==============================================================
 
 Parameters:
 
@@ -44,12 +49,6 @@ Parameters:
       IAM role ARN used by Product Lambda and Schema Lambda
 
 
-  OrderLambdaExecutionRoleArn:
-    Type: String
-    Description: >
-      IAM role ARN used by Order Lambda
-
-
   OrderProcessorLambdaExecutionRoleArn:
     Type: String
     Description: >
@@ -84,12 +83,6 @@ Parameters:
     Type: String
     Default: schema/schema.zip
     Description: S3 key of Schema Lambda package
-
-
-  OrderLambdaCodeKey:
-    Type: String
-    Default: order/order.zip
-    Description: S3 key of Order Lambda package
 
 
   OrderProcessorLambdaCodeKey:
@@ -172,6 +165,7 @@ Parameters:
 
 Resources:
 
+
   # ============================================================
   # SNS LOW STOCK TOPIC
   # ============================================================
@@ -180,9 +174,12 @@ Resources:
     Type: AWS::SNS::Topic
 
     Properties:
-      TopicName: !Sub cloudmart-${Environment}-low-stock-alerts
+
+      TopicName:
+        !Sub cloudmart-${Environment}-low-stock-alerts
 
       Tags:
+
         - Key: Project
           Value: CloudMart
 
@@ -198,11 +195,15 @@ Resources:
     Type: AWS::SNS::Subscription
 
     Properties:
-      TopicArn: !Ref LowStockTopic
 
-      Protocol: email
+      TopicArn:
+        !Ref LowStockTopic
 
-      Endpoint: !Ref LowStockEmail
+      Protocol:
+        email
+
+      Endpoint:
+        !Ref LowStockEmail
 
 
   # ============================================================
@@ -236,14 +237,16 @@ Resources:
         256
 
       Code:
+
         S3Bucket:
           !Ref ProductLambdaCodeBucket
 
         S3Key:
           !Ref ProductLambdaCodeKey
 
+
       # --------------------------------------------------------
-      # VPC CONFIGURATION
+      # VPC
       # --------------------------------------------------------
 
       VpcConfig:
@@ -252,7 +255,9 @@ Resources:
           !Ref PrivateSubnetIds
 
         SecurityGroupIds:
+
           - !Ref LambdaSecurityGroupId
+
 
       # --------------------------------------------------------
       # ENVIRONMENT VARIABLES
@@ -315,90 +320,16 @@ Resources:
         256
 
       Code:
+
         S3Bucket:
           !Ref ProductLambdaCodeBucket
 
         S3Key:
           !Ref SchemaLambdaCodeKey
 
-      # --------------------------------------------------------
-      # VPC CONFIGURATION
-      # --------------------------------------------------------
-
-      VpcConfig:
-
-        SubnetIds:
-          !Ref PrivateSubnetIds
-
-        SecurityGroupIds:
-          - !Ref LambdaSecurityGroupId
 
       # --------------------------------------------------------
-      # DATABASE PARAMETERS
-      # --------------------------------------------------------
-
-      Environment:
-
-        Variables:
-
-          DB_HOST_PARAMETER:
-            !Ref DBHostParameter
-
-          DB_PORT_PARAMETER:
-            !Ref DBPortParameter
-
-          DB_NAME_PARAMETER:
-            !Ref DBNameParameter
-
-          DB_USERNAME_PARAMETER:
-            !Ref DBUsernameParameter
-
-          DB_PASSWORD_PARAMETER:
-            !Ref DBPasswordParameter
-
-          ENVIRONMENT:
-            !Ref Environment
-
-
-  # ============================================================
-  # ORDER LAMBDA
-  # ============================================================
-
-  OrderLambda:
-    Type: AWS::Lambda::Function
-
-    Properties:
-
-      FunctionName:
-        !Sub CloudMart-${Environment}-order
-
-      Description:
-        CloudMart Order API Lambda
-
-      Runtime:
-        python3.12
-
-      Handler:
-        lambda_function.lambda_handler
-
-      Role:
-        !Ref OrderLambdaExecutionRoleArn
-
-      Timeout:
-        30
-
-      MemorySize:
-        256
-
-      Code:
-        S3Bucket:
-          !Ref ProductLambdaCodeBucket
-
-        S3Key:
-          !Ref OrderLambdaCodeKey
-
-      # --------------------------------------------------------
-      # VPC CONFIGURATION
+      # VPC
       # --------------------------------------------------------
 
       VpcConfig:
@@ -407,7 +338,9 @@ Resources:
           !Ref PrivateSubnetIds
 
         SecurityGroupIds:
+
           - !Ref LambdaSecurityGroupId
+
 
       # --------------------------------------------------------
       # ENVIRONMENT VARIABLES
@@ -432,18 +365,14 @@ Resources:
           DB_PASSWORD_PARAMETER:
             !Ref DBPasswordParameter
 
-          EVENT_BUS_NAME:
-            !Ref EventBusName
-
           ENVIRONMENT:
             !Ref Environment
-
-          ORDER_PROCESSOR_FUNCTION:
-            !Sub CloudMart-${Environment}-order-processor
 
 
   # ============================================================
   # ORDER PROCESSOR LAMBDA
+  #
+  # THIS IS NOW THE ONLY ORDER LAMBDA
   # ============================================================
 
   OrderProcessorLambda:
@@ -455,7 +384,7 @@ Resources:
         !Sub CloudMart-${Environment}-order-processor
 
       Description:
-        CloudMart asynchronous Order Processor Lambda
+        CloudMart Order Processing Lambda
 
       Runtime:
         python3.12
@@ -473,14 +402,16 @@ Resources:
         256
 
       Code:
+
         S3Bucket:
           !Ref ProductLambdaCodeBucket
 
         S3Key:
           !Ref OrderProcessorLambdaCodeKey
 
+
       # --------------------------------------------------------
-      # VPC CONFIGURATION
+      # VPC
       # --------------------------------------------------------
 
       VpcConfig:
@@ -489,7 +420,9 @@ Resources:
           !Ref PrivateSubnetIds
 
         SecurityGroupIds:
+
           - !Ref LambdaSecurityGroupId
+
 
       # --------------------------------------------------------
       # ENVIRONMENT VARIABLES
@@ -519,6 +452,8 @@ Resources:
 
           ENVIRONMENT:
             !Ref Environment
+
+
   # ============================================================
   # API GATEWAY REST API
   # ============================================================
@@ -537,6 +472,7 @@ Resources:
       EndpointConfiguration:
 
         Types:
+
           - REGIONAL
 
 
@@ -838,6 +774,8 @@ Resources:
 
   # ============================================================
   # POST /orders
+  #
+  # DIRECTLY -> ORDER PROCESSOR LAMBDA
   # ============================================================
 
   CreateOrderMethod:
@@ -871,11 +809,13 @@ Resources:
         Uri:
           !Sub
             - arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaArn}/invocations
-            - LambdaArn: !GetAtt OrderLambda.Arn
+            - LambdaArn: !GetAtt OrderProcessorLambda.Arn
 
 
   # ============================================================
   # GET /orders
+  #
+  # DIRECTLY -> ORDER PROCESSOR LAMBDA
   # ============================================================
 
   GetOrdersMethod:
@@ -909,11 +849,13 @@ Resources:
         Uri:
           !Sub
             - arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaArn}/invocations
-            - LambdaArn: !GetAtt OrderLambda.Arn
+            - LambdaArn: !GetAtt OrderProcessorLambda.Arn
 
 
   # ============================================================
   # GET /orders/{id}
+  #
+  # DIRECTLY -> ORDER PROCESSOR LAMBDA
   # ============================================================
 
   GetOrderMethod:
@@ -947,7 +889,7 @@ Resources:
         Uri:
           !Sub
             - arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaArn}/invocations
-            - LambdaArn: !GetAtt OrderLambda.Arn
+            - LambdaArn: !GetAtt OrderProcessorLambda.Arn
 
 
   # ============================================================
@@ -974,16 +916,16 @@ Resources:
 
 
   # ============================================================
-  # API GATEWAY -> ORDER LAMBDA PERMISSION
+  # API GATEWAY -> ORDER PROCESSOR LAMBDA PERMISSION
   # ============================================================
 
-  OrderLambdaApiPermission:
+  OrderProcessorLambdaApiPermission:
     Type: AWS::Lambda::Permission
 
     Properties:
 
       FunctionName:
-        !Ref OrderLambda
+        !Ref OrderProcessorLambda
 
       Action:
         lambda:InvokeFunction
@@ -1028,14 +970,20 @@ Resources:
 
     DependsOn:
 
-      # Product methods
+      # --------------------------------------------------------
+      # PRODUCT METHODS
+      # --------------------------------------------------------
+
       - GetProductsMethod
       - CreateProductMethod
       - GetProductMethod
       - UpdateProductMethod
       - DeleteProductMethod
 
-      # Order methods
+      # --------------------------------------------------------
+      # ORDER METHODS
+      # --------------------------------------------------------
+
       - CreateOrderMethod
       - GetOrdersMethod
       - GetOrderMethod
@@ -1074,8 +1022,9 @@ Resources:
 
 Outputs:
 
+
   # ============================================================
-  # PRODUCT LAMBDA OUTPUTS
+  # PRODUCT LAMBDA
   # ============================================================
 
   ProductLambdaArn:
@@ -1103,7 +1052,7 @@ Outputs:
 
 
   # ============================================================
-  # SCHEMA LAMBDA OUTPUTS
+  # SCHEMA LAMBDA
   # ============================================================
 
   SchemaLambdaArn:
@@ -1131,35 +1080,7 @@ Outputs:
 
 
   # ============================================================
-  # ORDER LAMBDA OUTPUTS
-  # ============================================================
-
-  OrderLambdaArn:
-    Description:
-      Order Lambda ARN
-
-    Value:
-      !GetAtt OrderLambda.Arn
-
-    Export:
-      Name:
-        !Sub CloudMart-${Environment}-OrderLambdaArn
-
-
-  OrderLambdaName:
-    Description:
-      Order Lambda name
-
-    Value:
-      !Ref OrderLambda
-
-    Export:
-      Name:
-        !Sub CloudMart-${Environment}-OrderLambdaName
-
-
-  # ============================================================
-  # ORDER PROCESSOR OUTPUTS
+  # ORDER PROCESSOR LAMBDA
   # ============================================================
 
   OrderProcessorLambdaArn:
@@ -1187,7 +1108,7 @@ Outputs:
 
 
   # ============================================================
-  # API OUTPUTS
+  # API ID
   # ============================================================
 
   ProductApiId:
@@ -1202,6 +1123,10 @@ Outputs:
         !Sub CloudMart-${Environment}-ProductApiId
 
 
+  # ============================================================
+  # PRODUCT API URL
+  # ============================================================
+
   ProductApiUrl:
     Description:
       CloudMart Product API URL
@@ -1210,6 +1135,10 @@ Outputs:
       !Sub
         https://${ProductApi}.execute-api.${AWS::Region}.amazonaws.com/${Environment}/products
 
+
+  # ============================================================
+  # ORDER API URL
+  # ============================================================
 
   OrderApiUrl:
     Description:
@@ -1221,7 +1150,7 @@ Outputs:
 
 
   # ============================================================
-  # SNS OUTPUT
+  # SNS
   # ============================================================
 
   LowStockTopicArn:
@@ -1234,4 +1163,3 @@ Outputs:
     Export:
       Name:
         !Sub CloudMart-${Environment}-LowStockTopicArn
-
