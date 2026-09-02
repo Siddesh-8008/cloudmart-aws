@@ -342,7 +342,7 @@ jobs:
 
           zip -r ../../product.zip . > /dev/null
 
-          cd ../.."
+          cd ../..
 
           echo ""
           echo "======================================"
