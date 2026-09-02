@@ -1,8 +1,16 @@
 AWSTemplateFormatVersion: '2010-09-09'
 
-Description: CloudMart Event Driven Low Stock Alert Stack
+Description: >
+  CloudMart Milestone 4 EventBridge Stack.
+  Creates the CloudMart EventBridge event bus,
+  low-stock alert rule, order confirmation notification,
+  and order failure event rule.
 
 Parameters:
+
+  # ============================================================
+  # ENVIRONMENT
+  # ============================================================
 
   Environment:
     Type: String
@@ -11,50 +19,108 @@ Parameters:
       - dev
       - prod
 
+
+  # ============================================================
+  # LOW STOCK EMAIL
+  # ============================================================
+
   LowStockEmail:
     Type: String
+    Description: Email address for low-stock notifications
+
+
+  # ============================================================
+  # ORDER NOTIFICATION EMAIL
+  # ============================================================
+
+  OrderNotificationEmail:
+    Type: String
+    Description: Email address for order confirmation notifications
+
+
+# ==============================================================
+# RESOURCES
+# ==============================================================
 
 Resources:
 
+  # ============================================================
+  # CLOUDMART EVENT BUS
+  # ============================================================
+
   CloudMartEventBus:
     Type: AWS::Events::EventBus
+
     Properties:
-      Name: !Sub cloudmart-${Environment}-event-bus
+      Name:
+        !Sub cloudmart-${Environment}-event-bus
+
+
+  # ============================================================
+  # LOW STOCK EVENT RULE
+  # ============================================================
 
   LowStockEventRule:
     Type: AWS::Events::Rule
+
     Properties:
-      Name: !Sub cloudmart-${Environment}-low-stock-rule
-      EventBusName: !Ref CloudMartEventBus
-      State: ENABLED
+
+      Name:
+        !Sub cloudmart-${Environment}-low-stock-rule
+
+      EventBusName:
+        !Ref CloudMartEventBus
+
+      State:
+        ENABLED
 
       EventPattern:
+
         source:
           - cloudmart.product
+
         detail-type:
           - Low Stock Alert
 
       Targets:
-        - Id: LowStockSNSTarget
+
+        - Id:
+            LowStockSNSTarget
+
           Arn:
             Fn::ImportValue:
               !Sub CloudMart-${Environment}-LowStockTopicArn
 
+
+  # ============================================================
+  # LOW STOCK SNS TOPIC POLICY
+  # ============================================================
+
   LowStockSNSTopicPolicy:
     Type: AWS::SNS::TopicPolicy
+
     Properties:
+
       Topics:
+
         - Fn::ImportValue:
             !Sub CloudMart-${Environment}-LowStockTopicArn
 
       PolicyDocument:
-        Version: '2012-10-17'
+
+        Version:
+          '2012-10-17'
 
         Statement:
-          - Sid: AllowEventBridgePublish
-            Effect: Allow
+
+          - Sid:
+              AllowEventBridgePublish
+
+            Effect:
+              Allow
 
             Principal:
+
               Service:
                 - events.amazonaws.com
 
@@ -65,19 +131,245 @@ Resources:
               Fn::ImportValue:
                 !Sub CloudMart-${Environment}-LowStockTopicArn
 
+
+  # ============================================================
+  # ORDER NOTIFICATION SNS TOPIC
+  # ============================================================
+
+  OrderNotificationTopic:
+    Type: AWS::SNS::Topic
+
+    Properties:
+
+      TopicName:
+        !Sub cloudmart-${Environment}-order-notifications
+
+      Tags:
+
+        - Key: Project
+          Value: CloudMart
+
+        - Key: Environment
+          Value: !Ref Environment
+
+
+  # ============================================================
+  # ORDER NOTIFICATION EMAIL SUBSCRIPTION
+  # ============================================================
+
+  OrderNotificationEmailSubscription:
+    Type: AWS::SNS::Subscription
+
+    Properties:
+
+      TopicArn:
+        !Ref OrderNotificationTopic
+
+      Protocol:
+        email
+
+      Endpoint:
+        !Ref OrderNotificationEmail
+
+
+  # ============================================================
+  # ORDER SNS TOPIC POLICY
+  # ============================================================
+
+  OrderNotificationSNSTopicPolicy:
+    Type: AWS::SNS::TopicPolicy
+
+    Properties:
+
+      Topics:
+
+        - !Ref OrderNotificationTopic
+
+      PolicyDocument:
+
+        Version:
+          '2012-10-17'
+
+        Statement:
+
+          - Sid:
+              AllowEventBridgePublish
+
+            Effect:
+              Allow
+
+            Principal:
+
+              Service:
+                - events.amazonaws.com
+
+            Action:
+              - sns:Publish
+
+            Resource:
+              !Ref OrderNotificationTopic
+
+
+  # ============================================================
+  # ORDER CONFIRMED EVENT RULE
+  # ============================================================
+
+  OrderConfirmedRule:
+    Type: AWS::Events::Rule
+
+    Properties:
+
+      Name:
+        !Sub cloudmart-${Environment}-order-confirmed-rule
+
+      EventBusName:
+        !Ref CloudMartEventBus
+
+      State:
+        ENABLED
+
+      EventPattern:
+
+        source:
+          - cloudmart.orders
+
+        detail-type:
+          - OrderConfirmed
+
+      Targets:
+
+        - Id:
+            OrderConfirmedSNSTarget
+
+          Arn:
+            !Ref OrderNotificationTopic
+
+
+  # ============================================================
+  # ORDER FAILED EVENT RULE
+  # ============================================================
+
+  OrderFailedRule:
+    Type: AWS::Events::Rule
+
+    Properties:
+
+      Name:
+        !Sub cloudmart-${Environment}-order-failed-rule
+
+      EventBusName:
+        !Ref CloudMartEventBus
+
+      State:
+        ENABLED
+
+      EventPattern:
+
+        source:
+          - cloudmart.orders
+
+        detail-type:
+          - OrderFailed
+
+
+# ==============================================================
+# OUTPUTS
+# ==============================================================
+
 Outputs:
 
+  # ============================================================
+  # EVENT BUS ARN
+  # ============================================================
+
   CloudMartEventBusArn:
-    Value: !GetAtt CloudMartEventBus.Arn
+    Description:
+      CloudMart EventBridge Event Bus ARN
+
+    Value:
+      !GetAtt CloudMartEventBus.Arn
+
     Export:
-      Name: !Sub CloudMart-${Environment}-EventBusArn
+      Name:
+        !Sub CloudMart-${Environment}-EventBusArn
+
+
+  # ============================================================
+  # EVENT BUS NAME
+  # ============================================================
 
   CloudMartEventBusName:
-    Value: !Ref CloudMartEventBus
+    Description:
+      CloudMart EventBridge Event Bus Name
+
+    Value:
+      !Ref CloudMartEventBus
+
     Export:
-      Name: !Sub CloudMart-${Environment}-EventBusName
+      Name:
+        !Sub CloudMart-${Environment}-EventBusName
+
+
+  # ============================================================
+  # LOW STOCK RULE ARN
+  # ============================================================
 
   LowStockRuleArn:
-    Value: !GetAtt LowStockEventRule.Arn
+    Description:
+      Low Stock EventBridge Rule ARN
+
+    Value:
+      !GetAtt LowStockEventRule.Arn
+
     Export:
-      Name: !Sub CloudMart-${Environment}-LowStockRuleArn
+      Name:
+        !Sub CloudMart-${Environment}-LowStockRuleArn
+
+
+  # ============================================================
+  # ORDER CONFIRMED RULE ARN
+  # ============================================================
+
+  OrderConfirmedRuleArn:
+    Description:
+      Order Confirmed EventBridge Rule ARN
+
+    Value:
+      !GetAtt OrderConfirmedRule.Arn
+
+    Export:
+      Name:
+        !Sub CloudMart-${Environment}-OrderConfirmedRuleArn
+
+
+  # ============================================================
+  # ORDER FAILED RULE ARN
+  # ============================================================
+
+  OrderFailedRuleArn:
+    Description:
+      Order Failed EventBridge Rule ARN
+
+    Value:
+      !GetAtt OrderFailedRule.Arn
+
+    Export:
+      Name:
+        !Sub CloudMart-${Environment}-OrderFailedRuleArn
+
+
+  # ============================================================
+  # ORDER NOTIFICATION SNS TOPIC ARN
+  # ============================================================
+
+  OrderNotificationTopicArn:
+    Description:
+      SNS topic ARN for order confirmation notifications
+
+    Value:
+      !Ref OrderNotificationTopic
+
+    Export:
+      Name:
+        !Sub CloudMart-${Environment}-OrderNotificationTopicArn
+

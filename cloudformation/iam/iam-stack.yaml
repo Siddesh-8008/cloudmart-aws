@@ -428,6 +428,147 @@ Resources:
 
 
 
+
+  # ============================================================
+  # ORDER LAMBDA ROLE - MILESTONE 4
+  # ============================================================
+
+  OrderLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub CloudMart-${Environment}-order-lambda-role
+      Description: IAM execution role for CloudMart Order Lambda
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: OrderCloudWatchLogs
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: logs:CreateLogGroup
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/CloudMart-${Environment}-order:*
+        - PolicyName: OrderReadDatabaseParameters
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: ssm:GetParameter
+                Resource:
+                  - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/host
+                  - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/port
+                  - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/name
+                  - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/username
+                  - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/password
+        - PolicyName: OrderSSMKMSDecrypt
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: kms:Decrypt
+                Resource: !Sub arn:${AWS::Partition}:kms:${AWS::Region}:${AWS::AccountId}:key/*
+        - PolicyName: OrderVPCAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ec2:CreateNetworkInterface
+                  - ec2:DescribeNetworkInterfaces
+                  - ec2:DeleteNetworkInterface
+                Resource: '*'
+        - PolicyName: OrderPublishEvents
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: events:PutEvents
+                Resource: !Sub arn:${AWS::Partition}:events:${AWS::Region}:${AWS::AccountId}:event-bus/*
+        - PolicyName: OrderInvokeProcessor
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: lambda:InvokeFunction
+                Resource: !Sub arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:CloudMart-${Environment}-order-processor
+
+
+  # ============================================================
+  # ORDER PROCESSOR LAMBDA ROLE - MILESTONE 4
+  # ============================================================
+
+  OrderProcessorLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub CloudMart-${Environment}-order-processor-lambda-role
+      Description: IAM execution role for CloudMart Order Processor Lambda
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: OrderProcessorCloudWatchLogs
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: logs:CreateLogGroup
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/CloudMart-${Environment}-order-processor:*
+        - PolicyName: OrderProcessorReadDatabaseParameters
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: ssm:GetParameter
+                Resource:
+                  - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/host
+                  - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/port
+                  - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/name
+                  - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/username
+                  - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/password
+        - PolicyName: OrderProcessorSSMKMSDecrypt
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: kms:Decrypt
+                Resource: !Sub arn:${AWS::Partition}:kms:${AWS::Region}:${AWS::AccountId}:key/*
+        - PolicyName: OrderProcessorVPCAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ec2:CreateNetworkInterface
+                  - ec2:DescribeNetworkInterfaces
+                  - ec2:DeleteNetworkInterface
+                Resource: '*'
+        - PolicyName: OrderProcessorPublishEvents
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: events:PutEvents
+                Resource: !Sub arn:${AWS::Partition}:events:${AWS::Region}:${AWS::AccountId}:event-bus/*
+
 # ==============================================================
 # OUTPUTS
 # ==============================================================
@@ -518,3 +659,31 @@ Outputs:
 
     Export:
       Name: !Sub CloudMart-${Environment}-InventoryAlertLambdaRoleName
+
+  # ============================================================
+  # ORDER ROLE OUTPUTS
+  # ============================================================
+
+  OrderLambdaRoleArn:
+    Description: ARN of the CloudMart Order Lambda execution role
+    Value: !GetAtt OrderLambdaRole.Arn
+    Export:
+      Name: !Sub CloudMart-${Environment}-OrderLambdaRoleArn
+
+  OrderLambdaRoleName:
+    Description: Name of the CloudMart Order Lambda execution role
+    Value: !Ref OrderLambdaRole
+    Export:
+      Name: !Sub CloudMart-${Environment}-OrderLambdaRoleName
+
+  OrderProcessorLambdaRoleArn:
+    Description: ARN of the CloudMart Order Processor Lambda execution role
+    Value: !GetAtt OrderProcessorLambdaRole.Arn
+    Export:
+      Name: !Sub CloudMart-${Environment}-OrderProcessorLambdaRoleArn
+
+  OrderProcessorLambdaRoleName:
+    Description: Name of the CloudMart Order Processor Lambda execution role
+    Value: !Ref OrderProcessorLambdaRole
+    Export:
+      Name: !Sub CloudMart-${Environment}-OrderProcessorLambdaRoleName

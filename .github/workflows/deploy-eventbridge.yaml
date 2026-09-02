@@ -27,8 +27,17 @@ jobs:
 
     steps:
 
+      # ========================================================
+      # CHECKOUT
+      # ========================================================
+
       - name: Checkout repository
         uses: actions/checkout@v4
+
+
+      # ========================================================
+      # AWS CREDENTIALS
+      # ========================================================
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -36,10 +45,51 @@ jobs:
           role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
+
+      # ========================================================
+      # VERIFY AWS ACCESS
+      # ========================================================
+
+      - name: Verify AWS access
+        run: |
+          echo "AWS Region: ${AWS_REGION}"
+          echo "Environment: ${ENVIRONMENT}"
+
+          aws sts get-caller-identity
+
+
+      # ========================================================
+      # VALIDATE CLOUDFORMATION TEMPLATE
+      # ========================================================
+
       - name: Validate CloudFormation template
         run: |
           aws cloudformation validate-template \
-            --template-body file://cloudformation/eventbridge/eventbridge-stack.yaml
+            --template-body file://cloudformation/eventbridge/eventbridge-stack.yaml \
+            --region "${AWS_REGION}"
+
+
+      # ========================================================
+      # CHECK API STACK
+      # ========================================================
+      # EventBridge imports the Low Stock SNS topic ARN
+      # from the API stack, so API stack must exist first.
+      # ========================================================
+
+      - name: Verify API stack exists
+        run: |
+          echo "Checking API stack..."
+
+          aws cloudformation describe-stacks \
+            --stack-name cloudmart-dev-api \
+            --region "${AWS_REGION}" \
+            --query "Stacks[0].StackStatus" \
+            --output text
+
+
+      # ========================================================
+      # DEPLOY EVENTBRIDGE AND SNS
+      # ========================================================
 
       - name: Deploy EventBridge and SNS stack
         run: |
@@ -49,11 +99,99 @@ jobs:
             --parameter-overrides \
               Environment=${{ env.ENVIRONMENT }} \
               LowStockEmail=${{ secrets.LOW_STOCK_EMAIL }} \
-            --capabilities CAPABILITY_NAMED_IAM
+              OrderNotificationEmail=${{ secrets.ORDER_NOTIFICATION_EMAIL }} \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --region "${AWS_REGION}"
+
+
+      # ========================================================
+      # CHECK STACK STATUS
+      # ========================================================
+
+      - name: Check EventBridge stack status
+        run: |
+          echo "EventBridge stack status:"
+
+          aws cloudformation describe-stacks \
+            --stack-name ${{ env.STACK_NAME }} \
+            --region "${AWS_REGION}" \
+            --query "Stacks[0].StackStatus" \
+            --output text
+
+
+      # ========================================================
+      # GET STACK OUTPUTS
+      # ========================================================
 
       - name: Get stack outputs
         run: |
+          echo "=========================================="
+          echo "CloudMart EventBridge Stack Outputs"
+          echo "=========================================="
+
           aws cloudformation describe-stacks \
             --stack-name ${{ env.STACK_NAME }} \
+            --region "${AWS_REGION}" \
             --query "Stacks[0].Outputs" \
             --output table
+
+
+      # ========================================================
+      # DISPLAY EVENT BUS
+      # ========================================================
+
+      - name: Display EventBridge Event Bus
+        run: |
+          echo "EventBridge Event Bus:"
+
+          aws cloudformation describe-stacks \
+            --stack-name ${{ env.STACK_NAME }} \
+            --region "${AWS_REGION}" \
+            --query "Stacks[0].Outputs[?OutputKey=='CloudMartEventBusName'].OutputValue" \
+            --output text
+
+
+      # ========================================================
+      # DISPLAY ORDER NOTIFICATION TOPIC
+      # ========================================================
+
+      - name: Display Order Notification SNS Topic
+        run: |
+          echo "Order Notification SNS Topic ARN:"
+
+          aws cloudformation describe-stacks \
+            --stack-name ${{ env.STACK_NAME }} \
+            --region "${AWS_REGION}" \
+            --query "Stacks[0].Outputs[?OutputKey=='OrderNotificationTopicArn'].OutputValue" \
+            --output text
+
+
+      # ========================================================
+      # DISPLAY ORDER CONFIRMED RULE
+      # ========================================================
+
+      - name: Display Order Confirmed Rule
+        run: |
+          echo "Order Confirmed EventBridge Rule ARN:"
+
+          aws cloudformation describe-stacks \
+            --stack-name ${{ env.STACK_NAME }} \
+            --region "${AWS_REGION}" \
+            --query "Stacks[0].Outputs[?OutputKey=='OrderConfirmedRuleArn'].OutputValue" \
+            --output text
+
+
+      # ========================================================
+      # DISPLAY ORDER FAILED RULE
+      # ========================================================
+
+      - name: Display Order Failed Rule
+        run: |
+          echo "Order Failed EventBridge Rule ARN:"
+
+          aws cloudformation describe-stacks \
+            --stack-name ${{ env.STACK_NAME }} \
+            --region "${AWS_REGION}" \
+            --query "Stacks[0].Outputs[?OutputKey=='OrderFailedRuleArn'].OutputValue" \
+            --output text
+

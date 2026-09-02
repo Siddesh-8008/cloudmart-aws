@@ -1,0 +1,271 @@
+name: CloudMart Milestone 4 - Orders
+
+on:
+  push:
+    branches:
+      - milestone-3
+      - main
+    paths:
+      - 'cloudformation/iam/iam-stack.yaml'
+      - 'cloudformation/api/api-stack.yaml'
+      - 'cloudformation/eventbridge/eventbridge-stack.yaml'
+      - 'lambda/order/**'
+      - 'lambda/order_processor/**'
+      - 'lambda/schema/**'
+      - 'schema/**'
+      - '.github/workflows/deploy-milestone4.yaml'
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: ap-south-1
+  ENVIRONMENT: dev
+  IAM_STACK_NAME: cloudmart-dev-iam
+  API_STACK_NAME: cloudmart-dev-api
+  EVENTBRIDGE_STACK_NAME: CloudMart-dev-eventbridge
+  NETWORK_STACK_NAME: cloudmart-dev-network
+  DATA_STACK_NAME: cloudmart-dev-data
+  AUTH_STACK_NAME: cloudmart-dev-auth
+
+jobs:
+  deploy:
+    name: Deploy Milestone 4
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Verify AWS identity
+        run: aws sts get-caller-identity
+
+      - name: Verify required secrets
+        shell: bash
+        run: |
+          set -e
+          if [ -z "${{ secrets.AWS_ROLE_ARN }}" ]; then echo "ERROR: AWS_ROLE_ARN is missing"; exit 1; fi
+          if [ -z "${{ secrets.LOW_STOCK_EMAIL }}" ]; then echo "ERROR: LOW_STOCK_EMAIL is missing"; exit 1; fi
+          if [ -z "${{ secrets.ORDER_NOTIFICATION_EMAIL }}" ]; then echo "ERROR: ORDER_NOTIFICATION_EMAIL is missing"; exit 1; fi
+
+      - name: Validate IAM template
+        run: |
+          aws cloudformation validate-template \
+            --template-body file://cloudformation/iam/iam-stack.yaml \
+            --region "${AWS_REGION}"
+
+      - name: Deploy IAM stack
+        run: |
+          aws cloudformation deploy \
+            --template-file cloudformation/iam/iam-stack.yaml \
+            --stack-name "${IAM_STACK_NAME}" \
+            --parameter-overrides Environment="${ENVIRONMENT}" \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --region "${AWS_REGION}" \
+            --no-fail-on-empty-changeset
+
+      - name: Get network outputs
+        id: network
+        shell: bash
+        run: |
+          set -e
+          SUBNET_A=$(aws cloudformation describe-stacks --stack-name "${NETWORK_STACK_NAME}" --region "${AWS_REGION}" --query "Stacks[0].Outputs[?OutputKey=='PrivateSubnetAId'].OutputValue | [0]" --output text)
+          SUBNET_B=$(aws cloudformation describe-stacks --stack-name "${NETWORK_STACK_NAME}" --region "${AWS_REGION}" --query "Stacks[0].Outputs[?OutputKey=='PrivateSubnetBId'].OutputValue | [0]" --output text)
+          SG=$(aws cloudformation describe-stacks --stack-name "${NETWORK_STACK_NAME}" --region "${AWS_REGION}" --query "Stacks[0].Outputs[?OutputKey=='LambdaSecurityGroupId'].OutputValue | [0]" --output text)
+          test -n "${SUBNET_A}" && test "${SUBNET_A}" != None
+          test -n "${SUBNET_B}" && test "${SUBNET_B}" != None
+          test -n "${SG}" && test "${SG}" != None
+          echo "subnets=${SUBNET_A},${SUBNET_B}" >> "$GITHUB_OUTPUT"
+          echo "security_group=${SG}" >> "$GITHUB_OUTPUT"
+
+      - name: Get data stack artifact bucket
+        id: bucket
+        shell: bash
+        run: |
+          set -e
+          BUCKET=$(aws cloudformation describe-stacks --stack-name "${DATA_STACK_NAME}" --region "${AWS_REGION}" --query "Stacks[0].Outputs[?OutputKey=='LambdaArtifactBucketName'].OutputValue | [0]" --output text)
+          test -n "${BUCKET}" && test "${BUCKET}" != None
+          echo "bucket=${BUCKET}" >> "$GITHUB_OUTPUT"
+
+      - name: Get authorizer Lambda ARN
+        id: auth
+        shell: bash
+        run: |
+          set -e
+          ARN=$(aws cloudformation describe-stacks --stack-name "${AUTH_STACK_NAME}" --region "${AWS_REGION}" --query "Stacks[0].Outputs[?OutputKey=='AuthorizerLambdaArn'].OutputValue | [0]" --output text)
+          test -n "${ARN}" && test "${ARN}" != None
+          echo "arn=${ARN}" >> "$GITHUB_OUTPUT"
+
+      - name: Get IAM role ARNs
+        id: roles
+        shell: bash
+        run: |
+          set -e
+          PRODUCT=$(aws cloudformation describe-stacks --stack-name "${IAM_STACK_NAME}" --region "${AWS_REGION}" --query "Stacks[0].Outputs[?OutputKey=='ProductLambdaRoleArn'].OutputValue | [0]" --output text)
+          ORDER=$(aws cloudformation describe-stacks --stack-name "${IAM_STACK_NAME}" --region "${AWS_REGION}" --query "Stacks[0].Outputs[?OutputKey=='OrderLambdaRoleArn'].OutputValue | [0]" --output text)
+          PROCESSOR=$(aws cloudformation describe-stacks --stack-name "${IAM_STACK_NAME}" --region "${AWS_REGION}" --query "Stacks[0].Outputs[?OutputKey=='OrderProcessorLambdaRoleArn'].OutputValue | [0]" --output text)
+          test -n "${PRODUCT}" && test "${PRODUCT}" != None
+          test -n "${ORDER}" && test "${ORDER}" != None
+          test -n "${PROCESSOR}" && test "${PROCESSOR}" != None
+          echo "product=${PRODUCT}" >> "$GITHUB_OUTPUT"
+          echo "order=${ORDER}" >> "$GITHUB_OUTPUT"
+          echo "processor=${PROCESSOR}" >> "$GITHUB_OUTPUT"
+
+      - name: Prepare Lambda build directories
+        run: |
+          rm -rf build
+          mkdir -p build/product build/schema build/order build/order-processor
+
+      - name: Package Product Lambda
+        run: |
+          cp lambda/product/lambda_function.py build/product/
+          cp lambda/product/requirements.txt build/product/
+          pip install -r build/product/requirements.txt -t build/product
+          rm build/product/requirements.txt
+          (cd build/product && zip -qr ../../product.zip .)
+
+      - name: Package Schema Lambda
+        run: |
+          cp lambda/schema/lambda_function.py build/schema/
+          cp lambda/product/requirements.txt build/schema/requirements.txt
+          pip install -r build/schema/requirements.txt -t build/schema
+          rm build/schema/requirements.txt
+          (cd build/schema && zip -qr ../../schema.zip .)
+
+      - name: Package Order Lambda
+        run: |
+          cp lambda/order/lambda_function.py build/order/
+          cp lambda/order/requirements.txt build/order/
+          pip install -r build/order/requirements.txt -t build/order
+          rm build/order/requirements.txt
+          (cd build/order && zip -qr ../../order.zip .)
+
+      - name: Package Order Processor Lambda
+        run: |
+          cp lambda/order_processor/lambda_function.py build/order-processor/
+          cp lambda/order_processor/requirements.txt build/order-processor/
+          pip install -r build/order-processor/requirements.txt -t build/order-processor
+          rm build/order-processor/requirements.txt
+          (cd build/order-processor && zip -qr ../../order-processor.zip .)
+
+      - name: Upload Lambda packages to S3
+        shell: bash
+        run: |
+          set -e
+          BUCKET="${{ steps.bucket.outputs.bucket }}"
+          aws s3 cp product.zip "s3://${BUCKET}/product/product.zip"
+          aws s3 cp schema.zip "s3://${BUCKET}/schema/schema.zip"
+          aws s3 cp order.zip "s3://${BUCKET}/order/order.zip"
+          aws s3 cp order-processor.zip "s3://${BUCKET}/order-processor/order-processor.zip"
+          aws s3api head-object --bucket "${BUCKET}" --key product/product.zip >/dev/null
+          aws s3api head-object --bucket "${BUCKET}" --key schema/schema.zip >/dev/null
+          aws s3api head-object --bucket "${BUCKET}" --key order/order.zip >/dev/null
+          aws s3api head-object --bucket "${BUCKET}" --key order-processor/order-processor.zip >/dev/null
+
+      - name: Validate API template
+        run: |
+          aws cloudformation validate-template \
+            --template-body file://cloudformation/api/api-stack.yaml \
+            --region "${AWS_REGION}"
+
+      - name: Deploy API stack
+        shell: bash
+        run: |
+          set -e
+          aws cloudformation deploy \
+            --template-file cloudformation/api/api-stack.yaml \
+            --stack-name "${API_STACK_NAME}" \
+            --region "${AWS_REGION}" \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --parameter-overrides \
+              Environment="${ENVIRONMENT}" \
+              PrivateSubnetIds="${{ steps.network.outputs.subnets }}" \
+              LambdaSecurityGroupId="${{ steps.network.outputs.security_group }}" \
+              ProductLambdaExecutionRoleArn="${{ steps.roles.outputs.product }}" \
+              OrderLambdaExecutionRoleArn="${{ steps.roles.outputs.order }}" \
+              OrderProcessorLambdaExecutionRoleArn="${{ steps.roles.outputs.processor }}" \
+              AuthorizerLambdaArn="${{ steps.auth.outputs.arn }}" \
+              ProductLambdaCodeBucket="${{ steps.bucket.outputs.bucket }}" \
+              ProductLambdaCodeKey="product/product.zip" \
+              SchemaLambdaCodeKey="schema/schema.zip" \
+              OrderLambdaCodeKey="order/order.zip" \
+              OrderProcessorLambdaCodeKey="order-processor/order-processor.zip" \
+              DBHostParameter="/cloudmart/dev/db/host" \
+              DBPortParameter="/cloudmart/dev/db/port" \
+              DBNameParameter="/cloudmart/dev/db/name" \
+              DBUsernameParameter="/cloudmart/dev/db/username" \
+              DBPasswordParameter="/cloudmart/dev/db/password" \
+              AuthorizerCacheTTL="300" \
+              LowStockEmail="${{ secrets.LOW_STOCK_EMAIL }}" \
+            --no-fail-on-empty-changeset
+
+      - name: Initialize or migrate database schema
+        shell: bash
+        run: |
+          set -e
+          rm -f schema-response.json
+          FUNCTION_ERROR=$(aws lambda invoke \
+            --function-name "CloudMart-${ENVIRONMENT}-schema" \
+            --region "${AWS_REGION}" \
+            --cli-binary-format raw-in-base64-out \
+            --query 'FunctionError' \
+            --output text \
+            schema-response.json)
+          cat schema-response.json
+          if [ "${FUNCTION_ERROR}" != "None" ] && [ "${FUNCTION_ERROR}" != "null" ]; then
+            echo "Schema Lambda returned a function error: ${FUNCTION_ERROR}"
+            exit 1
+          fi
+
+      - name: Validate EventBridge template
+        run: |
+          aws cloudformation validate-template \
+            --template-body file://cloudformation/eventbridge/eventbridge-stack.yaml \
+            --region "${AWS_REGION}"
+
+      - name: Deploy EventBridge and order notification SNS
+        run: |
+          set -e
+          aws cloudformation deploy \
+            --template-file cloudformation/eventbridge/eventbridge-stack.yaml \
+            --stack-name "${EVENTBRIDGE_STACK_NAME}" \
+            --region "${AWS_REGION}" \
+            --parameter-overrides \
+              Environment="${ENVIRONMENT}" \
+              LowStockEmail="${{ secrets.LOW_STOCK_EMAIL }}" \
+              OrderNotificationEmail="${{ secrets.ORDER_NOTIFICATION_EMAIL }}" \
+            --no-fail-on-empty-changeset
+
+      - name: Show final API outputs
+        run: |
+          aws cloudformation describe-stacks \
+            --stack-name "${API_STACK_NAME}" \
+            --region "${AWS_REGION}" \
+            --query "Stacks[0].Outputs" \
+            --output table
+
+      - name: Show EventBridge outputs
+        run: |
+          aws cloudformation describe-stacks \
+            --stack-name "${EVENTBRIDGE_STACK_NAME}" \
+            --region "${AWS_REGION}" \
+            --query "Stacks[0].Outputs" \
+            --output table
+
+      - name: Show stack events on failure
+        if: failure()
+        run: |
+          aws cloudformation describe-stack-events --stack-name "${API_STACK_NAME}" --region "${AWS_REGION}" --max-items 30 --query "StackEvents[*].[Timestamp,LogicalResourceId,ResourceStatus,ResourceStatusReason]" --output table || true
+          aws cloudformation describe-stack-events --stack-name "${EVENTBRIDGE_STACK_NAME}" --region "${AWS_REGION}" --max-items 30 --query "StackEvents[*].[Timestamp,LogicalResourceId,ResourceStatus,ResourceStatusReason]" --output table || true
