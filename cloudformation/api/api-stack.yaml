@@ -519,27 +519,6 @@ Resources:
 
           ENVIRONMENT:
             !Ref Environment
-
-
-  # ============================================================
-  # ALLOW ORDER LAMBDA TO INVOKE ORDER PROCESSOR
-  # ============================================================
-
-  OrderProcessorInvokePermission:
-    Type: AWS::Lambda::Permission
-
-    Properties:
-
-      FunctionName:
-        !Ref OrderProcessorLambda
-
-      Action:
-        lambda:InvokeFunction
-
-      Principal:
-        !GetAtt OrderLambda.Arn
-
-
   # ============================================================
   # API GATEWAY REST API
   # ============================================================
