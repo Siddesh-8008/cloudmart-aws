@@ -128,23 +128,6 @@ jobs:
 
 
       # --------------------------------------------------------
-      # Display Order Lambda Role ARN
-      # --------------------------------------------------------
-
-      - name: Display Order Lambda Role ARN
-        run: |
-          echo "=========================================="
-          echo "Order Lambda Role ARN"
-          echo "=========================================="
-
-          aws cloudformation describe-stacks \
-            --stack-name cloudmart-dev-iam \
-            --region "${AWS_REGION}" \
-            --query "Stacks[0].Outputs[?OutputKey=='OrderLambdaRoleArn'].OutputValue" \
-            --output text
-
-
-      # --------------------------------------------------------
       # Display Order Processor Lambda Role ARN
       # --------------------------------------------------------
 
@@ -181,37 +164,46 @@ jobs:
             --query "Stacks[0].Outputs[?OutputKey=='ProductLambdaRoleArn'].OutputValue" \
             --output text)
 
-          ORDER_ROLE=$(aws cloudformation describe-stacks \
-            --stack-name cloudmart-dev-iam \
-            --region "${AWS_REGION}" \
-            --query "Stacks[0].Outputs[?OutputKey=='OrderLambdaRoleArn'].OutputValue" \
-            --output text)
-
           PROCESSOR_ROLE=$(aws cloudformation describe-stacks \
             --stack-name cloudmart-dev-iam \
             --region "${AWS_REGION}" \
             --query "Stacks[0].Outputs[?OutputKey=='OrderProcessorLambdaRoleArn'].OutputValue" \
             --output text)
 
+
+          # ------------------------------------------------------
+          # Validate Authorizer Role
+          # ------------------------------------------------------
+
           if [ -z "$AUTHORIZE_ROLE" ] || [ "$AUTHORIZE_ROLE" = "None" ]; then
             echo "ERROR: AuthorizerLambdaRoleArn output is missing."
             exit 1
           fi
+
+
+          # ------------------------------------------------------
+          # Validate Product Role
+          # ------------------------------------------------------
 
           if [ -z "$PRODUCT_ROLE" ] || [ "$PRODUCT_ROLE" = "None" ]; then
             echo "ERROR: ProductLambdaRoleArn output is missing."
             exit 1
           fi
 
-          if [ -z "$ORDER_ROLE" ] || [ "$ORDER_ROLE" = "None" ]; then
-            echo "ERROR: OrderLambdaRoleArn output is missing."
-            exit 1
-          fi
+
+          # ------------------------------------------------------
+          # Validate Order Processor Role
+          # ------------------------------------------------------
 
           if [ -z "$PROCESSOR_ROLE" ] || [ "$PROCESSOR_ROLE" = "None" ]; then
             echo "ERROR: OrderProcessorLambdaRoleArn output is missing."
             exit 1
           fi
+
+
+          # ------------------------------------------------------
+          # Success
+          # ------------------------------------------------------
 
           echo ""
           echo "=========================================="
@@ -219,6 +211,5 @@ jobs:
           echo "=========================================="
           echo "Authorizer Role:       $AUTHORIZE_ROLE"
           echo "Product Role:          $PRODUCT_ROLE"
-          echo "Order Role:            $ORDER_ROLE"
           echo "Order Processor Role:  $PROCESSOR_ROLE"
 
