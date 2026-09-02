@@ -643,7 +643,7 @@ jobs:
 
           zip -r ../../order-processor.zip . > /dev/null
 
-          cd ../.."
+          cd ../..
 
           echo ""
           echo "======================================"
