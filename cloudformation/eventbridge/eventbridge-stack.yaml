@@ -231,7 +231,7 @@ Resources:
       EventPattern:
 
         source:
-          - cloudmart.orders
+          - cloudmart.order
 
         detail-type:
           - OrderConfirmed
@@ -266,7 +266,7 @@ Resources:
       EventPattern:
 
         source:
-          - cloudmart.orders
+          - cloudmart.order
 
         detail-type:
           - OrderFailed
