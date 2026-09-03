@@ -1,8 +1,17 @@
 import json
+import logging
 import os
 
 import boto3
 import pymysql
+
+
+# ============================================================
+# LOGGING
+# ============================================================
+
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
 
 
 # ============================================================
@@ -11,6 +20,12 @@ import pymysql
 
 ssm = boto3.client("ssm")
 events = boto3.client("events")
+
+
+ENVIRONMENT = os.environ.get(
+    "ENVIRONMENT",
+    "dev"
+)
 
 EVENT_BUS_NAME = os.environ.get(
     "EVENT_BUS_NAME",
@@ -52,7 +67,22 @@ def get_database_connection():
         secure=True
     )
 
-    port = 3306
+    # Use DB_PORT_PARAMETER if configured.
+    # Otherwise use MySQL default port 3306.
+    db_port_parameter = os.environ.get(
+        "DB_PORT_PARAMETER"
+    )
+
+    if db_port_parameter:
+
+        port = int(
+            get_parameter(db_port_parameter)
+        )
+
+    else:
+
+        port = 3306
+
 
     connection = pymysql.connect(
         host=host,
@@ -61,7 +91,8 @@ def get_database_connection():
         database=database,
         port=port,
         cursorclass=pymysql.cursors.DictCursor,
-        connect_timeout=10
+        connect_timeout=10,
+        autocommit=False
     )
 
     return connection
@@ -78,8 +109,112 @@ def response(status_code, body):
         "headers": {
             "Content-Type": "application/json"
         },
-        "body": json.dumps(body, default=str)
+        "body": json.dumps(
+            body,
+            default=str
+        )
     }
+
+
+# ============================================================
+# REQUEST BODY PARSER
+# ============================================================
+
+def parse_body(event):
+
+    body = event.get("body")
+
+    if not body:
+        return {}
+
+    if isinstance(body, str):
+
+        try:
+
+            return json.loads(body)
+
+        except json.JSONDecodeError:
+
+            raise ValueError(
+                "Request body must contain valid JSON"
+            )
+
+    if isinstance(body, dict):
+
+        return body
+
+    raise ValueError(
+        "Invalid request body"
+    )
+
+
+# ============================================================
+# EVENTBRIDGE - LOW STOCK EVENT
+# ============================================================
+
+def publish_low_stock_event(
+    product_id,
+    product_name,
+    stock,
+    low_stock_threshold
+):
+
+    event_detail = {
+        "productId": int(product_id),
+        "productName": product_name,
+        "stock": int(stock),
+        "lowStockThreshold": int(
+            low_stock_threshold
+        ),
+        "environment": ENVIRONMENT
+    }
+
+
+    event_response = events.put_events(
+        Entries=[
+            {
+                "EventBusName": EVENT_BUS_NAME,
+                "Source": "cloudmart.product",
+                "DetailType": "Low Stock Alert",
+                "Detail": json.dumps(
+                    event_detail
+                )
+            }
+        ]
+    )
+
+
+    # Check whether EventBridge failed
+    if event_response.get(
+        "FailedEntryCount",
+        0
+    ) > 0:
+
+        logger.error(
+            json.dumps({
+                "level": "ERROR",
+                "message": "Failed to publish low stock event",
+                "product_id": product_id,
+                "response": event_response
+            })
+        )
+
+        raise Exception(
+            "Failed to publish low stock event"
+        )
+
+
+    logger.info(
+        json.dumps({
+            "level": "INFO",
+            "message": "Low stock event published",
+            "product_id": product_id,
+            "product_name": product_name,
+            "stock": stock,
+            "threshold": low_stock_threshold,
+            "event_bus": EVENT_BUS_NAME
+        })
+    )
 
 
 # ============================================================
@@ -88,23 +223,53 @@ def response(status_code, body):
 
 def lambda_handler(event, context):
 
-    print(json.dumps({
-        "level": "INFO",
-        "message": "Product Lambda invoked",
-        "environment": os.environ.get("ENVIRONMENT"),
-        "request_id": context.aws_request_id,
-        "http_method": event.get("httpMethod"),
-        "path": event.get("path")
-    }))
+    logger.info(
+        json.dumps({
+            "level": "INFO",
+            "message": "Product Lambda invoked",
+            "environment": ENVIRONMENT,
+            "request_id": context.aws_request_id,
+            "http_method": event.get("httpMethod"),
+            "path": event.get("path")
+        })
+    )
 
-    method = event.get("httpMethod")
 
-    path_parameters = event.get("pathParameters") or {}
-
-    product_id = path_parameters.get("id")
+    connection = None
 
 
     try:
+
+        # ====================================================
+        # REQUEST INFORMATION
+        # ====================================================
+
+        method = (
+            event.get(
+                "httpMethod",
+                ""
+            )
+            .upper()
+        )
+
+
+        path_parameters = (
+            event.get("pathParameters")
+            or {}
+        )
+
+
+        product_id = path_parameters.get(
+            "id"
+        )
+
+
+        # ====================================================
+        # REQUEST BODY
+        # ====================================================
+
+        body = parse_body(event)
+
 
         # ====================================================
         # CREATE PRODUCT
@@ -113,14 +278,18 @@ def lambda_handler(event, context):
 
         if method == "POST":
 
-            body = json.loads(
-                event.get("body") or "{}"
+            name = body.get("name")
+
+            description = body.get(
+                "description"
             )
 
-            name = body.get("name")
-            description = body.get("description")
             price = body.get("price")
-            stock = body.get("stock", 0)
+
+            stock = body.get(
+                "stock",
+                0
+            )
 
             low_stock_threshold = body.get(
                 "lowStockThreshold",
@@ -137,7 +306,9 @@ def lambda_handler(event, context):
                 return response(
                     400,
                     {
-                        "message": "name and price are required"
+                        "message": (
+                            "name and price are required"
+                        )
                     }
                 )
 
@@ -149,19 +320,25 @@ def lambda_handler(event, context):
             try:
 
                 price = float(price)
+
                 stock = int(stock)
+
                 low_stock_threshold = int(
                     low_stock_threshold
                 )
 
-            except (TypeError, ValueError):
+            except (
+                TypeError,
+                ValueError
+            ):
 
                 return response(
                     400,
                     {
                         "message": (
                             "price, stock and "
-                            "lowStockThreshold must be numeric"
+                            "lowStockThreshold "
+                            "must be numeric"
                         )
                     }
                 )
@@ -176,7 +353,9 @@ def lambda_handler(event, context):
                 return response(
                     400,
                     {
-                        "message": "price cannot be negative"
+                        "message": (
+                            "price cannot be negative"
+                        )
                     }
                 )
 
@@ -186,7 +365,9 @@ def lambda_handler(event, context):
                 return response(
                     400,
                     {
-                        "message": "stock cannot be negative"
+                        "message": (
+                            "stock cannot be negative"
+                        )
                     }
                 )
 
@@ -210,67 +391,68 @@ def lambda_handler(event, context):
 
             connection = get_database_connection()
 
-            try:
 
-                with connection.cursor() as cursor:
+            with connection.cursor() as cursor:
 
-                    sql = """
-                        INSERT INTO products
-                        (
-                            name,
-                            description,
-                            price,
-                            stock,
-                            low_stock_threshold
-                        )
-                        VALUES
-                        (
-                            %s,
-                            %s,
-                            %s,
-                            %s,
-                            %s
-                        )
+                cursor.execute(
                     """
-
-                    cursor.execute(
-                        sql,
-                        (
-                            name,
-                            description,
-                            price,
-                            stock,
-                            low_stock_threshold
-                        )
+                    INSERT INTO products
+                    (
+                        name,
+                        description,
+                        price,
+                        stock,
+                        low_stock_threshold,
+                        is_active
                     )
+                    VALUES
+                    (
+                        %s,
+                        %s,
+                        %s,
+                        %s,
+                        %s,
+                        1
+                    )
+                    """,
+                    (
+                        name,
+                        description,
+                        price,
+                        stock,
+                        low_stock_threshold
+                    )
+                )
 
-                    product_id = cursor.lastrowid
 
-                connection.commit()
-
-            finally:
-
-                connection.close()
+                new_product_id = cursor.lastrowid
 
 
-            print(json.dumps({
-                "level": "INFO",
-                "message": "Product created",
-                "product_id": product_id
-            }))
+            connection.commit()
+
+
+            logger.info(
+                json.dumps({
+                    "level": "INFO",
+                    "message": "Product created",
+                    "product_id": new_product_id
+                })
+            )
 
 
             return response(
                 201,
                 {
-                    "message": "Product created",
-                    "productId": product_id
+                    "message": (
+                        "Product created successfully"
+                    ),
+                    "productId": new_product_id
                 }
             )
 
 
         # ====================================================
-        # GET ALL PRODUCTS
+        # GET ALL ACTIVE PRODUCTS
         # GET /products
         # ====================================================
 
@@ -278,31 +460,28 @@ def lambda_handler(event, context):
 
             connection = get_database_connection()
 
-            try:
 
-                with connection.cursor() as cursor:
+            with connection.cursor() as cursor:
 
-                    cursor.execute(
-                        """
-                        SELECT
-                            id,
-                            name,
-                            description,
-                            price,
-                            stock,
-                            low_stock_threshold,
-                            created_at,
-                            updated_at
-                        FROM products
-                        ORDER BY id
-                        """
-                    )
+                cursor.execute(
+                    """
+                    SELECT
+                        id,
+                        name,
+                        description,
+                        price,
+                        stock,
+                        low_stock_threshold,
+                        created_at,
+                        updated_at
+                    FROM products
+                    WHERE is_active = 1
+                    ORDER BY id
+                    """
+                )
 
-                    products = cursor.fetchall()
 
-            finally:
-
-                connection.close()
+                products = cursor.fetchall()
 
 
             return response(
@@ -314,7 +493,7 @@ def lambda_handler(event, context):
 
 
         # ====================================================
-        # GET PRODUCT BY ID
+        # GET ACTIVE PRODUCT BY ID
         # GET /products/{id}
         # ====================================================
 
@@ -322,32 +501,29 @@ def lambda_handler(event, context):
 
             connection = get_database_connection()
 
-            try:
 
-                with connection.cursor() as cursor:
+            with connection.cursor() as cursor:
 
-                    cursor.execute(
-                        """
-                        SELECT
-                            id,
-                            name,
-                            description,
-                            price,
-                            stock,
-                            low_stock_threshold,
-                            created_at,
-                            updated_at
-                        FROM products
-                        WHERE id = %s
-                        """,
-                        (product_id,)
-                    )
+                cursor.execute(
+                    """
+                    SELECT
+                        id,
+                        name,
+                        description,
+                        price,
+                        stock,
+                        low_stock_threshold,
+                        created_at,
+                        updated_at
+                    FROM products
+                    WHERE id = %s
+                    AND is_active = 1
+                    """,
+                    (product_id,)
+                )
 
-                    product = cursor.fetchone()
 
-            finally:
-
-                connection.close()
+                product = cursor.fetchone()
 
 
             if not product:
@@ -355,7 +531,9 @@ def lambda_handler(event, context):
                 return response(
                     404,
                     {
-                        "message": "Product not found"
+                        "message": (
+                            "Product not found"
+                        )
                     }
                 )
 
@@ -373,282 +551,343 @@ def lambda_handler(event, context):
 
         if method == "PUT" and product_id:
 
-            body = json.loads(
-                event.get("body") or "{}"
-            )
-
-
             # --------------------------------------------
-            # VALIDATE NUMERIC VALUES BEFORE DB CONNECTION
+            # GET CURRENT PRODUCT
             # --------------------------------------------
-
-            if "price" in body:
-
-                try:
-
-                    body["price"] = float(
-                        body["price"]
-                    )
-
-                except (TypeError, ValueError):
-
-                    return response(
-                        400,
-                        {
-                            "message": "price must be numeric"
-                        }
-                    )
-
-
-                if body["price"] < 0:
-
-                    return response(
-                        400,
-                        {
-                            "message": "price cannot be negative"
-                        }
-                    )
-
-
-            if "stock" in body:
-
-                try:
-
-                    body["stock"] = int(
-                        body["stock"]
-                    )
-
-                except (TypeError, ValueError):
-
-                    return response(
-                        400,
-                        {
-                            "message": "stock must be numeric"
-                        }
-                    )
-
-
-                if body["stock"] < 0:
-
-                    return response(
-                        400,
-                        {
-                            "message": "stock cannot be negative"
-                        }
-                    )
-
-
-            if "lowStockThreshold" in body:
-
-                try:
-
-                    body["lowStockThreshold"] = int(
-                        body["lowStockThreshold"]
-                    )
-
-                except (TypeError, ValueError):
-
-                    return response(
-                        400,
-                        {
-                            "message": (
-                                "lowStockThreshold "
-                                "must be numeric"
-                            )
-                        }
-                    )
-
-
-                if body["lowStockThreshold"] < 0:
-
-                    return response(
-                        400,
-                        {
-                            "message": (
-                                "lowStockThreshold "
-                                "cannot be negative"
-                            )
-                        }
-                    )
-
 
             connection = get_database_connection()
 
-            try:
 
-                with connection.cursor() as cursor:
+            with connection.cursor() as cursor:
 
-                    # --------------------------------------------
-                    # GET CURRENT PRODUCT INFORMATION
-                    # --------------------------------------------
+                cursor.execute(
+                    """
+                    SELECT
+                        id,
+                        name,
+                        stock,
+                        low_stock_threshold
+                    FROM products
+                    WHERE id = %s
+                    AND is_active = 1
+                    """,
+                    (product_id,)
+                )
 
-                    cursor.execute(
-                        """
-                        SELECT
-                            id,
-                            name,
-                            stock,
-                            low_stock_threshold
-                        FROM products
-                        WHERE id = %s
-                        """,
-                        (product_id,)
+
+                existing_product = (
+                    cursor.fetchone()
+                )
+
+
+                if not existing_product:
+
+                    return response(
+                        404,
+                        {
+                            "message": (
+                                "Product not found"
+                            )
+                        }
                     )
 
-                    existing_product = cursor.fetchone()
+
+                old_stock = (
+                    existing_product["stock"]
+                )
 
 
-                    if not existing_product:
-
-                        return response(
-                            404,
-                            {
-                                "message": "Product not found"
-                            }
-                        )
+                product_name = (
+                    existing_product["name"]
+                )
 
 
-                    old_stock = existing_product["stock"]
-
-                    product_name = existing_product["name"]
-
-                    old_threshold = existing_product[
+                old_threshold = (
+                    existing_product[
                         "low_stock_threshold"
                     ]
+                )
 
 
-                    # --------------------------------------------
-                    # BUILD UPDATE FIELDS
-                    # --------------------------------------------
+                # --------------------------------------------
+                # VALIDATE NAME
+                # --------------------------------------------
 
-                    fields = []
-                    values = []
+                if "name" in body:
 
-
-                    if "name" in body:
-
-                        if not body["name"]:
-
-                            return response(
-                                400,
-                                {
-                                    "message": (
-                                        "name cannot be empty"
-                                    )
-                                }
-                            )
-
-                        fields.append(
-                            "name = %s"
-                        )
-
-                        values.append(
-                            body["name"]
-                        )
-
-                        product_name = body["name"]
-
-
-                    if "description" in body:
-
-                        fields.append(
-                            "description = %s"
-                        )
-
-                        values.append(
-                            body["description"]
-                        )
-
-
-                    if "price" in body:
-
-                        fields.append(
-                            "price = %s"
-                        )
-
-                        values.append(
-                            body["price"]
-                        )
-
-
-                    if "stock" in body:
-
-                        fields.append(
-                            "stock = %s"
-                        )
-
-                        values.append(
-                            body["stock"]
-                        )
-
-
-                    if "lowStockThreshold" in body:
-
-                        fields.append(
-                            "low_stock_threshold = %s"
-                        )
-
-                        values.append(
-                            body["lowStockThreshold"]
-                        )
-
-
-                    if not fields:
+                    if not body["name"]:
 
                         return response(
                             400,
                             {
-                                "message": "No fields to update"
+                                "message": (
+                                    "name cannot be empty"
+                                )
                             }
                         )
 
 
-                    # --------------------------------------------
-                    # DETERMINE NEW STOCK AND THRESHOLD
-                    # --------------------------------------------
+                # --------------------------------------------
+                # VALIDATE PRICE
+                # --------------------------------------------
 
-                    new_stock = body.get(
-                        "stock",
-                        old_stock
+                if "price" in body:
+
+                    try:
+
+                        body["price"] = float(
+                            body["price"]
+                        )
+
+                    except (
+                        TypeError,
+                        ValueError
+                    ):
+
+                        return response(
+                            400,
+                            {
+                                "message": (
+                                    "price must be numeric"
+                                )
+                            }
+                        )
+
+
+                    if body["price"] < 0:
+
+                        return response(
+                            400,
+                            {
+                                "message": (
+                                    "price cannot be negative"
+                                )
+                            }
+                        )
+
+
+                # --------------------------------------------
+                # VALIDATE STOCK
+                # --------------------------------------------
+
+                if "stock" in body:
+
+                    try:
+
+                        body["stock"] = int(
+                            body["stock"]
+                        )
+
+                    except (
+                        TypeError,
+                        ValueError
+                    ):
+
+                        return response(
+                            400,
+                            {
+                                "message": (
+                                    "stock must be numeric"
+                                )
+                            }
+                        )
+
+
+                    if body["stock"] < 0:
+
+                        return response(
+                            400,
+                            {
+                                "message": (
+                                    "stock cannot be negative"
+                                )
+                            }
+                        )
+
+
+                # --------------------------------------------
+                # VALIDATE LOW STOCK THRESHOLD
+                # --------------------------------------------
+
+                if "lowStockThreshold" in body:
+
+                    try:
+
+                        body[
+                            "lowStockThreshold"
+                        ] = int(
+                            body[
+                                "lowStockThreshold"
+                            ]
+                        )
+
+                    except (
+                        TypeError,
+                        ValueError
+                    ):
+
+                        return response(
+                            400,
+                            {
+                                "message": (
+                                    "lowStockThreshold "
+                                    "must be numeric"
+                                )
+                            }
+                        )
+
+
+                    if (
+                        body[
+                            "lowStockThreshold"
+                        ] < 0
+                    ):
+
+                        return response(
+                            400,
+                            {
+                                "message": (
+                                    "lowStockThreshold "
+                                    "cannot be negative"
+                                )
+                            }
+                        )
+
+
+                # --------------------------------------------
+                # BUILD UPDATE QUERY
+                # --------------------------------------------
+
+                fields = []
+
+                values = []
+
+
+                if "name" in body:
+
+                    fields.append(
+                        "name = %s"
                     )
 
-                    new_threshold = body.get(
-                        "lowStockThreshold",
-                        old_threshold
+                    values.append(
+                        body["name"]
+                    )
+
+                    product_name = (
+                        body["name"]
                     )
 
 
-                    # --------------------------------------------
-                    # UPDATE PRODUCT
-                    # --------------------------------------------
+                if "description" in body:
 
-                    values.append(product_id)
-
-                    sql = f"""
-                        UPDATE products
-                        SET {", ".join(fields)}
-                        WHERE id = %s
-                    """
-
-                    cursor.execute(
-                        sql,
-                        values
+                    fields.append(
+                        "description = %s"
                     )
 
-                    connection.commit()
+                    values.append(
+                        body["description"]
+                    )
 
 
-            finally:
+                if "price" in body:
 
-                connection.close()
+                    fields.append(
+                        "price = %s"
+                    )
+
+                    values.append(
+                        body["price"]
+                    )
 
 
-            # ====================================================
+                if "stock" in body:
+
+                    fields.append(
+                        "stock = %s"
+                    )
+
+                    values.append(
+                        body["stock"]
+                    )
+
+
+                if "lowStockThreshold" in body:
+
+                    fields.append(
+                        "low_stock_threshold = %s"
+                    )
+
+                    values.append(
+                        body[
+                            "lowStockThreshold"
+                        ]
+                    )
+
+
+                # --------------------------------------------
+                # NO UPDATE FIELDS
+                # --------------------------------------------
+
+                if not fields:
+
+                    return response(
+                        400,
+                        {
+                            "message": (
+                                "No fields to update"
+                            )
+                        }
+                    )
+
+
+                # --------------------------------------------
+                # DETERMINE NEW VALUES
+                # --------------------------------------------
+
+                new_stock = body.get(
+                    "stock",
+                    old_stock
+                )
+
+
+                new_threshold = body.get(
+                    "lowStockThreshold",
+                    old_threshold
+                )
+
+
+                # --------------------------------------------
+                # UPDATE DATABASE
+                # --------------------------------------------
+
+                values.append(
+                    product_id
+                )
+
+
+                sql = f"""
+                    UPDATE products
+                    SET {", ".join(fields)}
+                    WHERE id = %s
+                    AND is_active = 1
+                """
+
+
+                cursor.execute(
+                    sql,
+                    values
+                )
+
+
+            connection.commit()
+
+
+            # =================================================
             # LOW STOCK EVENT
-            # ====================================================
+            # =================================================
 
-            # Trigger only when stock moves from ABOVE the
-            # threshold to AT or BELOW the threshold.
+            # Event is generated only when stock crosses
+            # from ABOVE threshold to AT/BELOW threshold.
 
             if (
                 "stock" in body
@@ -658,67 +897,43 @@ def lambda_handler(event, context):
 
                 try:
 
-                    event_detail = {
-                        "productId": product_id,
-                        "productName": product_name,
-                        "stock": new_stock,
-                        "lowStockThreshold": new_threshold
-                    }
-
-
-                    event_response = events.put_events(
-                        Entries=[
-                            {
-                                "EventBusName": EVENT_BUS_NAME,
-                                "Source": "cloudmart.product",
-                                "DetailType": "Low Stock Alert",
-                                "Detail": json.dumps(
-                                    event_detail
-                                )
-                            }
-                        ]
+                    publish_low_stock_event(
+                        product_id=product_id,
+                        product_name=product_name,
+                        stock=new_stock,
+                        low_stock_threshold=new_threshold
                     )
-
-
-                    print(json.dumps({
-                        "level": "INFO",
-                        "message": (
-                            "Low stock event published"
-                        ),
-                        "product_id": product_id,
-                        "stock": new_stock,
-                        "threshold": new_threshold,
-                        "event_id": (
-                            event_response["Entries"][0]
-                            .get("EventId")
-                        )
-                    }))
-
 
                 except Exception as event_error:
 
-                    print(json.dumps({
-                        "level": "ERROR",
-                        "message": (
-                            "Failed to publish "
-                            "low stock event"
-                        ),
-                        "product_id": product_id,
-                        "error": str(event_error)
-                    }))
+                    logger.error(
+                        json.dumps({
+                            "level": "ERROR",
+                            "message": (
+                                "Failed to publish "
+                                "low stock event"
+                            ),
+                            "product_id": product_id,
+                            "error": str(
+                                event_error
+                            )
+                        })
+                    )
 
 
             return response(
                 200,
                 {
-                    "message": "Product updated",
+                    "message": (
+                        "Product updated successfully"
+                    ),
                     "productId": product_id
                 }
             )
 
 
         # ====================================================
-        # DELETE PRODUCT
+        # SOFT DELETE PRODUCT
         # DELETE /products/{id}
         # ====================================================
 
@@ -726,40 +941,53 @@ def lambda_handler(event, context):
 
             connection = get_database_connection()
 
-            try:
 
-                with connection.cursor() as cursor:
+            with connection.cursor() as cursor:
 
-                    cursor.execute(
-                        """
-                        DELETE FROM products
-                        WHERE id = %s
-                        """,
-                        (product_id,)
-                    )
+                cursor.execute(
+                    """
+                    UPDATE products
+                    SET is_active = 0
+                    WHERE id = %s
+                    AND is_active = 1
+                    """,
+                    (product_id,)
+                )
 
 
-                    if cursor.rowcount == 0:
+                affected_rows = cursor.rowcount
 
-                        return response(
-                            404,
-                            {
-                                "message": "Product not found"
-                            }
+
+            connection.commit()
+
+
+            if affected_rows == 0:
+
+                return response(
+                    404,
+                    {
+                        "message": (
+                            "Product not found"
                         )
+                    }
+                )
 
 
-                connection.commit()
-
-            finally:
-
-                connection.close()
+            logger.info(
+                json.dumps({
+                    "level": "INFO",
+                    "message": "Product soft deleted",
+                    "product_id": product_id
+                })
+            )
 
 
             return response(
                 200,
                 {
-                    "message": "Product deleted",
+                    "message": (
+                        "Product deleted successfully"
+                    ),
                     "productId": product_id
                 }
             )
@@ -772,19 +1000,57 @@ def lambda_handler(event, context):
         return response(
             405,
             {
-                "message": "Method not supported"
+                "message": (
+                    "Method or path not supported"
+                )
+            }
+        )
+
+
+    # ========================================================
+    # ERROR HANDLING
+    # ========================================================
+
+    except ValueError as error:
+
+        logger.error(
+            json.dumps({
+                "level": "ERROR",
+                "message": "Invalid request",
+                "error": str(error),
+                "request_id": context.aws_request_id
+            })
+        )
+
+
+        if connection:
+
+            connection.rollback()
+
+
+        return response(
+            400,
+            {
+                "message": str(error)
             }
         )
 
 
     except Exception as error:
 
-        print(json.dumps({
-            "level": "ERROR",
-            "message": "Product Lambda failed",
-            "error": str(error),
-            "request_id": context.aws_request_id
-        }))
+        logger.error(
+            json.dumps({
+                "level": "ERROR",
+                "message": "Product Lambda failed",
+                "error": str(error),
+                "request_id": context.aws_request_id
+            })
+        )
+
+
+        if connection:
+
+            connection.rollback()
 
 
         return response(
@@ -794,3 +1060,10 @@ def lambda_handler(event, context):
                 "requestId": context.aws_request_id
             }
         )
+
+
+    finally:
+
+        if connection:
+
+            connection.close()
