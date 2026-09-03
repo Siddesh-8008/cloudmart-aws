@@ -67,8 +67,8 @@ def get_database_connection():
         secure=True
     )
 
-    # Use DB_PORT_PARAMETER if configured.
-    # Otherwise use MySQL default port 3306.
+    # Use Parameter Store port if configured.
+    # Otherwise use default MySQL port 3306.
     db_port_parameter = os.environ.get(
         "DB_PORT_PARAMETER"
     )
@@ -131,13 +131,21 @@ def parse_body(event):
 
         try:
 
-            return json.loads(body)
+            parsed_body = json.loads(body)
 
         except json.JSONDecodeError:
 
             raise ValueError(
                 "Request body must contain valid JSON"
             )
+
+        if not isinstance(parsed_body, dict):
+
+            raise ValueError(
+                "Request body must be a JSON object"
+            )
+
+        return parsed_body
 
     if isinstance(body, dict):
 
@@ -184,7 +192,7 @@ def publish_low_stock_event(
     )
 
 
-    # Check whether EventBridge failed
+    # Check EventBridge response
     if event_response.get(
         "FailedEntryCount",
         0
@@ -272,8 +280,8 @@ def lambda_handler(event, context):
 
 
         # ====================================================
-        # CREATE PRODUCT
         # POST /products
+        # CREATE PRODUCT
         # ====================================================
 
         if method == "POST":
@@ -402,8 +410,7 @@ def lambda_handler(event, context):
                         description,
                         price,
                         stock,
-                        low_stock_threshold,
-                        is_active
+                        low_stock_threshold
                     )
                     VALUES
                     (
@@ -411,8 +418,7 @@ def lambda_handler(event, context):
                         %s,
                         %s,
                         %s,
-                        %s,
-                        1
+                        %s
                     )
                     """,
                     (
@@ -452,8 +458,8 @@ def lambda_handler(event, context):
 
 
         # ====================================================
-        # GET ALL ACTIVE PRODUCTS
         # GET /products
+        # GET ALL PRODUCTS
         # ====================================================
 
         if method == "GET" and not product_id:
@@ -475,7 +481,6 @@ def lambda_handler(event, context):
                         created_at,
                         updated_at
                     FROM products
-                    WHERE is_active = 1
                     ORDER BY id
                     """
                 )
@@ -493,8 +498,8 @@ def lambda_handler(event, context):
 
 
         # ====================================================
-        # GET ACTIVE PRODUCT BY ID
         # GET /products/{id}
+        # GET PRODUCT BY ID
         # ====================================================
 
         if method == "GET" and product_id:
@@ -517,7 +522,6 @@ def lambda_handler(event, context):
                         updated_at
                     FROM products
                     WHERE id = %s
-                    AND is_active = 1
                     """,
                     (product_id,)
                 )
@@ -545,20 +549,20 @@ def lambda_handler(event, context):
 
 
         # ====================================================
-        # UPDATE PRODUCT
         # PUT /products/{id}
+        # UPDATE PRODUCT
         # ====================================================
 
         if method == "PUT" and product_id:
-
-            # --------------------------------------------
-            # GET CURRENT PRODUCT
-            # --------------------------------------------
 
             connection = get_database_connection()
 
 
             with connection.cursor() as cursor:
+
+                # ----------------------------------------
+                # GET CURRENT PRODUCT
+                # ----------------------------------------
 
                 cursor.execute(
                     """
@@ -569,7 +573,6 @@ def lambda_handler(event, context):
                         low_stock_threshold
                     FROM products
                     WHERE id = %s
-                    AND is_active = 1
                     """,
                     (product_id,)
                 )
@@ -609,9 +612,9 @@ def lambda_handler(event, context):
                 )
 
 
-                # --------------------------------------------
+                # ----------------------------------------
                 # VALIDATE NAME
-                # --------------------------------------------
+                # ----------------------------------------
 
                 if "name" in body:
 
@@ -627,9 +630,9 @@ def lambda_handler(event, context):
                         )
 
 
-                # --------------------------------------------
+                # ----------------------------------------
                 # VALIDATE PRICE
-                # --------------------------------------------
+                # ----------------------------------------
 
                 if "price" in body:
 
@@ -666,9 +669,9 @@ def lambda_handler(event, context):
                         )
 
 
-                # --------------------------------------------
+                # ----------------------------------------
                 # VALIDATE STOCK
-                # --------------------------------------------
+                # ----------------------------------------
 
                 if "stock" in body:
 
@@ -705,9 +708,9 @@ def lambda_handler(event, context):
                         )
 
 
-                # --------------------------------------------
+                # ----------------------------------------
                 # VALIDATE LOW STOCK THRESHOLD
-                # --------------------------------------------
+                # ----------------------------------------
 
                 if "lowStockThreshold" in body:
 
@@ -754,9 +757,9 @@ def lambda_handler(event, context):
                         )
 
 
-                # --------------------------------------------
+                # ----------------------------------------
                 # BUILD UPDATE QUERY
-                # --------------------------------------------
+                # ----------------------------------------
 
                 fields = []
 
@@ -824,9 +827,9 @@ def lambda_handler(event, context):
                     )
 
 
-                # --------------------------------------------
-                # NO UPDATE FIELDS
-                # --------------------------------------------
+                # ----------------------------------------
+                # NOTHING TO UPDATE
+                # ----------------------------------------
 
                 if not fields:
 
@@ -840,9 +843,9 @@ def lambda_handler(event, context):
                     )
 
 
-                # --------------------------------------------
-                # DETERMINE NEW VALUES
-                # --------------------------------------------
+                # ----------------------------------------
+                # DETERMINE NEW STOCK/THRESHOLD
+                # ----------------------------------------
 
                 new_stock = body.get(
                     "stock",
@@ -856,9 +859,9 @@ def lambda_handler(event, context):
                 )
 
 
-                # --------------------------------------------
+                # ----------------------------------------
                 # UPDATE DATABASE
-                # --------------------------------------------
+                # ----------------------------------------
 
                 values.append(
                     product_id
@@ -869,7 +872,6 @@ def lambda_handler(event, context):
                     UPDATE products
                     SET {", ".join(fields)}
                     WHERE id = %s
-                    AND is_active = 1
                 """
 
 
@@ -886,8 +888,8 @@ def lambda_handler(event, context):
             # LOW STOCK EVENT
             # =================================================
 
-            # Event is generated only when stock crosses
-            # from ABOVE threshold to AT/BELOW threshold.
+            # Trigger only when stock moves from ABOVE
+            # threshold to AT or BELOW threshold.
 
             if (
                 "stock" in body
@@ -933,8 +935,8 @@ def lambda_handler(event, context):
 
 
         # ====================================================
-        # SOFT DELETE PRODUCT
         # DELETE /products/{id}
+        # DELETE PRODUCT
         # ====================================================
 
         if method == "DELETE" and product_id:
@@ -946,10 +948,8 @@ def lambda_handler(event, context):
 
                 cursor.execute(
                     """
-                    UPDATE products
-                    SET is_active = 0
+                    DELETE FROM products
                     WHERE id = %s
-                    AND is_active = 1
                     """,
                     (product_id,)
                 )
@@ -976,7 +976,7 @@ def lambda_handler(event, context):
             logger.info(
                 json.dumps({
                     "level": "INFO",
-                    "message": "Product soft deleted",
+                    "message": "Product deleted",
                     "product_id": product_id
                 })
             )
@@ -1008,10 +1008,15 @@ def lambda_handler(event, context):
 
 
     # ========================================================
-    # ERROR HANDLING
+    # INVALID REQUEST
     # ========================================================
 
     except ValueError as error:
+
+        if connection:
+
+            connection.rollback()
+
 
         logger.error(
             json.dumps({
@@ -1023,11 +1028,6 @@ def lambda_handler(event, context):
         )
 
 
-        if connection:
-
-            connection.rollback()
-
-
         return response(
             400,
             {
@@ -1036,7 +1036,16 @@ def lambda_handler(event, context):
         )
 
 
+    # ========================================================
+    # GENERAL ERROR
+    # ========================================================
+
     except Exception as error:
+
+        if connection:
+
+            connection.rollback()
+
 
         logger.error(
             json.dumps({
@@ -1048,11 +1057,6 @@ def lambda_handler(event, context):
         )
 
 
-        if connection:
-
-            connection.rollback()
-
-
         return response(
             500,
             {
@@ -1061,6 +1065,10 @@ def lambda_handler(event, context):
             }
         )
 
+
+    # ========================================================
+    # CLOSE DATABASE CONNECTION
+    # ========================================================
 
     finally:
 
