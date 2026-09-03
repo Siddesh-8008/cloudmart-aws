@@ -4,24 +4,47 @@ import boto3
 import pymysql
 
 
+# ============================================================
+# AWS CLIENT
+# ============================================================
+
 ssm = boto3.client("ssm")
 
 
+# ============================================================
+# SSM PARAMETER HELPER
+# ============================================================
+
 def get_parameter(name, secure=False):
+
     return ssm.get_parameter(
         Name=name,
         WithDecryption=secure
     )["Parameter"]["Value"]
 
 
+# ============================================================
+# DATABASE CONNECTION
+# ============================================================
+
 def get_database_connection():
 
-    db_port_parameter = os.environ.get("DB_PORT_PARAMETER")
+    db_port_parameter = os.environ.get(
+        "DB_PORT_PARAMETER"
+    )
 
     if db_port_parameter:
-        db_port = int(get_parameter(db_port_parameter))
+
+        db_port = int(
+            get_parameter(
+                db_port_parameter
+            )
+        )
+
     else:
+
         db_port = 3306
+
 
     return pymysql.connect(
         host=get_parameter(
@@ -48,42 +71,47 @@ def get_database_connection():
 
         connect_timeout=10,
 
-        autocommit=False,
+        autocommit=False
     )
 
+
+# ============================================================
+# LAMBDA HANDLER
+# ============================================================
 
 def lambda_handler(event, context):
 
     print(
-        json.dumps(
-            {
-                "message": "Schema Lambda invoked",
-                "request_id": context.aws_request_id
-            }
-        )
+        json.dumps({
+            "message": "Schema Lambda invoked",
+            "request_id": context.aws_request_id
+        })
     )
 
+
     connection = None
+
 
     try:
 
         connection = get_database_connection()
 
+
         with connection.cursor() as cursor:
 
-            # ====================================================
+            # =================================================
             # PRODUCTS TABLE
-            # ====================================================
+            # =================================================
 
             cursor.execute(
                 """
                 CREATE TABLE IF NOT EXISTS products (
 
-                    id BIGINT NOT NULL AUTO_INCREMENT,
+                    id INT AUTO_INCREMENT PRIMARY KEY,
 
                     name VARCHAR(255) NOT NULL,
 
-                    description TEXT NULL,
+                    description TEXT,
 
                     price DECIMAL(10,2) NOT NULL,
 
@@ -91,162 +119,120 @@ def lambda_handler(event, context):
 
                     low_stock_threshold INT NOT NULL DEFAULT 5,
 
-                    created_at TIMESTAMP NOT NULL
+                    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+
+                    created_at TIMESTAMP
                         DEFAULT CURRENT_TIMESTAMP,
 
-                    updated_at TIMESTAMP NOT NULL
+                    updated_at TIMESTAMP
                         DEFAULT CURRENT_TIMESTAMP
-                        ON UPDATE CURRENT_TIMESTAMP,
+                        ON UPDATE CURRENT_TIMESTAMP
 
-                    PRIMARY KEY (id)
-
-                ) ENGINE=InnoDB
-                DEFAULT CHARSET=utf8mb4
-                COLLATE=utf8mb4_unicode_ci
+                )
                 """
             )
 
 
-            # ====================================================
+            # =================================================
             # ORDER STATUS TABLE
-            # ====================================================
+            # =================================================
 
             cursor.execute(
                 """
                 CREATE TABLE IF NOT EXISTS order_status (
 
-                    status_id TINYINT NOT NULL AUTO_INCREMENT,
+                    status_id INT AUTO_INCREMENT PRIMARY KEY,
 
-                    status_name VARCHAR(30) NOT NULL,
+                    status_name VARCHAR(50) NOT NULL UNIQUE
 
-                    description VARCHAR(255) NULL,
-
-                    PRIMARY KEY (status_id),
-
-                    UNIQUE KEY uq_order_status_name (status_name)
-
-                ) ENGINE=InnoDB
-                DEFAULT CHARSET=utf8mb4
-                COLLATE=utf8mb4_unicode_ci
-                """
-            )
-
-
-            # ====================================================
-            # INSERT ORDER STATUSES
-            # ====================================================
-
-            cursor.executemany(
-                """
-                INSERT INTO order_status (
-                    status_name,
-                    description
                 )
-
-                VALUES (%s, %s)
-
-                ON DUPLICATE KEY UPDATE
-                    description = VALUES(description)
-                """,
-
-                [
-                    (
-                        "PENDING",
-                        "Order created and waiting for processing"
-                    ),
-
-                    (
-                        "CONFIRMED",
-                        "Order processed and inventory deducted"
-                    ),
-
-                    (
-                        "FAILED",
-                        "Order processing failed"
-                    ),
-                ],
+                """
             )
 
 
-            # ====================================================
+            # =================================================
+            # SEED ORDER STATUS
+            # =================================================
+
+            cursor.execute(
+                """
+                INSERT IGNORE INTO order_status
+                (
+                    status_name
+                )
+                VALUES
+                (
+                    'PENDING'
+                ),
+                (
+                    'CONFIRMED'
+                ),
+                (
+                    'FAILED'
+                )
+                """
+            )
+
+
+            # =================================================
             # ORDERS TABLE
-            # ====================================================
+            # =================================================
 
             cursor.execute(
                 """
                 CREATE TABLE IF NOT EXISTS orders (
 
-                    order_id BIGINT NOT NULL AUTO_INCREMENT,
+                    order_id INT AUTO_INCREMENT PRIMARY KEY,
 
-                    customer_id VARCHAR(100) NOT NULL,
+                    customer_id VARCHAR(255) NOT NULL,
 
-                    total_amount DECIMAL(12,2) NOT NULL,
+                    total_amount DECIMAL(10,2) NOT NULL,
 
-                    status_id TINYINT NOT NULL,
+                    status_id INT NOT NULL,
 
-                    failure_reason VARCHAR(1000) NULL,
+                    failure_reason TEXT NULL,
 
-                    created_at TIMESTAMP NOT NULL
+                    created_at TIMESTAMP
                         DEFAULT CURRENT_TIMESTAMP,
 
-                    updated_at TIMESTAMP NOT NULL
+                    updated_at TIMESTAMP
                         DEFAULT CURRENT_TIMESTAMP
                         ON UPDATE CURRENT_TIMESTAMP,
 
-                    PRIMARY KEY (order_id),
-
-                    KEY idx_orders_customer_created (
-                        customer_id,
-                        created_at
-                    ),
-
-                    KEY idx_orders_status (
-                        status_id
-                    ),
-
                     CONSTRAINT fk_orders_status
                         FOREIGN KEY (status_id)
-                        REFERENCES order_status(status_id)
+                        REFERENCES order_status(status_id),
 
-                ) ENGINE=InnoDB
-                DEFAULT CHARSET=utf8mb4
-                COLLATE=utf8mb4_unicode_ci
+                    INDEX idx_orders_customer_id
+                        (customer_id),
+
+                    INDEX idx_orders_status_id
+                        (status_id)
+
+                )
                 """
             )
 
 
-            # ====================================================
+            # =================================================
             # ORDER ITEMS TABLE
-            # ====================================================
+            # =================================================
 
             cursor.execute(
                 """
                 CREATE TABLE IF NOT EXISTS order_items (
 
-                    order_item_id BIGINT NOT NULL AUTO_INCREMENT,
+                    order_item_id INT AUTO_INCREMENT PRIMARY KEY,
 
-                    order_id BIGINT NOT NULL,
+                    order_id INT NOT NULL,
 
-                    product_id BIGINT NOT NULL,
+                    product_id INT NOT NULL,
 
                     quantity INT NOT NULL,
 
                     unit_price DECIMAL(10,2) NOT NULL,
 
-                    line_total DECIMAL(12,2) NOT NULL,
-
-                    created_at TIMESTAMP NOT NULL
-                        DEFAULT CURRENT_TIMESTAMP,
-
-                    PRIMARY KEY (order_item_id),
-
-                    KEY idx_order_items_order (
-                        order_id
-                    ),
-
-                    KEY idx_order_items_product (
-                        product_id
-                    ),
+                    line_total DECIMAL(10,2) NOT NULL,
 
                     CONSTRAINT fk_order_items_order
                         FOREIGN KEY (order_id)
@@ -255,48 +241,62 @@ def lambda_handler(event, context):
 
                     CONSTRAINT fk_order_items_product
                         FOREIGN KEY (product_id)
-                        REFERENCES products(id)
+                        REFERENCES products(id),
 
-                ) ENGINE=InnoDB
-                DEFAULT CHARSET=utf8mb4
-                COLLATE=utf8mb4_unicode_ci
+                    INDEX idx_order_items_order_id
+                        (order_id),
+
+                    INDEX idx_order_items_product_id
+                        (product_id)
+
+                )
                 """
             )
 
 
-        # ========================================================
+        # =====================================================
         # COMMIT
-        # ========================================================
+        # =====================================================
 
         connection.commit()
 
 
+        print(
+            json.dumps({
+                "message": (
+                    "Products and order tables "
+                    "created successfully"
+                )
+            })
+        )
+
+
         return {
             "statusCode": 200,
-
-            "body": json.dumps(
-                {
-                    "message":
-                        "Products and order tables created successfully"
-                }
-            )
+            "body": json.dumps({
+                "message": (
+                    "Products and order tables "
+                    "created successfully"
+                )
+            })
         }
 
 
     except Exception as error:
 
         if connection:
+
             connection.rollback()
 
+
         print(
-            json.dumps(
-                {
-                    "level": "ERROR",
-                    "message": "Schema initialization failed",
-                    "error": str(error)
-                }
-            )
+            json.dumps({
+                "level": "ERROR",
+                "message": "Schema initialization failed",
+                "error": str(error)
+            })
         )
+
 
         raise
 
@@ -304,5 +304,5 @@ def lambda_handler(event, context):
     finally:
 
         if connection:
-            connection.close()
 
+            connection.close()
