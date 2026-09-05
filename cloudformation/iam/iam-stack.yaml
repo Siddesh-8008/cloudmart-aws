@@ -1,4 +1,3 @@
-
 AWSTemplateFormatVersion: '2010-09-09'
 
 Description: >
@@ -78,7 +77,8 @@ Resources:
                 Action:
                   - logs:CreateLogGroup
 
-                Resource: "*"
+                Resource:
+                  - !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/CloudMart-${Environment}-authorizer
 
 
               - Effect: Allow
@@ -183,13 +183,15 @@ Resources:
 
             Statement:
 
-              # Create log group
+              # Create Product and Schema log groups
               - Effect: Allow
 
                 Action:
                   - logs:CreateLogGroup
 
-                Resource: "*"
+                Resource:
+                  - !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/CloudMart-${Environment}-product
+                  - !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/CloudMart-${Environment}-schema
 
 
               # Product Lambda logs
@@ -231,15 +233,10 @@ Resources:
                   - ssm:GetParameter
 
                 Resource:
-
                   - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/host
-
                   - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/port
-
                   - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/name
-
                   - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/username
-
                   - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/password
 
 
@@ -351,7 +348,8 @@ Resources:
                 Action:
                   - logs:CreateLogGroup
 
-                Resource: "*"
+                Resource:
+                  - !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/CloudMart-${Environment}-inventory-alert
 
 
               - Effect: Allow
@@ -461,7 +459,8 @@ Resources:
                 Action:
                   - logs:CreateLogGroup
 
-                Resource: "*"
+                Resource:
+                  - !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/CloudMart-${Environment}-order-processor
 
 
               # Write Order Processor logs
@@ -691,3 +690,4 @@ Outputs:
 
     Export:
       Name: !Sub CloudMart-${Environment}-OrderProcessorLambdaRoleName
+
