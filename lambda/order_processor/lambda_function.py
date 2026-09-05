@@ -321,6 +321,7 @@ def create_order(event):
 
             pending_status_id = status_map["PENDING"]
             confirmed_status_id = status_map["CONFIRMED"]
+            failed_status_id = status_map["FAILED"]
 
             # =================================================
             # CREATE ORDER AS PENDING
@@ -349,6 +350,10 @@ def create_order(event):
             )
 
             order_id = cursor.lastrowid
+
+            # Keep the order row if business processing fails.
+            # Item/inventory changes after this point can be rolled back.
+            cursor.execute("SAVEPOINT order_processing")
 
             total_amount = 0
             low_stock_products = []
@@ -569,20 +574,71 @@ def create_order(event):
 
     except ValueError as error:
 
+        # Business failure such as insufficient stock.
+        # Roll back order items/inventory changes, keep the order row,
+        # mark it FAILED, commit it, then publish OrderFailed.
         if connection:
-            connection.rollback()
+            try:
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        "ROLLBACK TO SAVEPOINT order_processing"
+                    )
 
-        logger.warning(
-            json.dumps({
-                "action": "order_failed",
-                "reason": str(error)
-            })
-        )
+                    cursor.execute(
+                        """
+                        UPDATE orders
+                        SET
+                            total_amount = %s,
+                            status_id = %s,
+                            failure_reason = %s
+                        WHERE order_id = %s
+                        """,
+                        (
+                            0,
+                            failed_status_id,
+                            str(error),
+                            order_id
+                        )
+                    )
+
+                connection.commit()
+
+                logger.warning(
+                    json.dumps({
+                        "action": "order_failed",
+                        "order_id": order_id,
+                        "customer_id": customer_id,
+                        "reason": str(error)
+                    })
+                )
+
+                publish_event(
+                    "OrderFailed",
+                    {
+                        "orderId": order_id,
+                        "customerId": customer_id,
+                        "status": "FAILED",
+                        "failureReason": str(error)
+                    }
+                )
+
+            except Exception as failure_handling_error:
+                connection.rollback()
+
+                logger.error(
+                    json.dumps({
+                        "action": "failed_order_persistence_error",
+                        "order_id": order_id,
+                        "error": str(failure_handling_error)
+                    })
+                )
 
         return response(
             409,
             {
-                "message": str(error)
+                "message": str(error),
+                "status": "FAILED",
+                "orderId": order_id
             }
         )
 
