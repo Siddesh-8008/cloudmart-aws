@@ -271,6 +271,14 @@ Resources:
         detail-type:
           - OrderFailed
 
+      Targets:
+
+        - Id:
+            OrderFailedSNSTarget
+
+          Arn:
+            !Ref OrderNotificationTopic
+
 
 # ==============================================================
 # OUTPUTS
