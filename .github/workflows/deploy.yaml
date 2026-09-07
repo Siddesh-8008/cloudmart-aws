@@ -133,7 +133,7 @@ jobs:
         run: |
 
           SECRET_ARN=$(aws cloudformation describe-stacks \
-            --stack-name cloudmart-dev-data \
+            --stack-name cloudmart-dev-data-new \
             --region "${AWS_REGION}" \
             --query "Stacks[0].Outputs[?OutputKey=='DBMasterUserSecretArn'].OutputValue" \
             --output text)
@@ -199,7 +199,7 @@ jobs:
           echo "Lambda Artifact Bucket:"
 
           aws cloudformation describe-stacks \
-            --stack-name cloudmart-dev-data \
+            --stack-name cloudmart-dev-data-new \
             --region "${AWS_REGION}" \
             --query "Stacks[0].Outputs[?OutputKey=='LambdaArtifactBucketName'].OutputValue" \
             --output text
@@ -213,7 +213,7 @@ jobs:
         run: |
 
           aws cloudformation describe-stacks \
-            --stack-name cloudmart-dev-data \
+            --stack-name cloudmart-dev-data-new \
             --region "${AWS_REGION}" \
             --query "Stacks[0].StackStatus" \
             --output text
