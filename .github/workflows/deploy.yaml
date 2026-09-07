@@ -114,7 +114,7 @@ jobs:
         run: |
           aws cloudformation deploy \
             --template-file cloudformation/data/data-stack.yaml \
-            --stack-name cloudmart-dev-data new11\
+            --stack-name cloudmart-dev-data-new\
             --parameter-overrides \
               Environment="${ENVIRONMENT}" \
               DBName=cloudmart \
