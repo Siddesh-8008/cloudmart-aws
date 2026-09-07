@@ -38,7 +38,7 @@ env:
 
   API_STACK_NAME: cloudmart-dev-api
 
-  DATA_STACK_NAME: cloudmart-dev-data
+  DATA_STACK_NAME: cloudmart-dev-data-new
 
   NETWORK_STACK_NAME: cloudmart-dev-network
 
