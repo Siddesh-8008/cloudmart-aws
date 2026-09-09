@@ -3,76 +3,188 @@ import os
 import boto3
 
 
+# ============================================================
+# AWS CLIENT
+# ============================================================
+
 ssm = boto3.client("ssm")
 
 
-PARAMETER_NAME = os.environ["AUTH_TOKEN_PARAMETER"]
+# ============================================================
+# ENVIRONMENT VARIABLES
+# ============================================================
+
+ADMIN_PARAMETER_NAME = os.environ[
+    "ADMIN_AUTH_TOKEN_PARAMETER"
+]
+
+CUSTOMER_PARAMETER_NAME = os.environ[
+    "CUSTOMER_AUTH_TOKEN_PARAMETER"
+]
+
+CUSTOMER_ID = os.environ[
+    "CUSTOMER_ID"
+]
+
+
+# ============================================================
+# READ TOKEN FROM SSM
+# ============================================================
+
+def get_parameter_value(parameter_name):
+
+    parameter = ssm.get_parameter(
+        Name=parameter_name,
+        WithDecryption=True
+    )
+
+    return parameter["Parameter"]["Value"]
+
+
+# ============================================================
+# GET API GATEWAY STAGE ARN
+# ============================================================
+
+def get_api_stage_arn(method_arn):
+
+    """
+    Example method ARN:
+
+    arn:aws:execute-api:ap-south-1:123456789012:abc123/dev/GET/products
+
+    Returns:
+
+    arn:aws:execute-api:ap-south-1:123456789012:abc123/dev
+    """
+
+    parts = method_arn.split("/")
+
+    if len(parts) < 2:
+        return method_arn
+
+    return parts[0] + "/" + parts[1]
 
 
 # ============================================================
 # GENERATE IAM POLICY
 # ============================================================
 
-def generate_policy(effect, principal_id, resource):
+def generate_policy(
+    effect,
+    principal_id,
+    resources,
+    role,
+    customer_id=None
+):
 
-    arn_parts = method_arn.split(":")
+    response = {
 
-    api_gateway_arn = ":".join(arn_parts[:5])
-
-    api_stage = arn_parts[5].split("/")
-
-    api_id = api_stage[0]
-    stage = api_stage[1]
-
-    resource = f"{api_gateway_arn}:{api_id}/{stage}/*/*"
-
-
-    return {
         "principalId": principal_id,
 
         "policyDocument": {
+
             "Version": "2012-10-17",
 
             "Statement": [
+
                 {
                     "Action": "execute-api:Invoke",
+
                     "Effect": effect,
-                    "Resource": resource
+
+                    "Resource": resources
                 }
+
             ]
+        },
+
+        "context": {
+
+            "role": role
         }
     }
 
 
+    # --------------------------------------------------------
+    # ADD CUSTOMER ID ONLY FOR CUSTOMER
+    # --------------------------------------------------------
+
+    if customer_id:
+
+        response["context"]["customerId"] = customer_id
+
+
+    return response
+
+
 # ============================================================
-# CREATE WILDCARD API RESOURCE
+# ADMIN RESOURCES
 # ============================================================
 
-def get_wildcard_resource(method_arn):
+def get_admin_resources(method_arn):
 
     """
-    Converts:
+    Admin can access all API Gateway methods.
 
-    arn:aws:execute-api:ap-south-1:ACCOUNT_ID:API_ID/dev/GET/products
+    Example:
 
-    into:
-
-    arn:aws:execute-api:ap-south-1:ACCOUNT_ID:API_ID/dev/*/*
+    arn:aws:execute-api:
+    ap-south-1:
+    ACCOUNT_ID:
+    API_ID/dev/*/*
     """
 
-    parts = method_arn.split("/")
-
-    if len(parts) < 3:
-        return method_arn
-
-    wildcard_resource = (
-        parts[0]
-        + "/"
-        + parts[1]
-        + "/*/*"
+    api_stage_arn = get_api_stage_arn(
+        method_arn
     )
 
-    return wildcard_resource
+    return [
+        api_stage_arn + "/*/*"
+    ]
+
+
+# ============================================================
+# CUSTOMER RESOURCES
+# ============================================================
+
+def get_customer_resources(method_arn):
+
+    """
+    Customer has read-only product access
+    and order access.
+
+    Customer is NOT allowed to:
+
+    POST /products
+    PUT /products/{id}
+    DELETE /products/{id}
+    """
+
+    api_stage_arn = get_api_stage_arn(
+        method_arn
+    )
+
+    return [
+
+        # ----------------------------------------------------
+        # PRODUCTS - READ ONLY
+        # ----------------------------------------------------
+
+        api_stage_arn + "/GET/products",
+
+        api_stage_arn + "/GET/products/*",
+
+
+        # ----------------------------------------------------
+        # ORDERS
+        # ----------------------------------------------------
+
+        api_stage_arn + "/POST/orders",
+
+        api_stage_arn + "/GET/orders",
+
+        api_stage_arn + "/GET/orders/*"
+    ]
 
 
 # ============================================================
@@ -88,23 +200,28 @@ def handler(event, context):
     }))
 
 
-    # --------------------------------------------------------
+    # ========================================================
     # METHOD ARN
-    # --------------------------------------------------------
+    # ========================================================
 
-    method_arn = event.get("methodArn", "*")
-
-
-    # --------------------------------------------------------
-    # GET AUTHORIZATION TOKEN
-    # --------------------------------------------------------
-
-    authorization_token = event.get("authorizationToken")
+    method_arn = event.get(
+        "methodArn",
+        "*"
+    )
 
 
-    # --------------------------------------------------------
+    # ========================================================
+    # AUTHORIZATION TOKEN
+    # ========================================================
+
+    authorization_token = event.get(
+        "authorizationToken"
+    )
+
+
+    # ========================================================
     # MISSING TOKEN
-    # --------------------------------------------------------
+    # ========================================================
 
     if not authorization_token:
 
@@ -117,11 +234,13 @@ def handler(event, context):
         raise Exception("Unauthorized")
 
 
-    # --------------------------------------------------------
+    # ========================================================
     # VALIDATE BEARER FORMAT
-    # --------------------------------------------------------
+    # ========================================================
 
-    if not authorization_token.startswith("Bearer "):
+    if not authorization_token.startswith(
+        "Bearer "
+    ):
 
         print(json.dumps({
             "level": "WARN",
@@ -132,12 +251,14 @@ def handler(event, context):
         raise Exception("Unauthorized")
 
 
-    supplied_token = authorization_token[7:].strip()
+    supplied_token = authorization_token[
+        7:
+    ].strip()
 
 
-    # --------------------------------------------------------
+    # ========================================================
     # EMPTY TOKEN
-    # --------------------------------------------------------
+    # ========================================================
 
     if not supplied_token:
 
@@ -150,25 +271,21 @@ def handler(event, context):
         raise Exception("Unauthorized")
 
 
-    # --------------------------------------------------------
-    # READ TOKEN FROM SSM
-    # --------------------------------------------------------
+    # ========================================================
+    # READ ADMIN TOKEN
+    # ========================================================
 
     try:
 
-        parameter = ssm.get_parameter(
-            Name=PARAMETER_NAME,
-            WithDecryption=True
+        admin_token = get_parameter_value(
+            ADMIN_PARAMETER_NAME
         )
-
-        expected_token = parameter["Parameter"]["Value"]
-
 
     except Exception as error:
 
         print(json.dumps({
             "level": "ERROR",
-            "event": "token_validation",
+            "event": "admin_token_read",
             "result": "configuration_error",
             "error": str(error)
         }))
@@ -176,55 +293,121 @@ def handler(event, context):
         raise Exception("Unauthorized")
 
 
-    # --------------------------------------------------------
-    # COMPARE TOKEN
-    # --------------------------------------------------------
+    # ========================================================
+    # CHECK ADMIN TOKEN
+    # ========================================================
 
-    if supplied_token != expected_token:
+    if supplied_token == admin_token:
 
         print(json.dumps({
-            "level": "WARN",
+            "level": "INFO",
             "event": "token_validation",
-            "result": "failure"
+            "result": "success",
+            "role": "admin"
+        }))
+
+
+        admin_resources = get_admin_resources(
+            method_arn
+        )
+
+
+        print(json.dumps({
+            "level": "INFO",
+            "event": "authorization",
+            "result": "allowed",
+            "role": "admin",
+            "resources": admin_resources
+        }))
+
+
+        return generate_policy(
+
+            effect="Allow",
+
+            principal_id="cloudmart-admin",
+
+            resources=admin_resources,
+
+            role="admin"
+        )
+
+
+    # ========================================================
+    # READ CUSTOMER TOKEN
+    # ========================================================
+
+    try:
+
+        customer_token = get_parameter_value(
+            CUSTOMER_PARAMETER_NAME
+        )
+
+    except Exception as error:
+
+        print(json.dumps({
+            "level": "ERROR",
+            "event": "customer_token_read",
+            "result": "configuration_error",
+            "error": str(error)
         }))
 
         raise Exception("Unauthorized")
 
 
-    # --------------------------------------------------------
-    # VALID TOKEN
-    # --------------------------------------------------------
+    # ========================================================
+    # CHECK CUSTOMER TOKEN
+    # ========================================================
+
+    if supplied_token == customer_token:
+
+        print(json.dumps({
+            "level": "INFO",
+            "event": "token_validation",
+            "result": "success",
+            "role": "customer",
+            "customerId": CUSTOMER_ID
+        }))
+
+
+        customer_resources = get_customer_resources(
+            method_arn
+        )
+
+
+        print(json.dumps({
+            "level": "INFO",
+            "event": "authorization",
+            "result": "allowed",
+            "role": "customer",
+            "customerId": CUSTOMER_ID,
+            "resources": customer_resources
+        }))
+
+
+        return generate_policy(
+
+            effect="Allow",
+
+            principal_id="cloudmart-customer",
+
+            resources=customer_resources,
+
+            role="customer",
+
+            customer_id=CUSTOMER_ID
+        )
+
+
+    # ========================================================
+    # INVALID TOKEN
+    # ========================================================
 
     print(json.dumps({
-        "level": "INFO",
+        "level": "WARN",
         "event": "token_validation",
-        "result": "success"
+        "result": "failure"
     }))
 
 
-    # --------------------------------------------------------
-    # CREATE WILDCARD RESOURCE
-    # --------------------------------------------------------
-
-    wildcard_resource = get_wildcard_resource(
-        method_arn
-    )
-
-
-    print(json.dumps({
-        "level": "INFO",
-        "event": "authorization",
-        "result": "allowed",
-        "resource": wildcard_resource
-    }))
-
-
-    # --------------------------------------------------------
-    # RETURN ALLOW POLICY
-    # --------------------------------------------------------
-
-    return generate_policy(
-        "Allow",
-        "cloudmart-authenticated-client",
-        wildcard_resource
-    )
+    raise Exception("Unauthorized")

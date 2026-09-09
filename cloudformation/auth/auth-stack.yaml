@@ -21,10 +21,32 @@ Parameters:
     Type: AWS::EC2::SecurityGroup::Id
     Description: Security group for the Lambda Authorizer
 
-  AuthTokenParameterName:
+  # ============================================================
+  # ADMIN TOKEN
+  # ============================================================
+
+  AdminAuthTokenParameterName:
     Type: String
-    Default: /cloudmart/dev/auth/token
-    Description: SSM SecureString containing the CloudMart authentication token
+    Default: /cloudmart/dev/auth/admin-token
+    Description: SSM SecureString containing the CloudMart admin authentication token
+
+  # ============================================================
+  # CUSTOMER TOKEN
+  # ============================================================
+
+  CustomerAuthTokenParameterName:
+    Type: String
+    Default: /cloudmart/dev/auth/customer-token
+    Description: SSM SecureString containing the CloudMart customer authentication token
+
+  # ============================================================
+  # CUSTOMER ID
+  # ============================================================
+
+  CustomerId:
+    Type: String
+    Default: CUST001
+    Description: Customer ID associated with the customer authentication token
 
 
 Resources:
@@ -61,24 +83,66 @@ Resources:
       Environment:
         Variables:
           ENVIRONMENT: !Ref Environment
-          AUTH_TOKEN_PARAMETER: !Ref AuthTokenParameterName
+
+          # Admin token SSM parameter
+          ADMIN_AUTH_TOKEN_PARAMETER: !Ref AdminAuthTokenParameterName
+
+          # Customer token SSM parameter
+          CUSTOMER_AUTH_TOKEN_PARAMETER: !Ref CustomerAuthTokenParameterName
+
+          # Customer ID is separate from the token
+          CUSTOMER_ID: !Ref CustomerId
 
       Code:
         ZipFile: |
+
           import json
           import os
           import boto3
 
+
+          # ============================================================
+          # AWS CLIENTS
+          # ============================================================
+
           ssm = boto3.client("ssm")
 
-          PARAMETER_NAME = os.environ["AUTH_TOKEN_PARAMETER"]
+
+          # ============================================================
+          # ENVIRONMENT VARIABLES
+          # ============================================================
+
+          ADMIN_PARAMETER_NAME = os.environ[
+              "ADMIN_AUTH_TOKEN_PARAMETER"
+          ]
+
+          CUSTOMER_PARAMETER_NAME = os.environ[
+              "CUSTOMER_AUTH_TOKEN_PARAMETER"
+          ]
+
+          CUSTOMER_ID = os.environ[
+              "CUSTOMER_ID"
+          ]
 
 
-          def generate_policy(effect, principal_id, method_arn):
-              return {
+          # ============================================================
+          # POLICY GENERATOR
+          # ============================================================
+
+          def generate_policy(
+              effect,
+              principal_id,
+              method_arn,
+              role,
+              customer_id=None
+          ):
+
+              response = {
                   "principalId": principal_id,
+
                   "policyDocument": {
                       "Version": "2012-10-17",
+
                       "Statement": [
                           {
                               "Action": "execute-api:Invoke",
@@ -86,21 +150,59 @@ Resources:
                               "Resource": method_arn
                           }
                       ]
+                  },
+
+                  "context": {
+                      "role": role
                   }
               }
 
 
+              # Add customer ID only for customer role
+              if customer_id:
+
+                  response["context"]["customerId"] = customer_id
+
+
+              return response
+
+
+          # ============================================================
+          # READ TOKEN FROM SSM
+          # ============================================================
+
+          def get_parameter_value(parameter_name):
+
+              parameter = ssm.get_parameter(
+                  Name=parameter_name,
+                  WithDecryption=True
+              )
+
+              return parameter["Parameter"]["Value"]
+
+
+          # ============================================================
+          # MAIN HANDLER
+          # ============================================================
+
           def handler(event, context):
 
-              method_arn = event.get("methodArn", "*")
+              method_arn = event.get(
+                  "methodArn",
+                  "*"
+              )
 
-              authorization_token = event.get("authorizationToken")
+              authorization_token = event.get(
+                  "authorizationToken"
+              )
 
-              # ------------------------------------------------
+
+              # --------------------------------------------------------
               # Missing token
-              # ------------------------------------------------
+              # --------------------------------------------------------
 
               if not authorization_token:
+
                   print(json.dumps({
                       "level": "WARN",
                       "event": "token_validation",
@@ -110,11 +212,12 @@ Resources:
                   raise Exception("Unauthorized")
 
 
-              # ------------------------------------------------
+              # --------------------------------------------------------
               # Validate Bearer format
-              # ------------------------------------------------
+              # --------------------------------------------------------
 
               if not authorization_token.startswith("Bearer "):
+
                   print(json.dumps({
                       "level": "WARN",
                       "event": "token_validation",
@@ -127,7 +230,12 @@ Resources:
               supplied_token = authorization_token[7:].strip()
 
 
+              # --------------------------------------------------------
+              # Empty token
+              # --------------------------------------------------------
+
               if not supplied_token:
+
                   print(json.dumps({
                       "level": "WARN",
                       "event": "token_validation",
@@ -137,61 +245,95 @@ Resources:
                   raise Exception("Unauthorized")
 
 
-              # ------------------------------------------------
-              # Read expected token from SSM
-              # ------------------------------------------------
+              # ========================================================
+              # CHECK ADMIN TOKEN
+              # ========================================================
 
               try:
 
-                  parameter = ssm.get_parameter(
-                      Name=PARAMETER_NAME,
-                      WithDecryption=True
+                  admin_token = get_parameter_value(
+                      ADMIN_PARAMETER_NAME
                   )
-
-                  expected_token = parameter["Parameter"]["Value"]
 
               except Exception as error:
 
                   print(json.dumps({
                       "level": "ERROR",
-                      "event": "token_validation",
+                      "event": "admin_token_read",
                       "result": "configuration_error"
                   }))
 
                   raise Exception("Unauthorized")
 
 
-              # ------------------------------------------------
-              # Compare token
-              # ------------------------------------------------
-
-              if supplied_token != expected_token:
+              if supplied_token == admin_token:
 
                   print(json.dumps({
-                      "level": "WARN",
+                      "level": "INFO",
                       "event": "token_validation",
-                      "result": "failure"
+                      "result": "success",
+                      "role": "admin"
+                  }))
+
+                  return generate_policy(
+                      "Allow",
+                      "cloudmart-admin",
+                      method_arn,
+                      "admin"
+                  )
+
+
+              # ========================================================
+              # CHECK CUSTOMER TOKEN
+              # ========================================================
+
+              try:
+
+                  customer_token = get_parameter_value(
+                      CUSTOMER_PARAMETER_NAME
+                  )
+
+              except Exception as error:
+
+                  print(json.dumps({
+                      "level": "ERROR",
+                      "event": "customer_token_read",
+                      "result": "configuration_error"
                   }))
 
                   raise Exception("Unauthorized")
 
 
-              # ------------------------------------------------
-              # Valid token
-              # ------------------------------------------------
+              if supplied_token == customer_token:
+
+                  print(json.dumps({
+                      "level": "INFO",
+                      "event": "token_validation",
+                      "result": "success",
+                      "role": "customer",
+                      "customerId": CUSTOMER_ID
+                  }))
+
+                  return generate_policy(
+                      "Allow",
+                      "cloudmart-customer",
+                      method_arn,
+                      "customer",
+                      CUSTOMER_ID
+                  )
+
+
+              # ========================================================
+              # INVALID TOKEN
+              # ========================================================
 
               print(json.dumps({
-                  "level": "INFO",
+                  "level": "WARN",
                   "event": "token_validation",
-                  "result": "success"
+                  "result": "failure"
               }))
 
-
-              return generate_policy(
-                  "Allow",
-                  "cloudmart-authenticated-client",
-                  method_arn
-              )
+              raise Exception("Unauthorized")
 
 
 Outputs:
@@ -203,6 +345,7 @@ Outputs:
   AuthorizerLambdaArn:
     Description: ARN of the CloudMart Lambda Authorizer
     Value: !GetAtt LambdaAuthorizer.Arn
+
     Export:
       Name: !Sub CloudMart-${Environment}-AuthorizerLambdaArn
 
@@ -214,14 +357,33 @@ Outputs:
   AuthorizerLambdaName:
     Description: Name of the CloudMart Lambda Authorizer
     Value: !Ref LambdaAuthorizer
+
     Export:
       Name: !Sub CloudMart-${Environment}-AuthorizerLambdaName
 
 
   # ============================================================
-  # AUTH TOKEN PARAMETER
+  # ADMIN TOKEN PARAMETER
   # ============================================================
 
-  AuthTokenParameter:
-    Description: SSM parameter used by the Lambda Authorizer
-    Value: !Ref AuthTokenParameterName
+  AdminAuthTokenParameter:
+    Description: SSM parameter used by the Lambda Authorizer for admin authentication
+    Value: !Ref AdminAuthTokenParameterName
+
+
+  # ============================================================
+  # CUSTOMER TOKEN PARAMETER
+  # ============================================================
+
+  CustomerAuthTokenParameter:
+    Description: SSM parameter used by the Lambda Authorizer for customer authentication
+    Value: !Ref CustomerAuthTokenParameterName
+
+
+  # ============================================================
+  # CUSTOMER ID
+  # ============================================================
+
+  CustomerId:
+    Description: Customer ID associated with the customer token
+    Value: !Ref CustomerId

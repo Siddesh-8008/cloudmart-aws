@@ -315,17 +315,27 @@ def lambda_handler(event, context):
 
 
             # Required validation
+            # name, description and price are mandatory for POST.
 
-            if not name or price is None:
+            if (
+                not isinstance(name, str)
+                or not name.strip()
+                or not isinstance(description, str)
+                or not description.strip()
+                or price is None
+            ):
 
                 return response(
                     400,
                     {
                         "message": (
-                            "name and price are required"
+                            "name, description and price are required"
                         )
                     }
                 )
+
+            name = name.strip()
+            description = description.strip()
 
 
             # Numeric validation
@@ -616,57 +626,92 @@ def lambda_handler(event, context):
                 # NAME VALIDATION
                 # ----------------------------------------
 
-                if "name" in body:
+                name = body.get("name")
 
-                    if not body["name"]:
+                if not isinstance(name, str) or not name.strip():
 
-                        return response(
-                            400,
-                            {
-                                "message": (
-                                    "name cannot be empty"
-                                )
-                            }
-                        )
+                    return response(
+                        400,
+                        {
+                            "message": (
+                                "name is required and cannot be empty"
+                            )
+                        }
+                    )
+
+                name = name.strip()
+                body["name"] = name
+
+
+                # ----------------------------------------
+                # DESCRIPTION VALIDATION
+                # ----------------------------------------
+                # Description is mandatory for PUT.
+
+                description = body.get("description")
+
+                if (
+                    not isinstance(description, str)
+                    or not description.strip()
+                ):
+
+                    return response(
+                        400,
+                        {
+                            "message": (
+                                "description is required and cannot be empty"
+                            )
+                        }
+                    )
+
+                body["description"] = description.strip()
 
 
                 # ----------------------------------------
                 # PRICE VALIDATION
                 # ----------------------------------------
+                # Price is mandatory for PUT.
 
-                if "price" in body:
+                if "price" not in body or body.get("price") is None:
 
-                    try:
+                    return response(
+                        400,
+                        {
+                            "message": "price is required"
+                        }
+                    )
 
-                        body["price"] = float(
-                            body["price"]
-                        )
+                try:
 
-                    except (
-                        TypeError,
-                        ValueError
-                    ):
+                    body["price"] = float(
+                        body["price"]
+                    )
 
-                        return response(
-                            400,
-                            {
-                                "message": (
-                                    "price must be numeric"
-                                )
-                            }
-                        )
+                except (
+                    TypeError,
+                    ValueError
+                ):
+
+                    return response(
+                        400,
+                        {
+                            "message": (
+                                "price must be numeric"
+                            )
+                        }
+                    )
 
 
-                    if body["price"] < 0:
+                if body["price"] < 0:
 
-                        return response(
-                            400,
-                            {
-                                "message": (
-                                    "price cannot be negative"
-                                )
-                            }
-                        )
+                    return response(
+                        400,
+                        {
+                            "message": (
+                                "price cannot be negative"
+                            )
+                        }
+                    )
 
 
                 # ----------------------------------------

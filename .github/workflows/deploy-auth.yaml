@@ -11,6 +11,10 @@ env:
   AWS_REGION: ap-south-1
   ENVIRONMENT: dev
 
+  # Customer identity is kept separate from the token.
+  # The customer token itself does NOT contain CUST001.
+  CUSTOMER_ID: CUST001
+
 jobs:
 
   # ============================================================
@@ -63,6 +67,11 @@ jobs:
             exit 1
           fi
 
+          if [ -z "${{ secrets.CUSTOMER_AUTH_TOKEN }}" ]; then
+            echo "ERROR: CUSTOMER_AUTH_TOKEN GitHub secret is not configured."
+            exit 1
+          fi
+
           if [ -z "${{ vars.LAMBDA_SUBNET_IDS }}" ]; then
             echo "ERROR: LAMBDA_SUBNET_IDS repository variable is not configured."
             exit 1
@@ -77,14 +86,14 @@ jobs:
 
 
       # --------------------------------------------------------
-      # Create / update SSM SecureString
+      # Create / update ADMIN authentication token
       # --------------------------------------------------------
 
-      - name: Create or update authentication token
+      - name: Create or update admin authentication token
         run: |
 
           aws ssm put-parameter \
-            --name "/cloudmart/${ENVIRONMENT}/auth/token" \
+            --name "/cloudmart/${ENVIRONMENT}/auth/admin-token" \
             --type "SecureString" \
             --value "${{ secrets.AUTH_TOKEN }}" \
             --overwrite \
@@ -92,14 +101,44 @@ jobs:
 
 
       # --------------------------------------------------------
-      # Verify SSM parameter exists
+      # Create / update CUSTOMER authentication token
       # --------------------------------------------------------
 
-      - name: Verify authentication parameter
+      - name: Create or update customer authentication token
+        run: |
+
+          aws ssm put-parameter \
+            --name "/cloudmart/${ENVIRONMENT}/auth/customer-token" \
+            --type "SecureString" \
+            --value "${{ secrets.CUSTOMER_AUTH_TOKEN }}" \
+            --overwrite \
+            --region "${AWS_REGION}"
+
+
+      # --------------------------------------------------------
+      # Verify ADMIN SSM parameter
+      # --------------------------------------------------------
+
+      - name: Verify admin authentication parameter
         run: |
 
           aws ssm get-parameter \
-            --name "/cloudmart/${ENVIRONMENT}/auth/token" \
+            --name "/cloudmart/${ENVIRONMENT}/auth/admin-token" \
+            --with-decryption \
+            --region "${AWS_REGION}" \
+            --query "Parameter.Name" \
+            --output text
+
+
+      # --------------------------------------------------------
+      # Verify CUSTOMER SSM parameter
+      # --------------------------------------------------------
+
+      - name: Verify customer authentication parameter
+        run: |
+
+          aws ssm get-parameter \
+            --name "/cloudmart/${ENVIRONMENT}/auth/customer-token" \
             --with-decryption \
             --region "${AWS_REGION}" \
             --query "Parameter.Name" \
@@ -132,7 +171,9 @@ jobs:
               Environment=${ENVIRONMENT} \
               AuthorizerSubnetIds="${{ vars.LAMBDA_SUBNET_IDS }}" \
               LambdaSecurityGroupId="${{ vars.LAMBDA_SECURITY_GROUP_ID }}" \
-              AuthTokenParameterName="/cloudmart/${ENVIRONMENT}/auth/token" \
+              AdminAuthTokenParameterName="/cloudmart/${ENVIRONMENT}/auth/admin-token" \
+              CustomerAuthTokenParameterName="/cloudmart/${ENVIRONMENT}/auth/customer-token" \
+              CustomerId="${CUSTOMER_ID}" \
             --capabilities CAPABILITY_NAMED_IAM \
             --region "${AWS_REGION}"
 
@@ -181,3 +222,4 @@ jobs:
             --region "${AWS_REGION}" \
             --query "Stacks[0].Outputs[?OutputKey=='AuthorizerLambdaName'].OutputValue" \
             --output text
+            
