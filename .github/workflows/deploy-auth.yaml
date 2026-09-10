@@ -15,6 +15,7 @@ env:
   # The customer token itself does NOT contain CUST001.
   CUSTOMER_ID: CUST001
 
+
 jobs:
 
   # ============================================================
@@ -72,17 +73,84 @@ jobs:
             exit 1
           fi
 
-          if [ -z "${{ vars.LAMBDA_SUBNET_IDS }}" ]; then
-            echo "ERROR: LAMBDA_SUBNET_IDS repository variable is not configured."
-            exit 1
-          fi
-
           if [ -z "${{ vars.LAMBDA_SECURITY_GROUP_ID }}" ]; then
             echo "ERROR: LAMBDA_SECURITY_GROUP_ID repository variable is not configured."
             exit 1
           fi
 
           echo "Required configuration is present."
+
+
+      # --------------------------------------------------------
+      # Verify Network Stack exports
+      #
+      # The Auth Stack now imports the private subnet IDs
+      # directly from the Network Stack.
+      # --------------------------------------------------------
+
+      - name: Verify Network Stack exports
+        run: |
+
+          echo "Checking required Network Stack exports..."
+
+          EXPORTS=$(aws cloudformation list-exports \
+            --region "${AWS_REGION}" \
+            --query "Exports[].Name" \
+            --output text)
+
+          echo "${EXPORTS}"
+
+          if ! echo "${EXPORTS}" | grep -q "CloudMart-${ENVIRONMENT}-PrivateSubnetAId"; then
+            echo "ERROR: CloudMart-${ENVIRONMENT}-PrivateSubnetAId export does not exist."
+            exit 1
+          fi
+
+          if ! echo "${EXPORTS}" | grep -q "CloudMart-${ENVIRONMENT}-PrivateSubnetBId"; then
+            echo "ERROR: CloudMart-${ENVIRONMENT}-PrivateSubnetBId export does not exist."
+            exit 1
+          fi
+
+          echo "Required Network Stack subnet exports are available."
+
+
+      # --------------------------------------------------------
+      # Display current private subnet IDs
+      # --------------------------------------------------------
+
+      - name: Display Network Stack subnet IDs
+        run: |
+
+          echo "Private Subnet A:"
+
+          aws cloudformation list-exports \
+            --region "${AWS_REGION}" \
+            --query "Exports[?Name=='CloudMart-${ENVIRONMENT}-PrivateSubnetAId'].Value" \
+            --output text
+
+          echo "Private Subnet B:"
+
+          aws cloudformation list-exports \
+            --region "${AWS_REGION}" \
+            --query "Exports[?Name=='CloudMart-${ENVIRONMENT}-PrivateSubnetBId'].Value" \
+            --output text
+
+
+      # --------------------------------------------------------
+      # Verify Lambda Security Group
+      # --------------------------------------------------------
+
+      - name: Verify Lambda Security Group
+        run: |
+
+          echo "Checking Lambda Security Group..."
+
+          aws ec2 describe-security-groups \
+            --group-ids "${{ vars.LAMBDA_SECURITY_GROUP_ID }}" \
+            --region "${AWS_REGION}" \
+            --query "SecurityGroups[0].GroupId" \
+            --output text
+
+          echo "Lambda Security Group exists."
 
 
       # --------------------------------------------------------
@@ -159,6 +227,16 @@ jobs:
 
       # --------------------------------------------------------
       # Deploy Auth Stack
+      #
+      # IMPORTANT:
+      # AuthorizerSubnetIds has been removed.
+      #
+      # The Auth Stack imports:
+      #
+      # CloudMart-dev-PrivateSubnetAId
+      # CloudMart-dev-PrivateSubnetBId
+      #
+      # directly from the Network Stack.
       # --------------------------------------------------------
 
       - name: Deploy Auth Stack
@@ -168,8 +246,7 @@ jobs:
             --template-file cloudformation/auth/auth-stack.yaml \
             --stack-name cloudmart-dev-auth \
             --parameter-overrides \
-              Environment=${ENVIRONMENT} \
-              AuthorizerSubnetIds="${{ vars.LAMBDA_SUBNET_IDS }}" \
+              Environment="${ENVIRONMENT}" \
               LambdaSecurityGroupId="${{ vars.LAMBDA_SECURITY_GROUP_ID }}" \
               AdminAuthTokenParameterName="/cloudmart/${ENVIRONMENT}/auth/admin-token" \
               CustomerAuthTokenParameterName="/cloudmart/${ENVIRONMENT}/auth/customer-token" \
@@ -222,4 +299,3 @@ jobs:
             --region "${AWS_REGION}" \
             --query "Stacks[0].Outputs[?OutputKey=='AuthorizerLambdaName'].OutputValue" \
             --output text
-            
