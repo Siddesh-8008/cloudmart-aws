@@ -47,6 +47,7 @@ def get_database_connection():
 
 
     return pymysql.connect(
+
         host=get_parameter(
             os.environ["DB_HOST_PARAMETER"]
         ),
@@ -134,6 +135,152 @@ def lambda_handler(event, context):
 
 
             # =================================================
+            # CUSTOMER TABLE
+            # =================================================
+
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS customers (
+
+                    customer_id VARCHAR(100) NOT NULL,
+
+                    name VARCHAR(255) NOT NULL,
+
+                    email VARCHAR(255) NOT NULL,
+
+                    status ENUM(
+                        'ACTIVE',
+                        'INACTIVE'
+                    ) NOT NULL DEFAULT 'ACTIVE',
+
+                    created_at TIMESTAMP
+                        DEFAULT CURRENT_TIMESTAMP,
+
+                    updated_at TIMESTAMP
+                        DEFAULT CURRENT_TIMESTAMP
+                        ON UPDATE CURRENT_TIMESTAMP,
+
+                    PRIMARY KEY (
+                        customer_id
+                    ),
+
+                    UNIQUE KEY uq_customers_email (
+                        email
+                    )
+
+                )
+                ENGINE=InnoDB
+                DEFAULT CHARSET=utf8mb4
+                COLLATE=utf8mb4_unicode_ci
+                """
+            )
+
+
+            # =================================================
+            # CUSTOMER AUTH TOKENS TABLE
+            #
+            # IMPORTANT:
+            # Only SHA-256 token hashes are stored here.
+            # The actual customer token is never stored.
+            # =================================================
+
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS customer_auth_tokens (
+
+                    token_id BIGINT NOT NULL AUTO_INCREMENT,
+
+                    customer_id VARCHAR(100) NOT NULL,
+
+                    token_hash CHAR(64) NOT NULL,
+
+                    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+
+                    created_at TIMESTAMP
+                        DEFAULT CURRENT_TIMESTAMP,
+
+                    expires_at TIMESTAMP NULL,
+
+                    last_used_at TIMESTAMP NULL,
+
+                    PRIMARY KEY (
+                        token_id
+                    ),
+
+                    UNIQUE KEY uq_customer_token_hash (
+                        token_hash
+                    ),
+
+                    KEY idx_customer_auth_customer (
+                        customer_id
+                    ),
+
+                    CONSTRAINT fk_customer_auth_customer
+
+                        FOREIGN KEY (
+                            customer_id
+                        )
+
+                        REFERENCES customers(
+                            customer_id
+                        )
+
+                        ON DELETE CASCADE
+
+                )
+                ENGINE=InnoDB
+                DEFAULT CHARSET=utf8mb4
+                COLLATE=utf8mb4_unicode_ci
+                """
+            )
+
+
+            # =================================================
+            # SEED CUSTOMERS
+            #
+            # These customers are used for testing.
+            # =================================================
+
+            cursor.execute(
+                """
+                INSERT INTO customers
+                (
+                    customer_id,
+                    name,
+                    email,
+                    status
+                )
+                VALUES
+                (
+                    'CUST001',
+                    'Siddesh',
+                    'siddesh@example.com',
+                    'ACTIVE'
+                ),
+                (
+                    'CUST002',
+                    'Rahul',
+                    'rahul@example.com',
+                    'ACTIVE'
+                ),
+                (
+                    'CUST003',
+                    'Priya',
+                    'priya@example.com',
+                    'ACTIVE'
+                )
+                ON DUPLICATE KEY UPDATE
+
+                    name = VALUES(name),
+
+                    email = VALUES(email),
+
+                    status = VALUES(status)
+                """
+            )
+
+
+            # =================================================
             # ORDER STATUS TABLE
             # =================================================
 
@@ -143,7 +290,8 @@ def lambda_handler(event, context):
 
                     status_id INT AUTO_INCREMENT PRIMARY KEY,
 
-                    status_name VARCHAR(50) NOT NULL UNIQUE
+                    status_name VARCHAR(50)
+                        NOT NULL UNIQUE
 
                 )
                 """
@@ -200,8 +348,14 @@ def lambda_handler(event, context):
                         ON UPDATE CURRENT_TIMESTAMP,
 
                     CONSTRAINT fk_orders_status
-                        FOREIGN KEY (status_id)
-                        REFERENCES order_status(status_id),
+
+                        FOREIGN KEY (
+                            status_id
+                        )
+
+                        REFERENCES order_status(
+                            status_id
+                        ),
 
                     INDEX idx_orders_customer_id
                         (customer_id),
@@ -235,13 +389,26 @@ def lambda_handler(event, context):
                     line_total DECIMAL(10,2) NOT NULL,
 
                     CONSTRAINT fk_order_items_order
-                        FOREIGN KEY (order_id)
-                        REFERENCES orders(order_id)
+
+                        FOREIGN KEY (
+                            order_id
+                        )
+
+                        REFERENCES orders(
+                            order_id
+                        )
+
                         ON DELETE CASCADE,
 
                     CONSTRAINT fk_order_items_product
-                        FOREIGN KEY (product_id)
-                        REFERENCES products(id),
+
+                        FOREIGN KEY (
+                            product_id
+                        )
+
+                        REFERENCES products(
+                            id
+                        ),
 
                     INDEX idx_order_items_order_id
                         (order_id),
@@ -264,21 +431,26 @@ def lambda_handler(event, context):
         print(
             json.dumps({
                 "message": (
-                    "Products and order tables "
-                    "created successfully"
+                    "Products, customers, authentication "
+                    "and order tables created successfully"
                 )
             })
         )
 
 
         return {
+
             "statusCode": 200,
+
             "body": json.dumps({
+
                 "message": (
-                    "Products and order tables "
-                    "created successfully"
+                    "Products, customers, authentication "
+                    "and order tables created successfully"
                 )
+
             })
+
         }
 
 
@@ -291,9 +463,15 @@ def lambda_handler(event, context):
 
         print(
             json.dumps({
+
                 "level": "ERROR",
-                "message": "Schema initialization failed",
+
+                "message": (
+                    "Schema initialization failed"
+                ),
+
                 "error": str(error)
+
             })
         )
 
