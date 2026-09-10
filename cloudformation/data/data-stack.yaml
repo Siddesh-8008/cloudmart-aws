@@ -102,7 +102,7 @@ Resources:
 
       MultiAZ: false
 
-      BackupRetentionPeriod: 7
+      BackupRetentionPeriod: 0
 
       AutoMinorVersionUpgrade: true
 
