@@ -196,7 +196,7 @@ jobs:
 
           echo "Copying Authorizer source..."
 
-          cp lambda/authorizer/index.py authorizer-package/index.py
+          cp lambda/authorizer/lambda_function.py authorizer-package/lambda_function.py
 
           echo "Installing Python dependencies..."
 
