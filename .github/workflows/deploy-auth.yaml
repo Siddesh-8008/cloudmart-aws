@@ -11,11 +11,6 @@ env:
   AWS_REGION: ap-south-1
   ENVIRONMENT: dev
 
-  # Customer identity is kept separate from the token.
-  # The customer token itself does NOT contain CUST001.
-  CUSTOMER_ID: CUST001
-
-
 jobs:
 
   # ============================================================
@@ -68,13 +63,13 @@ jobs:
             exit 1
           fi
 
-          if [ -z "${{ secrets.CUSTOMER_AUTH_TOKEN }}" ]; then
-            echo "ERROR: CUSTOMER_AUTH_TOKEN GitHub secret is not configured."
+          if [ -z "${{ vars.LAMBDA_SECURITY_GROUP_ID }}" ]; then
+            echo "ERROR: LAMBDA_SECURITY_GROUP_ID repository variable is not configured."
             exit 1
           fi
 
-          if [ -z "${{ vars.LAMBDA_SECURITY_GROUP_ID }}" ]; then
-            echo "ERROR: LAMBDA_SECURITY_GROUP_ID repository variable is not configured."
+          if [ -z "${{ vars.AUTHORIZER_LAYER_ARN }}" ]; then
+            echo "ERROR: AUTHORIZER_LAYER_ARN repository variable is not configured."
             exit 1
           fi
 
@@ -84,8 +79,8 @@ jobs:
       # --------------------------------------------------------
       # Verify Network Stack exports
       #
-      # The Auth Stack now imports the private subnet IDs
-      # directly from the Network Stack.
+      # Auth Stack imports the private subnet IDs directly
+      # from the Network Stack.
       # --------------------------------------------------------
 
       - name: Verify Network Stack exports
@@ -154,7 +149,33 @@ jobs:
 
 
       # --------------------------------------------------------
+      # Verify Authorizer Lambda Layer
+      # --------------------------------------------------------
+
+      - name: Verify Authorizer Lambda Layer
+        run: |
+
+          echo "Checking Authorizer Lambda Layer..."
+
+          LAYER_ARN="${{ vars.AUTHORIZER_LAYER_ARN }}"
+
+          LAYER_NAME=$(echo "${LAYER_ARN}" | awk -F: '{print $7}')
+          LAYER_VERSION=$(echo "${LAYER_ARN}" | awk -F: '{print $8}')
+
+          aws lambda get-layer-version \
+            --layer-name "${LAYER_NAME}" \
+            --version-number "${LAYER_VERSION}" \
+            --region "${AWS_REGION}" \
+            --query "LayerVersionArn" \
+            --output text
+
+          echo "Authorizer Lambda Layer exists."
+
+
+      # --------------------------------------------------------
       # Create / update ADMIN authentication token
+      #
+      # Customer tokens are NO LONGER stored in SSM.
       # --------------------------------------------------------
 
       - name: Create or update admin authentication token
@@ -164,21 +185,6 @@ jobs:
             --name "/cloudmart/${ENVIRONMENT}/auth/admin-token" \
             --type "SecureString" \
             --value "${{ secrets.AUTH_TOKEN }}" \
-            --overwrite \
-            --region "${AWS_REGION}"
-
-
-      # --------------------------------------------------------
-      # Create / update CUSTOMER authentication token
-      # --------------------------------------------------------
-
-      - name: Create or update customer authentication token
-        run: |
-
-          aws ssm put-parameter \
-            --name "/cloudmart/${ENVIRONMENT}/auth/customer-token" \
-            --type "SecureString" \
-            --value "${{ secrets.CUSTOMER_AUTH_TOKEN }}" \
             --overwrite \
             --region "${AWS_REGION}"
 
@@ -199,22 +205,57 @@ jobs:
 
 
       # --------------------------------------------------------
-      # Verify CUSTOMER SSM parameter
+      # Verify DB SSM parameters
+      #
+      # These are required by the Authorizer Lambda to connect
+      # to RDS and validate customer tokens.
       # --------------------------------------------------------
 
-      - name: Verify customer authentication parameter
+      - name: Verify database SSM parameters
         run: |
 
+          echo "Checking database SSM parameters..."
+
           aws ssm get-parameter \
-            --name "/cloudmart/${ENVIRONMENT}/auth/customer-token" \
+            --name "/cloudmart/${ENVIRONMENT}/db/host" \
             --with-decryption \
             --region "${AWS_REGION}" \
             --query "Parameter.Name" \
             --output text
 
+          aws ssm get-parameter \
+            --name "/cloudmart/${ENVIRONMENT}/db/port" \
+            --with-decryption \
+            --region "${AWS_REGION}" \
+            --query "Parameter.Name" \
+            --output text
+
+          aws ssm get-parameter \
+            --name "/cloudmart/${ENVIRONMENT}/db/name" \
+            --with-decryption \
+            --region "${AWS_REGION}" \
+            --query "Parameter.Name" \
+            --output text
+
+          aws ssm get-parameter \
+            --name "/cloudmart/${ENVIRONMENT}/db/username" \
+            --with-decryption \
+            --region "${AWS_REGION}" \
+            --query "Parameter.Name" \
+            --output text
+
+          aws ssm get-parameter \
+            --name "/cloudmart/${ENVIRONMENT}/db/password" \
+            --with-decryption \
+            --region "${AWS_REGION}" \
+            --query "Parameter.Name" \
+            --output text
+
+          echo "All required database SSM parameters are available."
+
 
       # --------------------------------------------------------
-      # Validate CloudFormation
+      # Validate Auth CloudFormation
       # --------------------------------------------------------
 
       - name: Validate Auth CloudFormation
@@ -228,15 +269,11 @@ jobs:
       # --------------------------------------------------------
       # Deploy Auth Stack
       #
-      # IMPORTANT:
-      # AuthorizerSubnetIds has been removed.
+      # CustomerAuthTokenParameterName and CustomerId have
+      # been removed.
       #
-      # The Auth Stack imports:
-      #
-      # CloudMart-dev-PrivateSubnetAId
-      # CloudMart-dev-PrivateSubnetBId
-      #
-      # directly from the Network Stack.
+      # Authorizer now receives the RDS parameter names and
+      # Lambda Layer ARN.
       # --------------------------------------------------------
 
       - name: Deploy Auth Stack
@@ -249,8 +286,12 @@ jobs:
               Environment="${ENVIRONMENT}" \
               LambdaSecurityGroupId="${{ vars.LAMBDA_SECURITY_GROUP_ID }}" \
               AdminAuthTokenParameterName="/cloudmart/${ENVIRONMENT}/auth/admin-token" \
-              CustomerAuthTokenParameterName="/cloudmart/${ENVIRONMENT}/auth/customer-token" \
-              CustomerId="${CUSTOMER_ID}" \
+              DBHostParameter="/cloudmart/${ENVIRONMENT}/db/host" \
+              DBPortParameter="/cloudmart/${ENVIRONMENT}/db/port" \
+              DBNameParameter="/cloudmart/${ENVIRONMENT}/db/name" \
+              DBUsernameParameter="/cloudmart/${ENVIRONMENT}/db/username" \
+              DBPasswordParameter="/cloudmart/${ENVIRONMENT}/db/password" \
+              AuthorizerLayerArn="${{ vars.AUTHORIZER_LAYER_ARN }}" \
             --capabilities CAPABILITY_NAMED_IAM \
             --region "${AWS_REGION}"
 
@@ -281,21 +322,5 @@ jobs:
           aws cloudformation describe-stacks \
             --stack-name cloudmart-dev-auth \
             --region "${AWS_REGION}" \
-            --query "Stacks[0].Outputs[?OutputKey=='AuthorizerLambdaArn'].OutputValue" \
-            --output text
+           
 
-
-      # --------------------------------------------------------
-      # Display Authorizer Lambda Name
-      # --------------------------------------------------------
-
-      - name: Display Authorizer Lambda Name
-        run: |
-
-          echo "Authorizer Lambda Name:"
-
-          aws cloudformation describe-stacks \
-            --stack-name cloudmart-dev-auth \
-            --region "${AWS_REGION}" \
-            --query "Stacks[0].Outputs[?OutputKey=='AuthorizerLambdaName'].OutputValue" \
-            --output text

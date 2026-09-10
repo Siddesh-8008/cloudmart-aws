@@ -1,72 +1,151 @@
 import json
 import os
+import hashlib
+import hmac
 import boto3
+import pymysql
 
 
 # ============================================================
-# AWS CLIENT
+# AWS CLIENTS
 # ============================================================
 
 ssm = boto3.client("ssm")
 
 
 # ============================================================
-# ENVIRONMENT VARIABLES
+# ENVIRONMENT
 # ============================================================
 
-ADMIN_PARAMETER_NAME = os.environ[
-    "ADMIN_AUTH_TOKEN_PARAMETER"
-]
-
-CUSTOMER_PARAMETER_NAME = os.environ[
-    "CUSTOMER_AUTH_TOKEN_PARAMETER"
-]
-
-CUSTOMER_ID = os.environ[
-    "CUSTOMER_ID"
-]
+ENVIRONMENT = os.environ.get(
+    "ENVIRONMENT",
+    "dev"
+)
 
 
 # ============================================================
-# READ TOKEN FROM SSM
+# DATABASE SSM PARAMETERS
 # ============================================================
 
-def get_parameter_value(parameter_name):
+DB_HOST_PARAMETER = os.environ[
+    "DB_HOST_PARAMETER"
+]
 
-    parameter = ssm.get_parameter(
-        Name=parameter_name,
+DB_PORT_PARAMETER = os.environ.get(
+    "DB_PORT_PARAMETER"
+)
+
+DB_NAME_PARAMETER = os.environ[
+    "DB_NAME_PARAMETER"
+]
+
+DB_USERNAME_PARAMETER = os.environ[
+    "DB_USERNAME_PARAMETER"
+]
+
+DB_PASSWORD_PARAMETER = os.environ[
+    "DB_PASSWORD_PARAMETER"
+]
+
+
+# ============================================================
+# SSM PARAMETER
+# ============================================================
+
+def get_parameter(name):
+
+    return ssm.get_parameter(
+        Name=name,
         WithDecryption=True
+    )["Parameter"]["Value"]
+
+
+# ============================================================
+# DATABASE CONNECTION
+# ============================================================
+
+def get_db_connection():
+
+    host = get_parameter(
+        DB_HOST_PARAMETER
     )
 
-    return parameter["Parameter"]["Value"]
+    if DB_PORT_PARAMETER:
+
+        port = int(
+            get_parameter(
+                DB_PORT_PARAMETER
+            )
+        )
+
+    else:
+
+        port = 3306
+
+    database = get_parameter(
+        DB_NAME_PARAMETER
+    )
+
+    username = get_parameter(
+        DB_USERNAME_PARAMETER
+    )
+
+    password = get_parameter(
+        DB_PASSWORD_PARAMETER
+    )
+
+    return pymysql.connect(
+
+        host=host,
+
+        port=port,
+
+        user=username,
+
+        password=password,
+
+        database=database,
+
+        connect_timeout=5,
+
+        read_timeout=5,
+
+        write_timeout=5,
+
+        cursorclass=pymysql.cursors.DictCursor,
+
+        autocommit=True
+    )
 
 
 # ============================================================
-# GET API GATEWAY STAGE ARN
+# HASH TOKEN
+# ============================================================
+
+def hash_token(token):
+
+    return hashlib.sha256(
+        token.encode("utf-8")
+    ).hexdigest()
+
+
+# ============================================================
+# GET API STAGE ARN
 # ============================================================
 
 def get_api_stage_arn(method_arn):
 
-    """
-    Example method ARN:
-
-    arn:aws:execute-api:ap-south-1:123456789012:abc123/dev/GET/products
-
-    Returns:
-
-    arn:aws:execute-api:ap-south-1:123456789012:abc123/dev
-    """
-
     parts = method_arn.split("/")
 
     if len(parts) < 2:
+
         return method_arn
 
     return parts[0] + "/" + parts[1]
 
 
 # ============================================================
-# GENERATE IAM POLICY
+# GENERATE POLICY
 # ============================================================
 
 def generate_policy(
@@ -88,13 +167,16 @@ def generate_policy(
             "Statement": [
 
                 {
-                    "Action": "execute-api:Invoke",
 
-                    "Effect": effect,
+                    "Action":
+                        "execute-api:Invoke",
 
-                    "Resource": resources
+                    "Effect":
+                        effect,
+
+                    "Resource":
+                        resources
                 }
-
             ]
         },
 
@@ -104,15 +186,11 @@ def generate_policy(
         }
     }
 
-
-    # --------------------------------------------------------
-    # ADD CUSTOMER ID ONLY FOR CUSTOMER
-    # --------------------------------------------------------
-
     if customer_id:
 
-        response["context"]["customerId"] = customer_id
-
+        response["context"]["customerId"] = (
+            customer_id
+        )
 
     return response
 
@@ -122,17 +200,6 @@ def generate_policy(
 # ============================================================
 
 def get_admin_resources(method_arn):
-
-    """
-    Admin can access all API Gateway methods.
-
-    Example:
-
-    arn:aws:execute-api:
-    ap-south-1:
-    ACCOUNT_ID:
-    API_ID/dev/*/*
-    """
 
     api_stage_arn = get_api_stage_arn(
         method_arn
@@ -149,36 +216,18 @@ def get_admin_resources(method_arn):
 
 def get_customer_resources(method_arn):
 
-    """
-    Customer has read-only product access
-    and order access.
-
-    Customer is NOT allowed to:
-
-    POST /products
-    PUT /products/{id}
-    DELETE /products/{id}
-    """
-
     api_stage_arn = get_api_stage_arn(
         method_arn
     )
 
     return [
 
-        # ----------------------------------------------------
-        # PRODUCTS - READ ONLY
-        # ----------------------------------------------------
-
+        # Products - READ
         api_stage_arn + "/GET/products",
 
         api_stage_arn + "/GET/products/*",
 
-
-        # ----------------------------------------------------
-        # ORDERS
-        # ----------------------------------------------------
-
+        # Orders
         api_stage_arn + "/POST/orders",
 
         api_stage_arn + "/GET/orders",
@@ -188,31 +237,125 @@ def get_customer_resources(method_arn):
 
 
 # ============================================================
+# FIND CUSTOMER BY TOKEN
+# ============================================================
+
+def find_customer_by_token(
+    supplied_token
+):
+
+    token_hash = hash_token(
+        supplied_token
+    )
+
+    connection = None
+
+    try:
+
+        connection = get_db_connection()
+
+        with connection.cursor() as cursor:
+
+            cursor.execute(
+                """
+                SELECT
+                    c.customer_id,
+                    c.name,
+                    c.email,
+                    c.status,
+                    t.token_hash,
+                    t.is_active,
+                    t.expires_at
+                FROM customer_auth_tokens t
+                INNER JOIN customers c
+                    ON c.customer_id = t.customer_id
+                WHERE t.is_active = TRUE
+                  AND c.status = 'ACTIVE'
+                  AND t.token_hash = %s
+                LIMIT 1
+                """,
+                (
+                    token_hash,
+                )
+            )
+
+            customer = cursor.fetchone()
+
+        if not customer:
+
+            return None
+
+        # ----------------------------------------------------
+        # Optional expiration check
+        # ----------------------------------------------------
+
+        if customer["expires_at"]:
+
+            from datetime import datetime, timezone
+
+            expires_at = customer[
+                "expires_at"
+            ]
+
+            now = datetime.now(
+                timezone.utc
+            ).replace(
+                tzinfo=None
+            )
+
+            if expires_at <= now:
+
+                return None
+
+        # ----------------------------------------------------
+        # Update last used
+        # ----------------------------------------------------
+
+        with connection.cursor() as cursor:
+
+            cursor.execute(
+                """
+                UPDATE customer_auth_tokens
+                SET last_used_at = CURRENT_TIMESTAMP
+                WHERE token_hash = %s
+                """,
+                (
+                    token_hash,
+                )
+            )
+
+        return customer
+
+    finally:
+
+        if connection:
+
+            connection.close()
+
+
+# ============================================================
 # AUTHORIZE
 # ============================================================
 
 def handler(event, context):
 
-    print(json.dumps({
-        "level": "INFO",
-        "event": "authorizer_invoked",
-        "request_id": context.aws_request_id
-    }))
+    print(
+        json.dumps({
 
+            "level": "INFO",
 
-    # ========================================================
-    # METHOD ARN
-    # ========================================================
+            "event":
+                "authorizer_invoked",
+
+            "request_id":
+                context.aws_request_id
+        })
+    )
 
     method_arn = event.get(
         "methodArn",
         "*"
     )
-
-
-    # ========================================================
-    # AUTHORIZATION TOKEN
-    # ========================================================
 
     authorization_token = event.get(
         "authorizationToken"
@@ -225,30 +368,44 @@ def handler(event, context):
 
     if not authorization_token:
 
-        print(json.dumps({
-            "level": "WARN",
-            "event": "token_validation",
-            "result": "missing"
-        }))
+        print(
+            json.dumps({
 
-        raise Exception("Unauthorized")
+                "event":
+                    "token_validation",
+
+                "result":
+                    "missing"
+            })
+        )
+
+        raise Exception(
+            "Unauthorized"
+        )
 
 
     # ========================================================
-    # VALIDATE BEARER FORMAT
+    # BEARER FORMAT
     # ========================================================
 
     if not authorization_token.startswith(
         "Bearer "
     ):
 
-        print(json.dumps({
-            "level": "WARN",
-            "event": "token_validation",
-            "result": "invalid_format"
-        }))
+        print(
+            json.dumps({
 
-        raise Exception("Unauthorized")
+                "event":
+                    "token_validation",
+
+                "result":
+                    "invalid_format"
+            })
+        )
+
+        raise Exception(
+            "Unauthorized"
+        )
 
 
     supplied_token = authorization_token[
@@ -262,152 +419,175 @@ def handler(event, context):
 
     if not supplied_token:
 
-        print(json.dumps({
-            "level": "WARN",
-            "event": "token_validation",
-            "result": "empty"
-        }))
-
-        raise Exception("Unauthorized")
+        raise Exception(
+            "Unauthorized"
+        )
 
 
     # ========================================================
-    # READ ADMIN TOKEN
+    # ADMIN TOKEN
+    #
+    # Admin token can remain in SSM.
+    # ========================================================
+
+    admin_parameter = os.environ.get(
+        "ADMIN_AUTH_TOKEN_PARAMETER"
+    )
+
+    if admin_parameter:
+
+        try:
+
+            admin_token = get_parameter(
+                admin_parameter
+            )
+
+            if hmac.compare_digest(
+                supplied_token,
+                admin_token
+            ):
+
+                print(
+                    json.dumps({
+
+                        "event":
+                            "token_validation",
+
+                        "result":
+                            "success",
+
+                        "role":
+                            "admin"
+                    })
+                )
+
+                return generate_policy(
+
+                    effect="Allow",
+
+                    principal_id=
+                        "cloudmart-admin",
+
+                    resources=
+                        get_admin_resources(
+                            method_arn
+                        ),
+
+                    role="admin"
+                )
+
+        except Exception as error:
+
+            print(
+                json.dumps({
+
+                    "event":
+                        "admin_validation_error",
+
+                    "error":
+                        str(error)
+                })
+            )
+
+
+    # ========================================================
+    # CUSTOMER TOKEN -> RDS
     # ========================================================
 
     try:
 
-        admin_token = get_parameter_value(
-            ADMIN_PARAMETER_NAME
+        customer = find_customer_by_token(
+            supplied_token
         )
 
     except Exception as error:
 
-        print(json.dumps({
-            "level": "ERROR",
-            "event": "admin_token_read",
-            "result": "configuration_error",
-            "error": str(error)
-        }))
+        print(
+            json.dumps({
 
-        raise Exception("Unauthorized")
+                "level":
+                    "ERROR",
+
+                "event":
+                    "customer_token_database_error",
+
+                "error":
+                    str(error)
+            })
+        )
+
+        raise Exception(
+            "Unauthorized"
+        )
 
 
     # ========================================================
-    # CHECK ADMIN TOKEN
+    # CUSTOMER NOT FOUND
     # ========================================================
 
-    if supplied_token == admin_token:
+    if not customer:
 
-        print(json.dumps({
-            "level": "INFO",
-            "event": "token_validation",
-            "result": "success",
-            "role": "admin"
-        }))
+        print(
+            json.dumps({
+
+                "event":
+                    "token_validation",
+
+                "result":
+                    "invalid_customer_token"
+            })
+        )
+
+        raise Exception(
+            "Unauthorized"
+        )
 
 
-        admin_resources = get_admin_resources(
+    # ========================================================
+    # CUSTOMER AUTHORIZED
+    # ========================================================
+
+    customer_id = customer[
+        "customer_id"
+    ]
+
+    print(
+        json.dumps({
+
+            "event":
+                "token_validation",
+
+            "result":
+                "success",
+
+            "role":
+                "customer",
+
+            "customerId":
+                customer_id
+        })
+    )
+
+
+    customer_resources = (
+        get_customer_resources(
             method_arn
         )
+    )
 
 
-        print(json.dumps({
-            "level": "INFO",
-            "event": "authorization",
-            "result": "allowed",
-            "role": "admin",
-            "resources": admin_resources
-        }))
+    return generate_policy(
 
+        effect="Allow",
 
-        return generate_policy(
+        principal_id=
+            f"customer-{customer_id}",
 
-            effect="Allow",
+        resources=
+            customer_resources,
 
-            principal_id="cloudmart-admin",
+        role="customer",
 
-            resources=admin_resources,
-
-            role="admin"
-        )
-
-
-    # ========================================================
-    # READ CUSTOMER TOKEN
-    # ========================================================
-
-    try:
-
-        customer_token = get_parameter_value(
-            CUSTOMER_PARAMETER_NAME
-        )
-
-    except Exception as error:
-
-        print(json.dumps({
-            "level": "ERROR",
-            "event": "customer_token_read",
-            "result": "configuration_error",
-            "error": str(error)
-        }))
-
-        raise Exception("Unauthorized")
-
-
-    # ========================================================
-    # CHECK CUSTOMER TOKEN
-    # ========================================================
-
-    if supplied_token == customer_token:
-
-        print(json.dumps({
-            "level": "INFO",
-            "event": "token_validation",
-            "result": "success",
-            "role": "customer",
-            "customerId": CUSTOMER_ID
-        }))
-
-
-        customer_resources = get_customer_resources(
-            method_arn
-        )
-
-
-        print(json.dumps({
-            "level": "INFO",
-            "event": "authorization",
-            "result": "allowed",
-            "role": "customer",
-            "customerId": CUSTOMER_ID,
-            "resources": customer_resources
-        }))
-
-
-        return generate_policy(
-
-            effect="Allow",
-
-            principal_id="cloudmart-customer",
-
-            resources=customer_resources,
-
-            role="customer",
-
-            customer_id=CUSTOMER_ID
-        )
-
-
-    # ========================================================
-    # INVALID TOKEN
-    # ========================================================
-
-    print(json.dumps({
-        "level": "WARN",
-        "event": "token_validation",
-        "result": "failure"
-    }))
-
-
-    raise Exception("Unauthorized")
+        customer_id=
+            customer_id
+    )

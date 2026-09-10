@@ -99,6 +99,48 @@ def get_db_connection():
 
 
 # ============================================================
+# AUTHORIZER CONTEXT
+# ============================================================
+
+def get_authorizer_context(event):
+
+    request_context = event.get("requestContext") or {}
+
+    authorizer = request_context.get("authorizer") or {}
+
+    return authorizer
+
+
+def get_authenticated_customer_id(event):
+
+    authorizer = get_authorizer_context(event)
+
+    customer_id = authorizer.get("customerId")
+
+    if customer_id is None:
+        return None
+
+    customer_id = str(customer_id).strip()
+
+    if not customer_id:
+        return None
+
+    return customer_id
+
+
+def get_authenticated_role(event):
+
+    authorizer = get_authorizer_context(event)
+
+    role = authorizer.get("role")
+
+    if role is None:
+        return None
+
+    return str(role).strip().lower()
+
+
+# ============================================================
 # EVENTBRIDGE
 # ============================================================
 
@@ -201,6 +243,7 @@ def validate_items(items):
             return False, "quantity is required"
 
         try:
+
             product_id = int(item["productId"])
             quantity = int(item["quantity"])
 
@@ -227,6 +270,10 @@ def create_order(event):
 
     connection = None
 
+    order_id = None
+    customer_id = None
+    failed_status_id = None
+
     try:
 
         logger.info(
@@ -234,6 +281,87 @@ def create_order(event):
                 "action": "order_creation_started"
             })
         )
+
+        # ----------------------------------------------------
+        # AUTHENTICATED USER
+        # ----------------------------------------------------
+
+        authenticated_customer_id = get_authenticated_customer_id(event)
+        authenticated_role = get_authenticated_role(event)
+
+        logger.info(
+            json.dumps({
+                "action": "authenticated_user",
+                "role": authenticated_role,
+                "customer_id": authenticated_customer_id
+            })
+        )
+
+        # ----------------------------------------------------
+        # CUSTOMER AUTHENTICATION CHECK
+        # ----------------------------------------------------
+
+        if authenticated_role == "customer":
+
+            if not authenticated_customer_id:
+
+                return response(
+                    403,
+                    {
+                        "message": "Authenticated customer identity not found"
+                    }
+                )
+
+            # Customer ID MUST come from authorizer context.
+            customer_id = authenticated_customer_id
+
+        elif authenticated_role == "admin":
+
+            # ------------------------------------------------
+            # ADMIN
+            # ------------------------------------------------
+            # Admin does not have a customerId in authorizer
+            # context, so admin can specify the customer ID
+            # in the request body.
+            # ------------------------------------------------
+
+            try:
+
+                request = get_request_body(event)
+
+            except json.JSONDecodeError:
+
+                return response(
+                    400,
+                    {
+                        "message": "Request body must contain valid JSON"
+                    }
+                )
+
+            customer_id = request.get("customerId")
+
+            if (
+                customer_id is None
+                or str(customer_id).strip() == ""
+            ):
+
+                return response(
+                    400,
+                    {
+                        "message": "customerId is required for admin requests"
+                    }
+                )
+
+            customer_id = str(customer_id).strip()
+
+        else:
+
+            return response(
+                403,
+                {
+                    "message": "Invalid or missing authorization context"
+                }
+            )
 
         # ----------------------------------------------------
         # READ BODY
@@ -252,14 +380,16 @@ def create_order(event):
                 }
             )
 
-        customer_id = request.get("customerId")
         items = request.get("items")
 
         # ----------------------------------------------------
-        # VALIDATE CUSTOMER
+        # CUSTOMER VALIDATION
         # ----------------------------------------------------
 
-        if customer_id is None or str(customer_id).strip() == "":
+        if (
+            customer_id is None
+            or str(customer_id).strip() == ""
+        ):
 
             return response(
                 400,
@@ -292,7 +422,7 @@ def create_order(event):
         with connection.cursor() as cursor:
 
             # =================================================
-            # GET PENDING / CONFIRMED / FAILED STATUS IDS
+            # GET ORDER STATUS IDS
             # =================================================
 
             cursor.execute(
@@ -311,17 +441,50 @@ def create_order(event):
             }
 
             if "PENDING" not in status_map:
-                raise Exception("PENDING order status not found")
+                raise Exception(
+                    "PENDING order status not found"
+                )
 
             if "CONFIRMED" not in status_map:
-                raise Exception("CONFIRMED order status not found")
+                raise Exception(
+                    "CONFIRMED order status not found"
+                )
 
             if "FAILED" not in status_map:
-                raise Exception("FAILED order status not found")
+                raise Exception(
+                    "FAILED order status not found"
+                )
 
             pending_status_id = status_map["PENDING"]
             confirmed_status_id = status_map["CONFIRMED"]
             failed_status_id = status_map["FAILED"]
+
+            # =================================================
+            # VERIFY CUSTOMER EXISTS
+            # =================================================
+
+            cursor.execute(
+                """
+                SELECT customer_id
+                FROM customers
+                WHERE customer_id = %s
+                  AND status = 'ACTIVE'
+                LIMIT 1
+                """,
+                (customer_id,)
+            )
+
+            customer = cursor.fetchone()
+
+            if not customer:
+
+                return response(
+                    404,
+                    {
+                        "message": "Customer not found or inactive",
+                        "customerId": customer_id
+                    }
+                )
 
             # =================================================
             # CREATE ORDER AS PENDING
@@ -351,9 +514,11 @@ def create_order(event):
 
             order_id = cursor.lastrowid
 
-            # Keep the order row if business processing fails.
-            # Item/inventory changes after this point can be rolled back.
-            cursor.execute("SAVEPOINT order_processing")
+            # Keep order row if business processing fails.
+            # Item/inventory changes can be rolled back.
+            cursor.execute(
+                "SAVEPOINT order_processing"
+            )
 
             total_amount = 0
             low_stock_products = []
@@ -548,6 +713,7 @@ def create_order(event):
                 "Low Stock Alert",
                 {
                     "orderId": order_id,
+                    "customerId": customer_id,
                     "productId": product["productId"],
                     "productName": product["productName"],
                     "oldStock": product["oldStock"],
@@ -574,12 +740,24 @@ def create_order(event):
 
     except ValueError as error:
 
-        # Business failure such as insufficient stock.
-        # Roll back order items/inventory changes, keep the order row,
-        # mark it FAILED, commit it, then publish OrderFailed.
-        if connection:
+        # ====================================================
+        # BUSINESS FAILURE
+        # ====================================================
+        # Example:
+        # Product not found
+        # Insufficient stock
+        # ====================================================
+
+        if (
+            connection
+            and order_id is not None
+            and failed_status_id is not None
+        ):
+
             try:
+
                 with connection.cursor() as cursor:
+
                     cursor.execute(
                         "ROLLBACK TO SAVEPOINT order_processing"
                     )
@@ -623,13 +801,16 @@ def create_order(event):
                 )
 
             except Exception as failure_handling_error:
+
                 connection.rollback()
 
                 logger.error(
                     json.dumps({
                         "action": "failed_order_persistence_error",
                         "order_id": order_id,
-                        "error": str(failure_handling_error)
+                        "error": str(
+                            failure_handling_error
+                        )
                     })
                 )
 
@@ -645,6 +826,7 @@ def create_order(event):
     except Exception as error:
 
         if connection:
+
             connection.rollback()
 
         logger.error(
@@ -665,6 +847,7 @@ def create_order(event):
     finally:
 
         if connection:
+
             connection.close()
 
 
@@ -678,7 +861,9 @@ def get_order_by_id(event):
 
     try:
 
-        path_parameters = event.get("pathParameters") or {}
+        path_parameters = event.get(
+            "pathParameters"
+        ) or {}
 
         order_id = path_parameters.get("id")
 
@@ -713,27 +898,89 @@ def get_order_by_id(event):
                 }
             )
 
+        # ----------------------------------------------------
+        # AUTHORIZER CONTEXT
+        # ----------------------------------------------------
+
+        customer_id = get_authenticated_customer_id(event)
+        role = get_authenticated_role(event)
+
+        if role not in ("customer", "admin"):
+
+            return response(
+                403,
+                {
+                    "message": "Invalid or missing authorization context"
+                }
+            )
+
         connection = get_db_connection()
 
         with connection.cursor() as cursor:
 
-            cursor.execute(
-                """
-                SELECT
-                    o.order_id,
-                    o.customer_id,
-                    o.total_amount,
-                    os.status_name AS status,
-                    o.failure_reason,
-                    o.created_at,
-                    o.updated_at
-                FROM orders o
-                INNER JOIN order_status os
-                    ON o.status_id = os.status_id
-                WHERE o.order_id = %s
-                """,
-                (order_id,)
-            )
+            # ------------------------------------------------
+            # CUSTOMER
+            # ------------------------------------------------
+            # Customer can only retrieve their own order.
+            # ------------------------------------------------
+
+            if role == "customer":
+
+                if not customer_id:
+
+                    return response(
+                        403,
+                        {
+                            "message":
+                            "Authenticated customer identity not found"
+                        }
+                    )
+
+                cursor.execute(
+                    """
+                    SELECT
+                        o.order_id,
+                        o.customer_id,
+                        o.total_amount,
+                        os.status_name AS status,
+                        o.failure_reason,
+                        o.created_at,
+                        o.updated_at
+                    FROM orders o
+                    INNER JOIN order_status os
+                        ON o.status_id = os.status_id
+                    WHERE o.order_id = %s
+                      AND o.customer_id = %s
+                    """,
+                    (
+                        order_id,
+                        customer_id
+                    )
+                )
+
+            # ------------------------------------------------
+            # ADMIN
+            # ------------------------------------------------
+
+            else:
+
+                cursor.execute(
+                    """
+                    SELECT
+                        o.order_id,
+                        o.customer_id,
+                        o.total_amount,
+                        os.status_name AS status,
+                        o.failure_reason,
+                        o.created_at,
+                        o.updated_at
+                    FROM orders o
+                    INNER JOIN order_status os
+                        ON o.status_id = os.status_id
+                    WHERE o.order_id = %s
+                    """,
+                    (order_id,)
+                )
 
             order = cursor.fetchone()
 
@@ -797,6 +1044,7 @@ def get_order_by_id(event):
     finally:
 
         if connection:
+
             connection.close()
 
 
@@ -814,20 +1062,76 @@ def get_orders_by_customer(event):
             event.get("queryStringParameters") or {}
         )
 
-        customer_id = query_parameters.get("customerId")
+        requested_customer_id = query_parameters.get(
+            "customerId"
+        )
 
-        if (
-            customer_id is None
-            or str(customer_id).strip() == ""
-        ):
+        authenticated_customer_id = (
+            get_authenticated_customer_id(event)
+        )
+
+        role = get_authenticated_role(event)
+
+        # ----------------------------------------------------
+        # AUTHORIZATION CHECK
+        # ----------------------------------------------------
+
+        if role not in ("customer", "admin"):
 
             return response(
-                400,
+                403,
                 {
-                    "message":
-                    "customerId query parameter is required"
+                    "message": "Invalid or missing authorization context"
                 }
             )
+
+        # ----------------------------------------------------
+        # CUSTOMER
+        # ----------------------------------------------------
+        # Ignore customerId supplied in URL.
+        # Always use customerId from authorizer.
+        # ----------------------------------------------------
+
+        if role == "customer":
+
+            if not authenticated_customer_id:
+
+                return response(
+                    403,
+                    {
+                        "message":
+                        "Authenticated customer identity not found"
+                    }
+                )
+
+            customer_id = authenticated_customer_id
+
+        # ----------------------------------------------------
+        # ADMIN
+        # ----------------------------------------------------
+
+        else:
+
+            if (
+                requested_customer_id is None
+                or str(requested_customer_id).strip() == ""
+            ):
+
+                return response(
+                    400,
+                    {
+                        "message":
+                        "customerId query parameter is required for admin requests"
+                    }
+                )
+
+            customer_id = str(
+                requested_customer_id
+            ).strip()
+
+        # ----------------------------------------------------
+        # DATABASE
+        # ----------------------------------------------------
 
         connection = get_db_connection()
 
@@ -883,6 +1187,7 @@ def get_orders_by_customer(event):
     finally:
 
         if connection:
+
             connection.close()
 
 
@@ -908,7 +1213,11 @@ def lambda_handler(event, context):
                 "action": "request_received",
                 "http_method": http_method,
                 "resource": resource,
-                "path": path
+                "path": path,
+                "authorizer": (
+                    event.get("requestContext", {})
+                    .get("authorizer", {})
+                )
             })
         )
 

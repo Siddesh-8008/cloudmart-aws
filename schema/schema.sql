@@ -58,3 +58,121 @@ CREATE TABLE IF NOT EXISTS order_items (
     CONSTRAINT fk_order_items_order FOREIGN KEY (order_id) REFERENCES orders(order_id) ON DELETE CASCADE,
     CONSTRAINT fk_order_items_product FOREIGN KEY (product_id) REFERENCES products(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+-- ============================================================
+-- CUSTOMERS
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS customers (
+
+    customer_id VARCHAR(100) NOT NULL,
+
+    name VARCHAR(255) NOT NULL,
+
+    email VARCHAR(255) NOT NULL,
+
+    status ENUM('ACTIVE', 'INACTIVE')
+        NOT NULL DEFAULT 'ACTIVE',
+
+    created_at TIMESTAMP
+        NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    updated_at TIMESTAMP
+        NOT NULL DEFAULT CURRENT_TIMESTAMP
+        ON UPDATE CURRENT_TIMESTAMP,
+
+    PRIMARY KEY (customer_id),
+
+    UNIQUE KEY uq_customers_email (email)
+
+) ENGINE=InnoDB
+DEFAULT CHARSET=utf8mb4
+COLLATE=utf8mb4_unicode_ci;
+
+
+-- ============================================================
+-- CUSTOMER AUTH TOKENS
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS customer_auth_tokens (
+
+    token_id BIGINT NOT NULL AUTO_INCREMENT,
+
+    customer_id VARCHAR(100) NOT NULL,
+
+    token_hash CHAR(64) NOT NULL,
+
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+
+    created_at TIMESTAMP
+        NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    expires_at TIMESTAMP NULL,
+
+    last_used_at TIMESTAMP NULL,
+
+    PRIMARY KEY (token_id),
+
+    UNIQUE KEY uq_customer_token_hash (token_hash),
+
+    KEY idx_customer_auth_customer (customer_id),
+
+    CONSTRAINT fk_customer_auth_customer
+        FOREIGN KEY (customer_id)
+        REFERENCES customers(customer_id)
+        ON DELETE CASCADE
+
+) ENGINE=InnoDB
+DEFAULT CHARSET=utf8mb4
+COLLATE=utf8mb4_unicode_ci;
+INSERT INTO customers
+(
+    customer_id,
+    name,
+    email,
+    status
+)
+VALUES
+(
+    'CUST001',
+    'Siddesh',
+    'siddesh@example.com',
+    'ACTIVE'
+),
+(
+    'CUST002',
+    'Rahul',
+    'rahul@example.com',
+    'ACTIVE'
+),
+(
+    'CUST003',
+    'Priya',
+    'priya@example.com',
+    'ACTIVE'
+)
+ON DUPLICATE KEY UPDATE
+    name = VALUES(name),
+    email = VALUES(email),
+    status = VALUES(status);
+    INSERT INTO customer_auth_tokens
+(
+    customer_id,
+    token_hash,
+    is_active
+)
+VALUES
+(
+    'CUST001',
+    SHA2('Xc4SvD_R0MCE9P2vjRXGyWXQeZ_52_QOUhh_fXlK5Hk', 256),
+    TRUE
+),
+(
+    'CUST002',
+    SHA2('GgGigYvglp6sclYCnY7bNOrK1WaJc_q6QrlZrLSQZmc', 256),
+    TRUE
+),
+(
+    'CUST003',
+    SHA2('xL_KsFGAs2p1toyPfZX0nXmm3Wy2HiAvntawIrqzemQ', 256),
+    TRUE
+);

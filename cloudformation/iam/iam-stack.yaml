@@ -92,10 +92,13 @@ Resources:
 
 
         # --------------------------------------------------------
-        # READ AUTH TOKEN FROM SSM
+        # READ ADMIN AUTH TOKEN FROM SSM
+        #
+        # Customer token is NO LONGER stored in SSM.
+        # Customer tokens are now validated using RDS.
         # --------------------------------------------------------
 
-        - PolicyName: AuthorizerReadAuthToken
+        - PolicyName: AuthorizerReadAdminAuthToken
 
           PolicyDocument:
             Version: '2012-10-17'
@@ -109,11 +112,74 @@ Resources:
 
                 Resource:
                   - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/auth/admin-token
-                  - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/auth/customer-token
-                
+
+
+        # --------------------------------------------------------
+        # READ DATABASE PARAMETERS FROM SSM
+        #
+        # The Authorizer Lambda needs these parameters to connect
+        # to the RDS MySQL database.
+        # --------------------------------------------------------
+
+        - PolicyName: AuthorizerReadDatabaseParameters
+
+          PolicyDocument:
+            Version: '2012-10-17'
+
+            Statement:
+
+              - Effect: Allow
+
+                Action:
+                  - ssm:GetParameter
+
+                Resource:
+
+                  # Database host
+                  - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/host
+
+                  # Database port
+                  - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/port
+
+                  # Database name
+                  - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/name
+
+                  # Database username
+                  - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/username
+
+                  # Database password
+                  - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/password
+
+
+        # --------------------------------------------------------
+        # KMS DECRYPT
+        #
+        # Required when the SSM SecureString parameters use
+        # encryption that requires KMS decrypt permission.
+        # --------------------------------------------------------
+
+        - PolicyName: AuthorizerReadSSMKMS
+
+          PolicyDocument:
+            Version: '2012-10-17'
+
+            Statement:
+
+              - Effect: Allow
+
+                Action:
+                  - kms:Decrypt
+
+                Resource:
+                  - !Sub arn:${AWS::Partition}:kms:${AWS::Region}:${AWS::AccountId}:key/*
+
 
         # --------------------------------------------------------
         # VPC ACCESS
+        #
+        # Lambda requires these permissions because the
+        # Authorizer Lambda runs inside the VPC and connects
+        # to RDS in the private subnet.
         # --------------------------------------------------------
 
         - PolicyName: AuthorizerVPCAccess

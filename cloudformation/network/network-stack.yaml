@@ -1,7 +1,9 @@
 AWSTemplateFormatVersion: '2010-09-09'
+
 Description: CloudMart network stack
 
 Parameters:
+
   Environment:
     Type: String
     AllowedValues:
@@ -15,6 +17,10 @@ Parameters:
 
 Resources:
 
+  # ============================================================
+  # VPC
+  # ============================================================
+
   VPC:
     Type: AWS::EC2::VPC
     Properties:
@@ -25,6 +31,10 @@ Resources:
         - Key: Name
           Value: !Sub CloudMart-${Environment}-vpc
 
+
+  # ============================================================
+  # INTERNET GATEWAY
+  # ============================================================
 
   InternetGateway:
     Type: AWS::EC2::InternetGateway
@@ -41,6 +51,10 @@ Resources:
       InternetGatewayId: !Ref InternetGateway
 
 
+  # ============================================================
+  # PUBLIC SUBNET
+  # ============================================================
+
   PublicSubnetA:
     Type: AWS::EC2::Subnet
     Properties:
@@ -55,6 +69,10 @@ Resources:
         - Key: Name
           Value: !Sub CloudMart-${Environment}-public-a
 
+
+  # ============================================================
+  # PRIVATE SUBNET A
+  # ============================================================
 
   PrivateSubnetA:
     Type: AWS::EC2::Subnet
@@ -71,6 +89,10 @@ Resources:
           Value: !Sub CloudMart-${Environment}-private-a
 
 
+  # ============================================================
+  # PRIVATE SUBNET B
+  # ============================================================
+
   PrivateSubnetB:
     Type: AWS::EC2::Subnet
     Properties:
@@ -85,6 +107,10 @@ Resources:
         - Key: Name
           Value: !Sub CloudMart-${Environment}-private-b
 
+
+  # ============================================================
+  # PUBLIC ROUTE TABLE
+  # ============================================================
 
   PublicRouteTable:
     Type: AWS::EC2::RouteTable
@@ -111,6 +137,10 @@ Resources:
       SubnetId: !Ref PublicSubnetA
 
 
+  # ============================================================
+  # PRIVATE ROUTE TABLE
+  # ============================================================
+
   PrivateRouteTable:
     Type: AWS::EC2::RouteTable
     Properties:
@@ -134,6 +164,10 @@ Resources:
       SubnetId: !Ref PrivateSubnetB
 
 
+  # ============================================================
+  # VPC ENDPOINT SECURITY GROUP
+  # ============================================================
+
   EndpointSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
@@ -143,6 +177,10 @@ Resources:
         - Key: Name
           Value: !Sub CloudMart-${Environment}-endpoint-sg
 
+
+  # ============================================================
+  # LAMBDA SECURITY GROUP
+  # ============================================================
 
   LambdaSecurityGroup:
     Type: AWS::EC2::SecurityGroup
@@ -154,6 +192,10 @@ Resources:
           Value: !Sub CloudMart-${Environment}-lambda-sg
 
 
+  # ============================================================
+  # EC2 SECURITY GROUP
+  # ============================================================
+
   EC2SecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
@@ -164,6 +206,10 @@ Resources:
           Value: !Sub CloudMart-${Environment}-ec2-sg
 
 
+  # ============================================================
+  # RDS SECURITY GROUP
+  # ============================================================
+
   RDSSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
@@ -173,6 +219,10 @@ Resources:
         - Key: Name
           Value: !Sub CloudMart-${Environment}-rds-sg
 
+
+  # ============================================================
+  # ENDPOINT SECURITY GROUP RULES
+  # ============================================================
 
   EndpointFromLambdaIngress:
     Type: AWS::EC2::SecurityGroupIngress
@@ -205,6 +255,10 @@ Resources:
       Description: Endpoint response traffic
 
 
+  # ============================================================
+  # LAMBDA SECURITY GROUP RULES
+  # ============================================================
+
   LambdaToRDS:
     Type: AWS::EC2::SecurityGroupEgress
     Properties:
@@ -226,6 +280,10 @@ Resources:
       DestinationSecurityGroupId: !Ref EndpointSecurityGroup
       Description: Lambda to VPC endpoints
 
+
+  # ============================================================
+  # EC2 SECURITY GROUP RULES
+  # ============================================================
 
   EC2ToRDS:
     Type: AWS::EC2::SecurityGroupEgress
@@ -260,6 +318,10 @@ Resources:
       Description: Operations team HTTPS access
 
 
+  # ============================================================
+  # RDS SECURITY GROUP RULES
+  # ============================================================
+
   RDSFromLambdaIngress:
     Type: AWS::EC2::SecurityGroupIngress
     Properties:
@@ -291,6 +353,10 @@ Resources:
       Description: RDS outbound traffic
 
 
+  # ============================================================
+  # S3 GATEWAY ENDPOINT
+  # ============================================================
+
   S3Endpoint:
     Type: AWS::EC2::VPCEndpoint
     Properties:
@@ -300,6 +366,10 @@ Resources:
       RouteTableIds:
         - !Ref PrivateRouteTable
 
+
+  # ============================================================
+  # SNS INTERFACE ENDPOINT
+  # ============================================================
 
   SNSEndpoint:
     Type: AWS::EC2::VPCEndpoint
@@ -315,6 +385,10 @@ Resources:
         - !Ref EndpointSecurityGroup
 
 
+  # ============================================================
+  # CLOUDWATCH LOGS INTERFACE ENDPOINT
+  # ============================================================
+
   LogsEndpoint:
     Type: AWS::EC2::VPCEndpoint
     Properties:
@@ -328,6 +402,10 @@ Resources:
       SecurityGroupIds:
         - !Ref EndpointSecurityGroup
 
+
+  # ============================================================
+  # CLOUDWATCH MONITORING INTERFACE ENDPOINT
+  # ============================================================
 
   MonitoringEndpoint:
     Type: AWS::EC2::VPCEndpoint
@@ -343,6 +421,10 @@ Resources:
         - !Ref EndpointSecurityGroup
 
 
+  # ============================================================
+  # SSM INTERFACE ENDPOINT
+  # ============================================================
+
   SSMEndpoint:
     Type: AWS::EC2::VPCEndpoint
     Properties:
@@ -357,6 +439,30 @@ Resources:
         - !Ref EndpointSecurityGroup
 
 
+  # ============================================================
+  # KMS INTERFACE ENDPOINT
+  # Required for private Lambda access to KMS
+  # when decrypting SecureString SSM parameters.
+  # ============================================================
+
+  KMSEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref VPC
+      VpcEndpointType: Interface
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.kms
+      PrivateDnsEnabled: true
+      SubnetIds:
+        - !Ref PrivateSubnetA
+        - !Ref PrivateSubnetB
+      SecurityGroupIds:
+        - !Ref EndpointSecurityGroup
+
+
+  # ============================================================
+  # EVENTBRIDGE INTERFACE ENDPOINT
+  # ============================================================
+
   EventBridgeEndpoint:
     Type: AWS::EC2::VPCEndpoint
     Properties:
@@ -370,6 +476,10 @@ Resources:
       SecurityGroupIds:
         - !Ref EndpointSecurityGroup
 
+
+# ==============================================================
+# OUTPUTS
+# ==============================================================
 
 Outputs:
 
@@ -427,3 +537,5 @@ Outputs:
     Value: !Ref EndpointSecurityGroup
     Export:
       Name: !Sub CloudMart-${Environment}-EndpointSecurityGroupId
+
+
