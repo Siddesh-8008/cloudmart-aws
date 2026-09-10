@@ -13,10 +13,6 @@ Parameters:
       - dev
       - prod
 
-  AuthorizerSubnetIds:
-    Type: CommaDelimitedList
-    Description: Private subnet IDs for the Lambda Authorizer
-
   LambdaSecurityGroupId:
     Type: AWS::EC2::SecurityGroup::Id
     Description: Security group for the Lambda Authorizer
@@ -52,48 +48,91 @@ Parameters:
 Resources:
 
   # ============================================================
-  # LAMBDA AUTHORIZE FUNCTION
+  # LAMBDA AUTHORIZER FUNCTION
   # ============================================================
 
   LambdaAuthorizer:
     Type: AWS::Lambda::Function
 
     Properties:
-      FunctionName: !Sub CloudMart-${Environment}-authorizer
 
-      Description: CloudMart Bearer Token Lambda Authorizer
+      FunctionName:
+        !Sub CloudMart-${Environment}-authorizer
 
-      Runtime: python3.13
+      Description:
+        CloudMart Bearer Token Lambda Authorizer
 
-      Handler: index.handler
+      Runtime:
+        python3.13
 
-      # Use the role created by the IAM stack
+      Handler:
+        index.handler
+
+      # --------------------------------------------------------
+      # IAM ROLE
+      # --------------------------------------------------------
+
       Role:
-        Fn::ImportValue: !Sub CloudMart-${Environment}-AuthorizerLambdaRoleArn
+        Fn::ImportValue:
+          !Sub CloudMart-${Environment}-AuthorizerLambdaRoleArn
 
-      Timeout: 10
+      Timeout:
+        10
 
-      MemorySize: 128
+      MemorySize:
+        128
+
+      # --------------------------------------------------------
+      # VPC CONFIGURATION
+      #
+      # IMPORTANT:
+      # Private subnet IDs are imported from the Network Stack.
+      # We no longer pass old subnet IDs manually.
+      # --------------------------------------------------------
 
       VpcConfig:
-        SubnetIds: !Ref AuthorizerSubnetIds
+
+        SubnetIds:
+
+          - Fn::ImportValue:
+              Fn::Sub: CloudMart-${Environment}-PrivateSubnetAId
+
+          - Fn::ImportValue:
+              Fn::Sub: CloudMart-${Environment}-PrivateSubnetBId
+
         SecurityGroupIds:
+
           - !Ref LambdaSecurityGroupId
 
+      # --------------------------------------------------------
+      # ENVIRONMENT VARIABLES
+      # --------------------------------------------------------
+
       Environment:
+
         Variables:
-          ENVIRONMENT: !Ref Environment
+
+          ENVIRONMENT:
+            !Ref Environment
 
           # Admin token SSM parameter
-          ADMIN_AUTH_TOKEN_PARAMETER: !Ref AdminAuthTokenParameterName
+          ADMIN_AUTH_TOKEN_PARAMETER:
+            !Ref AdminAuthTokenParameterName
 
           # Customer token SSM parameter
-          CUSTOMER_AUTH_TOKEN_PARAMETER: !Ref CustomerAuthTokenParameterName
+          CUSTOMER_AUTH_TOKEN_PARAMETER:
+            !Ref CustomerAuthTokenParameterName
 
-          # Customer ID is separate from the token
-          CUSTOMER_ID: !Ref CustomerId
+          # Customer ID associated with customer token
+          CUSTOMER_ID:
+            !Ref CustomerId
+
+      # --------------------------------------------------------
+      # INLINE LAMBDA CODE
+      # --------------------------------------------------------
 
       Code:
+
         ZipFile: |
 
           import json
@@ -138,9 +177,11 @@ Resources:
           ):
 
               response = {
+
                   "principalId": principal_id,
 
                   "policyDocument": {
+
                       "Version": "2012-10-17",
 
                       "Statement": [
@@ -157,12 +198,10 @@ Resources:
                   }
               }
 
-
               # Add customer ID only for customer role
               if customer_id:
 
                   response["context"]["customerId"] = customer_id
-
 
               return response
 
@@ -336,30 +375,40 @@ Resources:
               raise Exception("Unauthorized")
 
 
+# ================================================================
+# OUTPUTS
+# ================================================================
+
 Outputs:
 
   # ============================================================
-  # AUTHORIZE LAMBDA ARN
+  # AUTHORIZER LAMBDA ARN
   # ============================================================
 
   AuthorizerLambdaArn:
     Description: ARN of the CloudMart Lambda Authorizer
-    Value: !GetAtt LambdaAuthorizer.Arn
+
+    Value:
+      !GetAtt LambdaAuthorizer.Arn
 
     Export:
-      Name: !Sub CloudMart-${Environment}-AuthorizerLambdaArn
+      Name:
+        !Sub CloudMart-${Environment}-AuthorizerLambdaArn
 
 
   # ============================================================
-  # AUTHORIZE LAMBDA NAME
+  # AUTHORIZER LAMBDA NAME
   # ============================================================
 
   AuthorizerLambdaName:
     Description: Name of the CloudMart Lambda Authorizer
-    Value: !Ref LambdaAuthorizer
+
+    Value:
+      !Ref LambdaAuthorizer
 
     Export:
-      Name: !Sub CloudMart-${Environment}-AuthorizerLambdaName
+      Name:
+        !Sub CloudMart-${Environment}-AuthorizerLambdaName
 
 
   # ============================================================
@@ -368,7 +417,9 @@ Outputs:
 
   AdminAuthTokenParameter:
     Description: SSM parameter used by the Lambda Authorizer for admin authentication
-    Value: !Ref AdminAuthTokenParameterName
+
+    Value:
+      !Ref AdminAuthTokenParameterName
 
 
   # ============================================================
@@ -377,7 +428,9 @@ Outputs:
 
   CustomerAuthTokenParameter:
     Description: SSM parameter used by the Lambda Authorizer for customer authentication
-    Value: !Ref CustomerAuthTokenParameterName
+
+    Value:
+      !Ref CustomerAuthTokenParameterName
 
 
   # ============================================================
@@ -386,4 +439,6 @@ Outputs:
 
   CustomerId:
     Description: Customer ID associated with the customer token
-    Value: !Ref CustomerId
+
+    Value:
+      !Ref CustomerId
