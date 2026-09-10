@@ -6,6 +6,7 @@ Description: >
   Admin authentication is handled using SSM.
   Customer authentication is handled using RDS MySQL.
 
+
 Parameters:
 
   # ============================================================
@@ -15,17 +16,11 @@ Parameters:
   Environment:
     Type: String
     Default: dev
+
     AllowedValues:
       - dev
       - prod
 
-  # ============================================================
-  # AUTHORIZE LAMBDA SUBNETS
-  # ============================================================
-
-  AuthorizerSubnetIds:
-    Type: CommaDelimitedList
-    Description: Private subnet IDs for the Lambda Authorizer
 
   # ============================================================
   # LAMBDA SECURITY GROUP
@@ -35,6 +30,7 @@ Parameters:
     Type: AWS::EC2::SecurityGroup::Id
     Description: Security group for the Lambda Authorizer
 
+
   # ============================================================
   # ADMIN TOKEN
   # ============================================================
@@ -42,7 +38,11 @@ Parameters:
   AdminAuthTokenParameterName:
     Type: String
     Default: /cloudmart/dev/auth/admin-token
-    Description: SSM SecureString containing the CloudMart admin authentication token
+
+    Description: >
+      SSM SecureString containing the CloudMart
+      admin authentication token
+
 
   # ============================================================
   # DATABASE PARAMETERS
@@ -51,36 +51,65 @@ Parameters:
   DBHostParameter:
     Type: String
     Default: /cloudmart/dev/db/host
-    Description: SSM parameter containing the RDS database host
+
+    Description: >
+      SSM parameter containing the RDS database host
+
 
   DBPortParameter:
     Type: String
     Default: /cloudmart/dev/db/port
-    Description: SSM parameter containing the RDS database port
+
+    Description: >
+      SSM parameter containing the RDS database port
+
 
   DBNameParameter:
     Type: String
     Default: /cloudmart/dev/db/name
-    Description: SSM parameter containing the RDS database name
+
+    Description: >
+      SSM parameter containing the RDS database name
+
 
   DBUsernameParameter:
     Type: String
     Default: /cloudmart/dev/db/username
-    Description: SSM parameter containing the RDS database username
+
+    Description: >
+      SSM parameter containing the RDS database username
+
 
   DBPasswordParameter:
     Type: String
     Default: /cloudmart/dev/db/password
-    Description: SSM SecureString containing the RDS database password
+
+    Description: >
+      SSM SecureString containing the RDS database password
+
 
   # ============================================================
-  # PYMYSQL LAYER
+  # LAMBDA ARTIFACT BUCKET
   # ============================================================
 
-  AuthorizerLayerArn:
+  LambdaArtifactBucketName:
     Type: String
-    Description: ARN of the Lambda Layer containing PyMySQL
-    MinLength: 1
+
+    Description: >
+      S3 bucket containing the packaged Authorizer Lambda ZIP
+
+
+  # ============================================================
+  # LAMBDA ARTIFACT KEY
+  # ============================================================
+
+  LambdaArtifactKey:
+    Type: String
+    Default: authorizer/authorizer.zip
+
+    Description: >
+      S3 object key containing the Authorizer Lambda ZIP
+
 
 Resources:
 
@@ -93,7 +122,8 @@ Resources:
 
     Properties:
 
-      FunctionName: !Sub CloudMart-${Environment}-authorizer
+      FunctionName:
+        !Sub CloudMart-${Environment}-authorizer
 
       Description: >
         CloudMart Lambda Authorizer.
@@ -104,12 +134,15 @@ Resources:
 
       Handler: index.handler
 
+
       # ========================================================
       # IAM ROLE
       # ========================================================
 
       Role:
-        Fn::ImportValue: !Sub CloudMart-${Environment}-AuthorizerLambdaRoleArn
+        Fn::ImportValue:
+          !Sub CloudMart-${Environment}-AuthorizerLambdaRoleArn
+
 
       # ========================================================
       # LAMBDA CONFIGURATION
@@ -119,16 +152,28 @@ Resources:
 
       MemorySize: 128
 
+
       # ========================================================
       # VPC CONFIGURATION
+      #
+      # Private subnets are imported directly from the
+      # Network Stack.
       # ========================================================
 
       VpcConfig:
 
-        SubnetIds: !Ref AuthorizerSubnetIds
+        SubnetIds:
+
+          - Fn::ImportValue:
+              !Sub CloudMart-${Environment}-PrivateSubnetAId
+
+          - Fn::ImportValue:
+              !Sub CloudMart-${Environment}-PrivateSubnetBId
 
         SecurityGroupIds:
+
           - !Ref LambdaSecurityGroupId
+
 
       # ========================================================
       # ENVIRONMENT VARIABLES
@@ -138,8 +183,13 @@ Resources:
 
         Variables:
 
+          # ----------------------------------------------------
+          # ENVIRONMENT
+          # ----------------------------------------------------
+
           ENVIRONMENT:
             !Ref Environment
+
 
           # ----------------------------------------------------
           # ADMIN TOKEN
@@ -147,6 +197,7 @@ Resources:
 
           ADMIN_AUTH_TOKEN_PARAMETER:
             !Ref AdminAuthTokenParameterName
+
 
           # ----------------------------------------------------
           # RDS DATABASE PARAMETERS
@@ -167,526 +218,21 @@ Resources:
           DB_PASSWORD_PARAMETER:
             !Ref DBPasswordParameter
 
-      # ========================================================
-      # PYMYSQL LAYER
-      # ========================================================
-
-      Layers:
-        - !Ref AuthorizerLayerArn
 
       # ========================================================
-      # INLINE LAMBDA CODE
+      # LAMBDA CODE
+      #
+      # PyMySQL is packaged inside the ZIP artifact.
+      # No Lambda Layer is required.
       # ========================================================
 
       Code:
 
-        ZipFile: |
-
-          import json
-          import os
-          import hashlib
-          import hmac
-          from datetime import datetime, timezone
-
-          import boto3
-          import pymysql
-
-
-          # ============================================================
-          # AWS CLIENTS
-          # ============================================================
-
-          ssm = boto3.client("ssm")
-
-
-          # ============================================================
-          # ENVIRONMENT VARIABLES
-          # ============================================================
-
-          ADMIN_PARAMETER_NAME = os.environ[
-              "ADMIN_AUTH_TOKEN_PARAMETER"
-          ]
-
-          DB_HOST_PARAMETER = os.environ[
-              "DB_HOST_PARAMETER"
-          ]
-
-          DB_PORT_PARAMETER = os.environ[
-              "DB_PORT_PARAMETER"
-          ]
-
-          DB_NAME_PARAMETER = os.environ[
-              "DB_NAME_PARAMETER"
-          ]
-
-          DB_USERNAME_PARAMETER = os.environ[
-              "DB_USERNAME_PARAMETER"
-          ]
-
-          DB_PASSWORD_PARAMETER = os.environ[
-              "DB_PASSWORD_PARAMETER"
-          ]
-
-
-          # ============================================================
-          # GET SSM PARAMETER
-          # ============================================================
-
-          def get_parameter_value(parameter_name):
-
-              parameter = ssm.get_parameter(
-                  Name=parameter_name,
-                  WithDecryption=True
-              )
-
-              return parameter["Parameter"]["Value"]
-
-
-          # ============================================================
-          # DATABASE CONNECTION
-          # ============================================================
-
-          def get_db_connection():
-
-              db_host = get_parameter_value(
-                  DB_HOST_PARAMETER
-              )
-
-              db_port = int(
-                  get_parameter_value(
-                      DB_PORT_PARAMETER
-                  )
-              )
-
-              db_name = get_parameter_value(
-                  DB_NAME_PARAMETER
-              )
-
-              db_username = get_parameter_value(
-                  DB_USERNAME_PARAMETER
-              )
-
-              db_password = get_parameter_value(
-                  DB_PASSWORD_PARAMETER
-              )
-
-              return pymysql.connect(
-                  host=db_host,
-                  port=db_port,
-                  user=db_username,
-                  password=db_password,
-                  database=db_name,
-                  connect_timeout=5,
-                  cursorclass=pymysql.cursors.DictCursor,
-                  charset="utf8mb4",
-                  autocommit=False
-              )
-
-
-          # ============================================================
-          # HASH CUSTOMER TOKEN
-          # ============================================================
-
-          def hash_token(token):
-
-              return hashlib.sha256(
-                  token.encode("utf-8")
-              ).hexdigest()
-
-
-          # ============================================================
-          # FIND CUSTOMER FROM RDS
-          # ============================================================
-
-          def find_customer_by_token(supplied_token):
-
-              token_hash = hash_token(
-                  supplied_token
-              )
-
-              connection = None
-
-              try:
-
-                  connection = get_db_connection()
-
-                  with connection.cursor() as cursor:
-
-                      sql = """
-                          SELECT
-                              c.customer_id,
-                              c.name,
-                              c.email,
-                              c.status,
-                              t.token_id,
-                              t.is_active,
-                              t.expires_at
-                          FROM customer_auth_tokens t
-                          INNER JOIN customers c
-                              ON c.customer_id = t.customer_id
-                          WHERE t.token_hash = %s
-                            AND t.is_active = TRUE
-                            AND c.status = 'ACTIVE'
-                          LIMIT 1
-                      """
-
-                      cursor.execute(
-                          sql,
-                          (token_hash,)
-                      )
-
-                      customer = cursor.fetchone()
-
-
-                      # ------------------------------------------------
-                      # CUSTOMER/TOKEN NOT FOUND
-                      # ------------------------------------------------
-
-                      if not customer:
-
-                          return None
-
-
-                      # ------------------------------------------------
-                      # CHECK TOKEN EXPIRATION
-                      # ------------------------------------------------
-
-                      if customer["expires_at"] is not None:
-
-                          expires_at = customer["expires_at"]
-
-                          if expires_at.tzinfo is None:
-
-                              current_time = datetime.now()
-
-                          else:
-
-                              current_time = datetime.now(
-                                  timezone.utc
-                              )
-
-                          if expires_at <= current_time:
-
-                              print(json.dumps({
-                                  "level": "WARN",
-                                  "event": "customer_token_validation",
-                                  "result": "expired"
-                              }))
-
-                              return None
-
-
-                      # ------------------------------------------------
-                      # UPDATE LAST USED TIME
-                      # ------------------------------------------------
-
-                      update_sql = """
-                          UPDATE customer_auth_tokens
-                          SET last_used_at = CURRENT_TIMESTAMP
-                          WHERE token_id = %s
-                      """
-
-                      cursor.execute(
-                          update_sql,
-                          (customer["token_id"],)
-                      )
-
-                      connection.commit()
-
-                      return customer
-
-              finally:
-
-                  if connection:
-
-                      connection.close()
-
-
-          # ============================================================
-          # GENERATE API GATEWAY POLICY
-          # ============================================================
-
-          def generate_policy(
-              effect,
-              principal_id,
-              method_arn,
-              role,
-              customer_id=None
-          ):
-
-              response = {
-
-                  "principalId": principal_id,
-
-                  "policyDocument": {
-
-                      "Version": "2012-10-17",
-
-                      "Statement": [
-
-                          {
-
-                              "Action": "execute-api:Invoke",
-
-                              "Effect": effect,
-
-                              "Resource": method_arn
-
-                          }
-
-                      ]
-
-                  },
-
-                  "context": {
-
-                      "role": role
-
-                  }
-
-              }
-
-
-              # --------------------------------------------------------
-              # ADD CUSTOMER ID
-              # --------------------------------------------------------
-
-              if customer_id:
-
-                  response["context"]["customerId"] = (
-                      customer_id
-                  )
-
-
-              return response
-
-
-          # ============================================================
-          # MAIN HANDLER
-          # ============================================================
-
-          def handler(event, context):
-
-              method_arn = event.get(
-                  "methodArn",
-                  "*"
-              )
-
-              authorization_token = event.get(
-                  "authorizationToken"
-              )
-
-
-              # ========================================================
-              # MISSING AUTHORIZATION HEADER
-              # ========================================================
-
-              if not authorization_token:
-
-                  print(json.dumps({
-
-                      "level": "WARN",
-
-                      "event": "token_validation",
-
-                      "result": "missing"
-
-                  }))
-
-                  raise Exception("Unauthorized")
-
-
-              # ========================================================
-              # VALIDATE BEARER FORMAT
-              # ========================================================
-
-              if not authorization_token.startswith(
-                  "Bearer "
-              ):
-
-                  print(json.dumps({
-
-                      "level": "WARN",
-
-                      "event": "token_validation",
-
-                      "result": "invalid_format"
-
-                  }))
-
-                  raise Exception("Unauthorized")
-
-
-              # ========================================================
-              # EXTRACT TOKEN
-              # ========================================================
-
-              supplied_token = authorization_token[
-                  7:
-              ].strip()
-
-
-              # ========================================================
-              # EMPTY TOKEN
-              # ========================================================
-
-              if not supplied_token:
-
-                  print(json.dumps({
-
-                      "level": "WARN",
-
-                      "event": "token_validation",
-
-                      "result": "empty"
-
-                  }))
-
-                  raise Exception("Unauthorized")
-
-
-              # ========================================================
-              # CHECK ADMIN TOKEN FROM SSM
-              # ========================================================
-
-              try:
-
-                  admin_token = get_parameter_value(
-                      ADMIN_PARAMETER_NAME
-                  )
-
-              except Exception as error:
-
-                  print(json.dumps({
-
-                      "level": "ERROR",
-
-                      "event": "admin_token_read",
-
-                      "result": "configuration_error",
-
-                      "error": str(error)
-
-                  }))
-
-                  raise Exception("Unauthorized")
-
-
-              # ========================================================
-              # ADMIN TOKEN MATCH
-              # ========================================================
-
-              if hmac.compare_digest(
-                  supplied_token,
-                  admin_token
-              ):
-
-                  print(json.dumps({
-
-                      "level": "INFO",
-
-                      "event": "token_validation",
-
-                      "result": "success",
-
-                      "role": "admin"
-
-                  }))
-
-                  return generate_policy(
-
-                      "Allow",
-
-                      "cloudmart-admin",
-
-                      method_arn,
-
-                      "admin"
-
-                  )
-
-
-              # ========================================================
-              # CHECK CUSTOMER TOKEN IN RDS
-              # ========================================================
-
-              try:
-
-                  customer = find_customer_by_token(
-                      supplied_token
-                  )
-
-              except Exception as error:
-
-                  print(json.dumps({
-
-                      "level": "ERROR",
-
-                      "event": "customer_token_validation",
-
-                      "result": "database_error",
-
-                      "error": str(error)
-
-                  }))
-
-                  raise Exception("Unauthorized")
-
-
-              # ========================================================
-              # CUSTOMER TOKEN MATCH
-              # ========================================================
-
-              if customer:
-
-                  customer_id = customer[
-                      "customer_id"
-                  ]
-
-                  print(json.dumps({
-
-                      "level": "INFO",
-
-                      "event": "token_validation",
-
-                      "result": "success",
-
-                      "role": "customer",
-
-                      "customerId": customer_id
-
-                  }))
-
-                  return generate_policy(
-
-                      "Allow",
-
-                      f"customer-{customer_id}",
-
-                      method_arn,
-
-                      "customer",
-
-                      customer_id
-
-                  )
-
-
-              # ========================================================
-              # INVALID TOKEN
-              # ========================================================
-
-              print(json.dumps({
-
-                  "level": "WARN",
-
-                  "event": "token_validation",
-
-                  "result": "failure"
-
-              }))
-
-              raise Exception("Unauthorized")
+        S3Bucket:
+          !Ref LambdaArtifactBucketName
+
+        S3Key:
+          !Ref LambdaArtifactKey
 
 
   # ============================================================
@@ -700,9 +246,11 @@ Resources:
 
       Action: lambda:InvokeFunction
 
-      FunctionName: !Ref LambdaAuthorizer
+      FunctionName:
+        !Ref LambdaAuthorizer
 
-      Principal: apigateway.amazonaws.com
+      Principal:
+        apigateway.amazonaws.com
 
       SourceArn:
         !Sub >
@@ -715,19 +263,22 @@ Resources:
 
 Outputs:
 
+
   # ============================================================
   # AUTHORIZER LAMBDA ARN
   # ============================================================
 
   AuthorizerLambdaArn:
 
-    Description: ARN of the CloudMart Lambda Authorizer
+    Description:
+      ARN of the CloudMart Lambda Authorizer
 
-    Value: !GetAtt LambdaAuthorizer.Arn
+    Value:
+      !GetAtt LambdaAuthorizer.Arn
 
     Export:
-
-      Name: !Sub CloudMart-${Environment}-AuthorizerLambdaArn
+      Name:
+        !Sub CloudMart-${Environment}-AuthorizerLambdaArn
 
 
   # ============================================================
@@ -736,13 +287,15 @@ Outputs:
 
   AuthorizerLambdaName:
 
-    Description: Name of the CloudMart Lambda Authorizer
+    Description:
+      Name of the CloudMart Lambda Authorizer
 
-    Value: !Ref LambdaAuthorizer
+    Value:
+      !Ref LambdaAuthorizer
 
     Export:
-
-      Name: !Sub CloudMart-${Environment}-AuthorizerLambdaName
+      Name:
+        !Sub CloudMart-${Environment}-AuthorizerLambdaName
 
 
   # ============================================================
@@ -751,9 +304,11 @@ Outputs:
 
   AdminAuthTokenParameter:
 
-    Description: SSM parameter used for admin authentication
+    Description:
+      SSM parameter used for admin authentication
 
-    Value: !Ref AdminAuthTokenParameterName
+    Value:
+      !Ref AdminAuthTokenParameterName
 
 
   # ============================================================
@@ -762,9 +317,11 @@ Outputs:
 
   DBHostParameter:
 
-    Description: SSM parameter containing the RDS host
+    Description:
+      SSM parameter containing the RDS host
 
-    Value: !Ref DBHostParameter
+    Value:
+      !Ref DBHostParameter
 
 
   # ============================================================
@@ -773,7 +330,9 @@ Outputs:
 
   DBNameParameter:
 
-    Description: SSM parameter containing the RDS database name
+    Description:
+      SSM parameter containing the RDS database name
 
-    Value: !Ref DBNameParameter
+    Value:
+      !Ref DBNameParameter
 

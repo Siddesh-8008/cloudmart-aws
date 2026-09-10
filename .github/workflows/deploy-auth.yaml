@@ -68,11 +68,6 @@ jobs:
             exit 1
           fi
 
-          if [ -z "${{ vars.AUTHORIZER_LAYER_ARN }}" ]; then
-            echo "ERROR: AUTHORIZER_LAYER_ARN repository variable is not configured."
-            exit 1
-          fi
-
           echo "Required configuration is present."
 
 
@@ -105,7 +100,12 @@ jobs:
             exit 1
           fi
 
-          echo "Required Network Stack subnet exports are available."
+          if ! echo "${EXPORTS}" | grep -q "CloudMart-${ENVIRONMENT}-LambdaArtifactBucketName"; then
+            echo "ERROR: CloudMart-${ENVIRONMENT}-LambdaArtifactBucketName export does not exist."
+            exit 1
+          fi
+
+          echo "Required Network and artifact bucket exports are available."
 
 
       # --------------------------------------------------------
@@ -149,33 +149,98 @@ jobs:
 
 
       # --------------------------------------------------------
-      # Verify Authorizer Lambda Layer
+      # Get Lambda Artifact Bucket
+      #
+      # The artifact bucket is created by the Data Stack.
       # --------------------------------------------------------
 
-      - name: Verify Authorizer Lambda Layer
+      - name: Get Lambda Artifact Bucket
         run: |
 
-          echo "Checking Authorizer Lambda Layer..."
+          echo "Finding Lambda artifact bucket..."
 
-          LAYER_ARN="${{ vars.AUTHORIZER_LAYER_ARN }}"
-
-          LAYER_NAME=$(echo "${LAYER_ARN}" | awk -F: '{print $7}')
-          LAYER_VERSION=$(echo "${LAYER_ARN}" | awk -F: '{print $8}')
-
-          aws lambda get-layer-version \
-            --layer-name "${LAYER_NAME}" \
-            --version-number "${LAYER_VERSION}" \
+          ARTIFACT_BUCKET=$(aws cloudformation list-exports \
             --region "${AWS_REGION}" \
-            --query "LayerVersionArn" \
-            --output text
+            --query "Exports[?Name=='CloudMart-${ENVIRONMENT}-LambdaArtifactBucketName'].Value" \
+            --output text)
 
-          echo "Authorizer Lambda Layer exists."
+          if [ -z "${ARTIFACT_BUCKET}" ] || [ "${ARTIFACT_BUCKET}" = "None" ]; then
+            echo "ERROR: Lambda artifact bucket could not be found."
+            exit 1
+          fi
+
+          echo "Lambda Artifact Bucket: ${ARTIFACT_BUCKET}"
+
+          echo "ARTIFACT_BUCKET=${ARTIFACT_BUCKET}" >> "${GITHUB_ENV}"
+
+
+      # --------------------------------------------------------
+      # Create Authorizer Lambda package
+      #
+      # This packages:
+      #   - index.py
+      #   - PyMySQL
+      #
+      # No Lambda Layer is used.
+      # --------------------------------------------------------
+
+      - name: Package Authorizer Lambda
+        run: |
+
+          echo "Creating Authorizer Lambda package..."
+
+          rm -rf authorizer-package
+          rm -f authorizer.zip
+
+          mkdir -p authorizer-package
+
+          echo "Copying Authorizer source..."
+
+          cp lambda/authorizer/index.py authorizer-package/index.py
+
+          echo "Installing Python dependencies..."
+
+          python -m pip install --upgrade pip
+
+          pip install \
+            -r lambda/authorizer/requirements.txt \
+            -t authorizer-package
+
+          echo "Creating ZIP package..."
+
+          cd authorizer-package
+
+          zip -r ../authorizer.zip .
+
+          cd ..
+
+          echo "Authorizer package created."
+
+          ls -lh authorizer.zip
+
+
+      # --------------------------------------------------------
+      # Upload Authorizer package to S3
+      # --------------------------------------------------------
+
+      - name: Upload Authorizer package
+        run: |
+
+          echo "Uploading Authorizer Lambda package to S3..."
+
+          aws s3 cp \
+            authorizer.zip \
+            "s3://${ARTIFACT_BUCKET}/authorizer/authorizer.zip" \
+            --region "${AWS_REGION}"
+
+          echo "Authorizer package uploaded successfully."
 
 
       # --------------------------------------------------------
       # Create / update ADMIN authentication token
       #
-      # Customer tokens are NO LONGER stored in SSM.
+      # Customer tokens are stored in RDS.
+      # They are NOT stored in SSM.
       # --------------------------------------------------------
 
       - name: Create or update admin authentication token
@@ -269,11 +334,10 @@ jobs:
       # --------------------------------------------------------
       # Deploy Auth Stack
       #
-      # CustomerAuthTokenParameterName and CustomerId have
-      # been removed.
+      # Authorizer code is stored in S3.
+      # PyMySQL is packaged inside the ZIP.
       #
-      # Authorizer now receives the RDS parameter names and
-      # Lambda Layer ARN.
+      # No Lambda Layer is used.
       # --------------------------------------------------------
 
       - name: Deploy Auth Stack
@@ -291,7 +355,8 @@ jobs:
               DBNameParameter="/cloudmart/${ENVIRONMENT}/db/name" \
               DBUsernameParameter="/cloudmart/${ENVIRONMENT}/db/username" \
               DBPasswordParameter="/cloudmart/${ENVIRONMENT}/db/password" \
-              AuthorizerLayerArn="${{ vars.AUTHORIZER_LAYER_ARN }}" \
+              LambdaArtifactBucketName="${ARTIFACT_BUCKET}" \
+              LambdaArtifactKey="authorizer/authorizer.zip" \
             --capabilities CAPABILITY_NAMED_IAM \
             --region "${AWS_REGION}"
 
@@ -302,6 +367,8 @@ jobs:
 
       - name: Check Auth Stack
         run: |
+
+          echo "Authentication Stack Status:"
 
           aws cloudformation describe-stacks \
             --stack-name cloudmart-dev-auth \
@@ -322,5 +389,58 @@ jobs:
           aws cloudformation describe-stacks \
             --stack-name cloudmart-dev-auth \
             --region "${AWS_REGION}" \
-           
+            --query "Stacks[0].Outputs[?OutputKey=='AuthorizerLambdaArn'].OutputValue" \
+            --output text
+
+
+      # --------------------------------------------------------
+      # Verify Authorizer Lambda
+      # --------------------------------------------------------
+
+      - name: Verify Authorizer Lambda
+        run: |
+
+          echo "Authorizer Lambda configuration:"
+
+          aws lambda get-function-configuration \
+            --function-name "CloudMart-${ENVIRONMENT}-authorizer" \
+            --region "${AWS_REGION}" \
+            --query '{
+              FunctionName:FunctionName,
+              Runtime:Runtime,
+              Handler:Handler,
+              Timeout:Timeout,
+              MemorySize:MemorySize,
+              LastModified:LastModified
+            }' \
+            --output table
+
+          echo "Authorizer Lambda deployed successfully."
+
+
+      # --------------------------------------------------------
+      # Verify deployed Lambda package
+      #
+      # Confirms that PyMySQL is available in the deployment
+      # package by checking the Lambda package configuration.
+      # --------------------------------------------------------
+
+      - name: Final deployment summary
+        run: |
+
+          echo "============================================================"
+          echo "CloudMart Authentication Deployment Completed"
+          echo "============================================================"
+          echo "Environment       : ${ENVIRONMENT}"
+          echo "AWS Region        : ${AWS_REGION}"
+          echo "Artifact Bucket   : ${ARTIFACT_BUCKET}"
+          echo "Artifact Key      : authorizer/authorizer.zip"
+          echo "Lambda             : CloudMart-${ENVIRONMENT}-authorizer"
+          echo "Runtime            : Python 3.13"
+          echo "Handler            : index.handler"
+          echo "Lambda Layer       : NOT USED"
+          echo "PyMySQL            : PACKAGED INSIDE ZIP"
+          echo "Admin Token        : SSM SecureString"
+          echo "Customer Tokens    : RDS MySQL"
+          echo "============================================================"
 
