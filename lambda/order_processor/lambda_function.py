@@ -43,12 +43,16 @@ DB_PASSWORD_PARAMETER = os.environ["DB_PASSWORD_PARAMETER"]
 # ============================================================
 
 def response(status_code, body):
+
     return {
         "statusCode": status_code,
         "headers": {
             "Content-Type": "application/json"
         },
-        "body": json.dumps(body, default=str)
+        "body": json.dumps(
+            body,
+            default=str
+        )
     }
 
 
@@ -57,6 +61,7 @@ def response(status_code, body):
 # ============================================================
 
 def get_parameter(name, with_decryption=False):
+
     result = ssm.get_parameter(
         Name=name,
         WithDecryption=with_decryption
@@ -71,14 +76,25 @@ def get_parameter(name, with_decryption=False):
 
 def get_db_connection():
 
-    host = get_parameter(DB_HOST_PARAMETER)
+    host = get_parameter(
+        DB_HOST_PARAMETER
+    )
 
     if DB_PORT_PARAMETER:
-        port = int(get_parameter(DB_PORT_PARAMETER))
+
+        port = int(
+            get_parameter(
+                DB_PORT_PARAMETER
+            )
+        )
+
     else:
+
         port = 3306
 
-    database = get_parameter(DB_NAME_PARAMETER)
+    database = get_parameter(
+        DB_NAME_PARAMETER
+    )
 
     username = get_parameter(
         DB_USERNAME_PARAMETER,
@@ -118,8 +134,8 @@ def get_authorizer_context(event):
         {}
     )
 
-    # REST API Lambda authorizer
     if isinstance(authorizer, dict):
+
         return authorizer
 
     return {}
@@ -131,16 +147,21 @@ def get_authorizer_context(event):
 
 def get_authenticated_customer_id(event):
 
-    context = get_authorizer_context(event)
+    context = get_authorizer_context(
+        event
+    )
 
     customer_id = context.get(
         "customerId"
     )
 
     if customer_id is None:
+
         return None
 
-    return str(customer_id)
+    return str(
+        customer_id
+    )
 
 
 # ============================================================
@@ -149,36 +170,51 @@ def get_authenticated_customer_id(event):
 
 def get_authenticated_role(event):
 
-    context = get_authorizer_context(event)
+    context = get_authorizer_context(
+        event
+    )
 
     role = context.get(
         "role"
     )
 
     if role is None:
+
         return None
 
-    return str(role).lower()
+    return str(
+        role
+    ).lower()
 
 
 # ============================================================
 # EVENTBRIDGE PUBLISH
 # ============================================================
 
-def publish_event(detail_type, detail):
+def publish_event(
+    detail_type,
+    detail
+):
 
     try:
 
         result = events.put_events(
             Entries=[
                 {
-                    "EventBusName": EVENT_BUS_NAME,
-                    "Source": "cloudmart.order",
-                    "DetailType": detail_type,
-                    "Detail": json.dumps(
-                        detail,
-                        default=str
-                    )
+                    "EventBusName":
+                        EVENT_BUS_NAME,
+
+                    "Source":
+                        "cloudmart.order",
+
+                    "DetailType":
+                        detail_type,
+
+                    "Detail":
+                        json.dumps(
+                            detail,
+                            default=str
+                        )
                 }
             ]
         )
@@ -197,8 +233,6 @@ def publish_event(detail_type, detail):
             exc
         )
 
-        # Do not fail the database transaction
-        # because EventBridge publishing failed.
         return None
 
 
@@ -208,17 +242,26 @@ def publish_event(detail_type, detail):
 
 def get_request_body(event):
 
-    body = event.get("body")
+    body = event.get(
+        "body"
+    )
 
     if body is None:
+
         return {}
 
-    if isinstance(body, dict):
+    if isinstance(
+        body,
+        dict
+    ):
+
         return body
 
     try:
 
-        return json.loads(body)
+        return json.loads(
+            body
+        )
 
     except json.JSONDecodeError:
 
@@ -233,7 +276,10 @@ def get_request_body(event):
 
 def validate_items(items):
 
-    if not isinstance(items, list):
+    if not isinstance(
+        items,
+        list
+    ):
 
         raise ValueError(
             "items must be an array"
@@ -247,7 +293,10 @@ def validate_items(items):
 
     for item in items:
 
-        if not isinstance(item, dict):
+        if not isinstance(
+            item,
+            dict
+        ):
 
             raise ValueError(
                 "Each item must be an object"
@@ -275,7 +324,10 @@ def validate_items(items):
                 item["quantity"]
             )
 
-        except (ValueError, TypeError):
+        except (
+            ValueError,
+            TypeError
+        ):
 
             raise ValueError(
                 "productId and quantity must be integers"
@@ -310,10 +362,14 @@ def create_order(event):
         # AUTHENTICATION
         # ----------------------------------------------------
 
-        role = get_authenticated_role(event)
+        role = get_authenticated_role(
+            event
+        )
 
         authenticated_customer_id = (
-            get_authenticated_customer_id(event)
+            get_authenticated_customer_id(
+                event
+            )
         )
 
         if role not in (
@@ -324,7 +380,8 @@ def create_order(event):
             return response(
                 403,
                 {
-                    "message": "Unauthorized role"
+                    "message":
+                        "Unauthorized role"
                 }
             )
 
@@ -346,7 +403,9 @@ def create_order(event):
         # REQUEST BODY
         # ----------------------------------------------------
 
-        body = get_request_body(event)
+        body = get_request_body(
+            event
+        )
 
         if "customerId" not in body:
 
@@ -378,9 +437,6 @@ def create_order(event):
 
         if role == "customer":
 
-            # Customer can only place order
-            # for the customer associated with token.
-
             if (
                 requested_customer_id
                 != authenticated_customer_id
@@ -399,27 +455,36 @@ def create_order(event):
                         "message":
                             "You can only place orders "
                             "for your own customerId",
+
                         "authenticatedCustomerId":
                             authenticated_customer_id,
+
                         "requestedCustomerId":
                             requested_customer_id
                     }
                 )
 
-            customer_id = authenticated_customer_id
+            customer_id = (
+                authenticated_customer_id
+            )
 
         else:
 
-            # Admin can create order for any customer.
-            customer_id = requested_customer_id
+            customer_id = (
+                requested_customer_id
+            )
 
         # ----------------------------------------------------
         # ITEMS
         # ----------------------------------------------------
 
-        items = body.get("items")
+        items = body.get(
+            "items"
+        )
 
-        validate_items(items)
+        validate_items(
+            items
+        )
 
         # ----------------------------------------------------
         # DATABASE
@@ -481,7 +546,9 @@ def create_order(event):
                 """
             )
 
-            pending_status = cursor.fetchone()
+            pending_status = (
+                cursor.fetchone()
+            )
 
             if not pending_status:
 
@@ -514,7 +581,9 @@ def create_order(event):
                 )
             )
 
-            order_id = cursor.lastrowid
+            order_id = (
+                cursor.lastrowid
+            )
 
             logger.info(
                 "Created PENDING order %s for customer %s",
@@ -603,12 +672,12 @@ def create_order(event):
                     price * quantity
                 )
 
-                total_amount += item_total
+                total_amount += (
+                    item_total
+                )
 
                 # ------------------------------------------------
                 # INSERT ORDER ITEM
-                #
-                # Database column is line_total.
                 # ------------------------------------------------
 
                 cursor.execute(
@@ -656,7 +725,9 @@ def create_order(event):
                 # ------------------------------------------------
 
                 threshold = int(
-                    product["low_stock_threshold"]
+                    product[
+                        "low_stock_threshold"
+                    ]
                 )
 
                 if new_stock <= threshold:
@@ -665,10 +736,13 @@ def create_order(event):
                         {
                             "productId":
                                 product_id,
+
                             "productName":
                                 product["name"],
+
                             "stock":
                                 new_stock,
+
                             "lowStockThreshold":
                                 threshold
                         }
@@ -737,12 +811,16 @@ def create_order(event):
                 {
                     "orderId":
                         order_id,
+
                     "customerId":
                         customer_id,
+
                     "totalAmount":
                         total_amount,
+
                     "status":
                         "CONFIRMED",
+
                     "items":
                         items
                 }
@@ -759,10 +837,13 @@ def create_order(event):
                     {
                         "productId":
                             product["productId"],
+
                         "productName":
                             product["productName"],
+
                         "stock":
                             product["stock"],
+
                         "lowStockThreshold":
                             product[
                                 "lowStockThreshold"
@@ -779,14 +860,19 @@ def create_order(event):
                 {
                     "message":
                         "Order placed successfully",
+
                     "orderId":
                         order_id,
+
                     "customerId":
                         customer_id,
+
                     "totalAmount":
                         total_amount,
+
                     "status":
                         "CONFIRMED",
+
                     "items":
                         items
                 }
@@ -843,7 +929,9 @@ def create_order(event):
                                 failed_status[
                                     "status_id"
                                 ],
+
                                 str(exc),
+
                                 order_id
                             )
                         )
@@ -855,6 +943,7 @@ def create_order(event):
                     {
                         "orderId":
                             order_id,
+
                         "reason":
                             str(exc)
                     }
@@ -871,6 +960,7 @@ def create_order(event):
             {
                 "message":
                     str(exc),
+
                 "orderId":
                     order_id
             }
@@ -880,7 +970,7 @@ def create_order(event):
     # UNEXPECTED ERROR
     # ========================================================
 
-    except Exception as exc:
+    except Exception:
 
         logger.exception(
             "Unexpected error while creating order"
@@ -889,8 +979,11 @@ def create_order(event):
         if connection:
 
             try:
+
                 connection.rollback()
+
             except Exception:
+
                 pass
 
         return response(
@@ -906,8 +999,11 @@ def create_order(event):
         if connection:
 
             try:
+
                 connection.close()
+
             except Exception:
+
                 pass
 
 
@@ -926,10 +1022,14 @@ def get_order_by_id(event):
         # AUTHENTICATION
         # ----------------------------------------------------
 
-        role = get_authenticated_role(event)
+        role = get_authenticated_role(
+            event
+        )
 
         authenticated_customer_id = (
-            get_authenticated_customer_id(event)
+            get_authenticated_customer_id(
+                event
+            )
         )
 
         if role not in (
@@ -963,12 +1063,16 @@ def get_order_by_id(event):
         # ----------------------------------------------------
 
         path_parameters = (
-            event.get("pathParameters")
+            event.get(
+                "pathParameters"
+            )
             or {}
         )
 
         order_id_value = (
-            path_parameters.get("id")
+            path_parameters.get(
+                "id"
+            )
         )
 
         if not order_id_value:
@@ -987,7 +1091,10 @@ def get_order_by_id(event):
                 order_id_value
             )
 
-        except (ValueError, TypeError):
+        except (
+            ValueError,
+            TypeError
+        ):
 
             return response(
                 400,
@@ -1004,10 +1111,6 @@ def get_order_by_id(event):
         connection = get_db_connection()
 
         with connection.cursor() as cursor:
-
-            # ------------------------------------------------
-            # GET ORDER
-            # ------------------------------------------------
 
             cursor.execute(
                 """
@@ -1046,15 +1149,22 @@ def get_order_by_id(event):
             if role == "customer":
 
                 if (
-                    str(order["customer_id"])
-                    != str(authenticated_customer_id)
+                    str(
+                        order["customer_id"]
+                    )
+                    != str(
+                        authenticated_customer_id
+                    )
                 ):
 
                     logger.warning(
                         "Customer %s attempted to access "
                         "order %s belonging to customer %s",
+
                         authenticated_customer_id,
+
                         order_id,
+
                         order["customer_id"]
                     )
 
@@ -1069,8 +1179,6 @@ def get_order_by_id(event):
 
             # ------------------------------------------------
             # GET ORDER ITEMS
-            #
-            # Database column is line_total.
             # ------------------------------------------------
 
             cursor.execute(
@@ -1118,8 +1226,11 @@ def get_order_by_id(event):
         if connection:
 
             try:
+
                 connection.close()
+
             except Exception:
+
                 pass
 
 
@@ -1140,10 +1251,14 @@ def get_orders_by_customer(event):
         # AUTHENTICATION
         # ----------------------------------------------------
 
-        role = get_authenticated_role(event)
+        role = get_authenticated_role(
+            event
+        )
 
         authenticated_customer_id = (
-            get_authenticated_customer_id(event)
+            get_authenticated_customer_id(
+                event
+            )
         )
 
         if role not in (
@@ -1170,17 +1285,11 @@ def get_orders_by_customer(event):
             or {}
         )
 
-        # First support camelCase:
-        # ?customerId=CUST001
-
         requested_customer_id = (
             query_parameters.get(
                 "customerId"
             )
         )
-
-        # Also support snake_case:
-        # ?customer_id=CUST001
 
         if requested_customer_id is None:
 
@@ -1199,35 +1308,6 @@ def get_orders_by_customer(event):
         # ----------------------------------------------------
         # CUSTOMER
         # ----------------------------------------------------
-        #
-        # Customer does NOT need to provide customerId.
-        # The customerId comes from the authorizer token.
-        #
-        # GET /orders
-        # Authorization: Bearer CUST001_TOKEN
-        #
-        # -> Returns all CUST001 orders.
-        #
-        # GET /orders?customerId=CUST001
-        # Authorization: Bearer CUST001_TOKEN
-        #
-        # -> Still returns CUST001 orders.
-        #
-        # GET /orders?customer_id=CUST001
-        # Authorization: Bearer CUST001_TOKEN
-        #
-        # -> Still returns CUST001 orders.
-        #
-        # GET /orders?customerId=CUST002
-        # Authorization: Bearer CUST001_TOKEN
-        #
-        # -> 403 Forbidden.
-        #
-        # GET /orders?customer_id=CUST002
-        # Authorization: Bearer CUST001_TOKEN
-        #
-        # -> 403 Forbidden.
-        # ----------------------------------------------------
 
         if role == "customer":
 
@@ -1241,9 +1321,6 @@ def get_orders_by_customer(event):
                     }
                 )
 
-            # If customerId was supplied, it must match
-            # the customer associated with the token.
-
             if (
                 requested_customer_id
                 and requested_customer_id
@@ -1253,7 +1330,9 @@ def get_orders_by_customer(event):
                 logger.warning(
                     "Customer %s attempted to query "
                     "orders for customer %s",
+
                     authenticated_customer_id,
+
                     requested_customer_id
                 )
 
@@ -1263,14 +1342,14 @@ def get_orders_by_customer(event):
                         "message":
                             "You can only access "
                             "your own orders",
+
                         "authenticatedCustomerId":
                             authenticated_customer_id,
+
                         "requestedCustomerId":
                             requested_customer_id
                     }
                 )
-
-            # Use customerId from authorizer token.
 
             customer_id = (
                 authenticated_customer_id
@@ -1278,18 +1357,6 @@ def get_orders_by_customer(event):
 
         # ----------------------------------------------------
         # ADMIN
-        # ----------------------------------------------------
-        #
-        # Admin can:
-        #
-        # GET /orders
-        # -> ALL orders
-        #
-        # GET /orders?customerId=CUST001
-        # -> Only CUST001 orders.
-        #
-        # GET /orders?customer_id=CUST001
-        # -> Only CUST001 orders.
         # ----------------------------------------------------
 
         else:
@@ -1308,11 +1375,12 @@ def get_orders_by_customer(event):
 
             # ------------------------------------------------
             # ADMIN WITHOUT customerId
-            #
-            # Return ALL orders.
             # ------------------------------------------------
 
-            if role == "admin" and not customer_id:
+            if (
+                role == "admin"
+                and not customer_id
+            ):
 
                 cursor.execute(
                     """
@@ -1330,16 +1398,6 @@ def get_orders_by_customer(event):
                     ORDER BY o.created_at DESC
                     """
                 )
-
-            # ------------------------------------------------
-            # CUSTOMER
-            #
-            # OR
-            #
-            # ADMIN WITH customerId
-            #
-            # Return orders for that customer.
-            # ------------------------------------------------
 
             else:
 
@@ -1395,9 +1453,10 @@ def get_orders_by_customer(event):
             # RESPONSE
             # ------------------------------------------------
 
-            # Admin requested ALL orders.
-
-            if role == "admin" and not customer_id:
+            if (
+                role == "admin"
+                and not customer_id
+            ):
 
                 return response(
                     200,
@@ -1407,14 +1466,12 @@ def get_orders_by_customer(event):
                     }
                 )
 
-            # Customer or admin requested a
-            # particular customer's orders.
-
             return response(
                 200,
                 {
                     "customerId":
                         customer_id,
+
                     "orders":
                         orders
                 }
@@ -1439,8 +1496,11 @@ def get_orders_by_customer(event):
         if connection:
 
             try:
+
                 connection.close()
+
             except Exception:
+
                 pass
 
 
@@ -1452,6 +1512,7 @@ def get_orders_by_customer(event):
 def cancel_order(event):
 
     connection = None
+    order_id = None
 
     try:
 
@@ -1459,10 +1520,14 @@ def cancel_order(event):
         # AUTHENTICATION
         # ----------------------------------------------------
 
-        role = get_authenticated_role(event)
+        role = get_authenticated_role(
+            event
+        )
 
         authenticated_customer_id = (
-            get_authenticated_customer_id(event)
+            get_authenticated_customer_id(
+                event
+            )
         )
 
         if role not in (
@@ -1496,12 +1561,16 @@ def cancel_order(event):
         # ----------------------------------------------------
 
         path_parameters = (
-            event.get("pathParameters")
+            event.get(
+                "pathParameters"
+            )
             or {}
         )
 
         order_id_value = (
-            path_parameters.get("id")
+            path_parameters.get(
+                "id"
+            )
         )
 
         if not order_id_value:
@@ -1520,7 +1589,10 @@ def cancel_order(event):
                 order_id_value
             )
 
-        except (ValueError, TypeError):
+        except (
+            ValueError,
+            TypeError
+        ):
 
             return response(
                 400,
@@ -1534,7 +1606,9 @@ def cancel_order(event):
         # REQUEST BODY
         # ----------------------------------------------------
 
-        body = get_request_body(event)
+        body = get_request_body(
+            event
+        )
 
         requested_status = body.get(
             "status"
@@ -1551,7 +1625,9 @@ def cancel_order(event):
             )
 
         if (
-            str(requested_status).upper()
+            str(
+                requested_status
+            ).upper()
             != "CANCELLED"
         ):
 
@@ -1613,11 +1689,15 @@ def cancel_order(event):
                 )
 
             confirmed_status_id = (
-                status_map["CONFIRMED"]
+                status_map[
+                    "CONFIRMED"
+                ]
             )
 
             cancelled_status_id = (
-                status_map["CANCELLED"]
+                status_map[
+                    "CANCELLED"
+                ]
             )
 
             # ------------------------------------------------
@@ -1660,15 +1740,22 @@ def cancel_order(event):
             if role == "customer":
 
                 if (
-                    str(order["customer_id"])
-                    != str(authenticated_customer_id)
+                    str(
+                        order["customer_id"]
+                    )
+                    != str(
+                        authenticated_customer_id
+                    )
                 ):
 
                     logger.warning(
                         "Customer %s attempted to cancel "
                         "order %s belonging to customer %s",
+
                         authenticated_customer_id,
+
                         order_id,
+
                         order["customer_id"]
                     )
 
@@ -1696,8 +1783,10 @@ def cancel_order(event):
                         "message":
                             "Only CONFIRMED orders "
                             "can be cancelled",
+
                         "orderId":
                             order_id,
+
                         "currentStatus":
                             order["status"]
                     }
@@ -1782,7 +1871,9 @@ def cancel_order(event):
                 """,
                 (
                     cancelled_status_id,
+
                     f"Order cancelled by {cancelled_by}",
+
                     order_id
                 )
             )
@@ -1804,14 +1895,18 @@ def cancel_order(event):
                 {
                     "orderId":
                         order_id,
+
                     "customerId":
                         order["customer_id"],
+
                     "totalAmount":
                         float(
                             order["total_amount"]
                         ),
+
                     "status":
                         "CANCELLED",
+
                     "cancelledBy":
                         cancelled_by
                 }
@@ -1826,10 +1921,13 @@ def cancel_order(event):
                 {
                     "message":
                         "Order cancelled successfully",
+
                     "orderId":
                         order_id,
+
                     "customerId":
                         order["customer_id"],
+
                     "status":
                         "CANCELLED"
                 }
@@ -1849,8 +1947,11 @@ def cancel_order(event):
         if connection:
 
             try:
+
                 connection.rollback()
+
             except Exception:
+
                 pass
 
         return response(
@@ -1858,6 +1959,7 @@ def cancel_order(event):
             {
                 "message":
                     str(exc),
+
                 "orderId":
                     order_id
             }
@@ -1876,8 +1978,11 @@ def cancel_order(event):
         if connection:
 
             try:
+
                 connection.rollback()
+
             except Exception:
+
                 pass
 
         return response(
@@ -1893,8 +1998,11 @@ def cancel_order(event):
         if connection:
 
             try:
+
                 connection.close()
+
             except Exception:
+
                 pass
 
 
@@ -1912,6 +2020,10 @@ def lambda_handler(event, context):
         )
     )
 
+    # --------------------------------------------------------
+    # HTTP METHOD
+    # --------------------------------------------------------
+
     http_method = (
         event.get(
             "httpMethod",
@@ -1919,9 +2031,40 @@ def lambda_handler(event, context):
         ).upper()
     )
 
+    # --------------------------------------------------------
+    # API GATEWAY RESOURCE
+    #
+    # API Gateway normally sends:
+    #
+    # /orders
+    # /orders/{id}
+    #
+    # --------------------------------------------------------
+
     resource = event.get(
         "resource",
         ""
+    )
+
+    # --------------------------------------------------------
+    # DIRECT LAMBDA TEST PATH
+    #
+    # Your Lambda test event uses:
+    #
+    # "path": "/orders/5"
+    #
+    # --------------------------------------------------------
+
+    path = event.get(
+        "path",
+        ""
+    )
+
+    logger.info(
+        "Routing request. Method=%s Resource=%s Path=%s",
+        http_method,
+        resource,
+        path
     )
 
     # ========================================================
@@ -1930,10 +2073,19 @@ def lambda_handler(event, context):
 
     if (
         http_method == "POST"
-        and resource == "/orders"
+        and (
+            resource == "/orders"
+            or path == "/orders"
+        )
     ):
 
-        return create_order(event)
+        logger.info(
+            "Routing to create_order()"
+        )
+
+        return create_order(
+            event
+        )
 
     # ========================================================
     # GET /orders/{id}
@@ -1941,10 +2093,24 @@ def lambda_handler(event, context):
 
     if (
         http_method == "GET"
-        and resource == "/orders/{id}"
+        and (
+            resource == "/orders/{id}"
+            or (
+                path.startswith(
+                    "/orders/"
+                )
+                and path != "/orders/"
+            )
+        )
     ):
 
-        return get_order_by_id(event)
+        logger.info(
+            "Routing to get_order_by_id()"
+        )
+
+        return get_order_by_id(
+            event
+        )
 
     # ========================================================
     # GET /orders
@@ -1952,10 +2118,19 @@ def lambda_handler(event, context):
 
     if (
         http_method == "GET"
-        and resource == "/orders"
+        and (
+            resource == "/orders"
+            or path == "/orders"
+        )
     ):
 
-        return get_orders_by_customer(event)
+        logger.info(
+            "Routing to get_orders_by_customer()"
+        )
+
+        return get_orders_by_customer(
+            event
+        )
 
     # ========================================================
     # PATCH /orders/{id}
@@ -1964,14 +2139,35 @@ def lambda_handler(event, context):
 
     if (
         http_method == "PATCH"
-        and resource == "/orders/{id}"
+        and (
+            resource == "/orders/{id}"
+            or (
+                path.startswith(
+                    "/orders/"
+                )
+                and path != "/orders/"
+            )
+        )
     ):
 
-        return cancel_order(event)
+        logger.info(
+            "Routing to cancel_order()"
+        )
+
+        return cancel_order(
+            event
+        )
 
     # ========================================================
     # UNSUPPORTED ROUTE
     # ========================================================
+
+    logger.warning(
+        "Route not found. Method=%s Resource=%s Path=%s",
+        http_method,
+        resource,
+        path
+    )
 
     return response(
         404,
