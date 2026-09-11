@@ -487,26 +487,30 @@ jobs:
             --output text
 
 
-      # ==========================================================
+           # ==========================================================
       # 29. VERIFY PATCH /orders/{id}
       # ==========================================================
       - name: Verify PATCH orders method
         run: |
           set -e
 
-          echo "Getting API ID..."
+          echo "Getting API ID from CloudFormation..."
 
-          API_ID=$(aws apigateway get-rest-apis \
+          API_ID=$(aws cloudformation describe-stack-resource \
+            --stack-name "${API_STACK_NAME}" \
+            --logical-resource-id ProductApi \
             --region "${AWS_REGION}" \
-            --query "items[?name=='CloudMart-${ENVIRONMENT}-ProductApi'].id | [0]" \
+            --query "StackResourceDetail.PhysicalResourceId" \
             --output text)
 
           if [ -z "${API_ID}" ] || [ "${API_ID}" = "None" ]; then
-            echo "ERROR: API Gateway REST API was not found."
+            echo "ERROR: ProductApi resource was not found in CloudFormation."
             exit 1
           fi
 
-          echo "API ID: ${API_ID}"
+          echo "API Gateway REST API ID: ${API_ID}"
+
+          echo "Finding /orders/{id} resource..."
 
           ORDER_ID_RESOURCE=$(aws apigateway get-resources \
             --rest-api-id "${API_ID}" \
@@ -520,6 +524,8 @@ jobs:
           fi
 
           echo "Orders ID resource: ${ORDER_ID_RESOURCE}"
+
+          echo "Checking methods configured on /orders/{id}..."
 
           METHODS=$(aws apigateway get-resource \
             --rest-api-id "${API_ID}" \
@@ -548,17 +554,23 @@ jobs:
         run: |
           set -e
 
-          API_ID=$(aws apigateway get-rest-apis \
+          echo "Getting API ID from CloudFormation..."
+
+          API_ID=$(aws cloudformation describe-stack-resource \
+            --stack-name "${API_STACK_NAME}" \
+            --logical-resource-id ProductApi \
             --region "${AWS_REGION}" \
-            --query "items[?name=='CloudMart-${ENVIRONMENT}-ProductApi'].id | [0]" \
+            --query "StackResourceDetail.PhysicalResourceId" \
             --output text)
 
           if [ -z "${API_ID}" ] || [ "${API_ID}" = "None" ]; then
-            echo "ERROR: API ID not found."
+            echo "ERROR: ProductApi resource was not found."
             exit 1
           fi
 
-          echo "API ID: ${API_ID}"
+          echo "API Gateway REST API ID: ${API_ID}"
+
+          echo "Checking ${ENVIRONMENT} stage..."
 
           STAGE_INFO=$(aws apigateway get-stage \
             --rest-api-id "${API_ID}" \
@@ -571,13 +583,13 @@ jobs:
           DEPLOYMENT_ID=$(echo "${STAGE_INFO}" | jq -r '.deploymentId')
 
           if [ -z "${DEPLOYMENT_ID}" ] || [ "${DEPLOYMENT_ID}" = "null" ]; then
-            echo "ERROR: No deployment is attached to the dev stage."
+            echo "ERROR: No deployment is attached to the ${ENVIRONMENT} stage."
             exit 1
           fi
 
-          echo "Current dev deployment ID: ${DEPLOYMENT_ID}"
+          echo "Current ${ENVIRONMENT} deployment ID: ${DEPLOYMENT_ID}"
 
-          echo "API Gateway dev stage verified."
+          echo "SUCCESS: API Gateway ${ENVIRONMENT} stage exists."
 
 
       # ==========================================================
