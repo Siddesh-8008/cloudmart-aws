@@ -39,7 +39,7 @@ env:
   AUTH_STACK_NAME: cloudmart-dev-auth
 
   # Every commit gets a different S3 key.
-  # This forces CloudFormation/Lambda to use the new ZIP.
+  # This forces Lambda to use the new ZIP package.
 
   PRODUCT_CODE_KEY: product/product-${{ github.sha }}.zip
   SCHEMA_CODE_KEY: schema/schema-${{ github.sha }}.zip
@@ -295,9 +295,7 @@ jobs:
           echo "Creating product.zip..."
 
           cd build/product
-
           zip -r ../../product.zip . > /dev/null
-
           cd ../..
 
           echo ""
@@ -408,9 +406,7 @@ jobs:
           echo "Creating schema.zip..."
 
           cd build/schema
-
           zip -r ../../schema.zip . > /dev/null
-
           cd ../..
 
           echo ""
@@ -541,9 +537,7 @@ jobs:
           echo "Creating order-processor.zip..."
 
           cd build/order-processor
-
           zip -r ../../order-processor.zip . > /dev/null
-
           cd ../..
 
           echo ""
@@ -974,7 +968,7 @@ jobs:
 
 
       # ======================================================
-      # 27. DEPLOY API STACK
+      # 27. DEPLOY API CLOUDFORMATION
       # ======================================================
 
       - name: Deploy API CloudFormation
@@ -994,6 +988,7 @@ jobs:
           LAMBDA_SECURITY_GROUP="${{ steps.security-group.outputs.security_group }}"
 
           PRODUCT_ROLE="${{ steps.iam.outputs.product_role_arn }}"
+
           ORDER_PROCESSOR_ROLE="${{ steps.iam.outputs.order_processor_role_arn }}"
 
           AUTHORIZE_ARN="${{ steps.authorizer.outputs.authorizer_arn }}"
@@ -1071,7 +1066,7 @@ jobs:
 
           echo ""
           echo "======================================"
-          echo "API DEPLOYMENT COMPLETE"
+          echo "API CLOUDFORMATION DEPLOYMENT COMPLETE"
           echo "======================================"
 
 
@@ -1119,20 +1114,85 @@ jobs:
 
 
       # ======================================================
-      # 29. VERIFY PATCH ORDER API
+      # 29. FORCE API GATEWAY DEPLOYMENT
       #
-      # Verifies:
+      # IMPORTANT:
       #
-      # PATCH /orders/{id}
+      # get-resource only tells us that PATCH exists in the
+      # REST API configuration.
       #
-      # API Gateway returns methods like:
+      # The /dev stage can still point to an older deployment.
       #
-      # {
-      #   "GET": {},
-      #   "PATCH": {}
-      # }
-      #
-      # Therefore we check whether PATCH exists as a key.
+      # Therefore we explicitly create a new deployment here.
+      # ======================================================
+
+      - name: Force API Gateway deployment
+        shell: bash
+        run: |
+          set -e
+
+          echo "======================================"
+          echo "FORCING API GATEWAY DEPLOYMENT"
+          echo "======================================"
+
+          API_ID=$(aws cloudformation describe-stacks \
+            --stack-name "${API_STACK_NAME}" \
+            --region "${AWS_REGION}" \
+            --query "Stacks[0].Outputs[?OutputKey=='ProductApiId'].OutputValue | [0]" \
+            --output text)
+
+          if [ -z "${API_ID}" ] || [ "${API_ID}" = "None" ]; then
+            echo "ERROR: ProductApiId was not found."
+            exit 1
+          fi
+
+          echo ""
+          echo "API Gateway ID:"
+          echo "${API_ID}"
+
+          DEPLOYMENT_DESCRIPTION="CloudMart ${ENVIRONMENT} deployment ${GITHUB_SHA}"
+
+          echo ""
+          echo "Creating new API Gateway deployment..."
+
+          NEW_DEPLOYMENT_ID=$(aws apigateway create-deployment \
+            --rest-api-id "${API_ID}" \
+            --stage-name "${ENVIRONMENT}" \
+            --description "${DEPLOYMENT_DESCRIPTION}" \
+            --region "${AWS_REGION}" \
+            --query "id" \
+            --output text)
+
+          if [ -z "${NEW_DEPLOYMENT_ID}" ] || [ "${NEW_DEPLOYMENT_ID}" = "None" ]; then
+            echo "ERROR: API Gateway deployment was not created."
+            exit 1
+          fi
+
+          echo ""
+          echo "======================================"
+          echo "API GATEWAY DEPLOYMENT CREATED"
+          echo "======================================"
+
+          echo ""
+          echo "Deployment ID:"
+          echo "${NEW_DEPLOYMENT_ID}"
+
+          echo ""
+          echo "Checking ${ENVIRONMENT} stage..."
+
+          aws apigateway get-stage \
+            --rest-api-id "${API_ID}" \
+            --stage-name "${ENVIRONMENT}" \
+            --region "${AWS_REGION}" \
+            --query "[stageName,deploymentId,lastUpdatedDate]" \
+            --output table
+
+          echo ""
+          echo "API Gateway stage deployment completed."
+
+
+      # ======================================================
+      # 30. VERIFY PATCH METHOD IN REST API
       # ======================================================
 
       - name: Verify PATCH /orders/{id} API
@@ -1172,8 +1232,8 @@ jobs:
 
             echo ""
             echo "ERROR: /orders/{id} resource was not found."
-            echo ""
 
+            echo ""
             echo "Available API resources:"
 
             aws apigateway get-resources \
@@ -1206,25 +1266,29 @@ jobs:
           echo ""
           echo "Checking whether PATCH key exists..."
 
-          PATCH_EXISTS=$(echo "${METHODS}" | python -c "
+          PATCH_EXISTS=$(echo "${METHODS}" | python -c '
 import sys
 import json
 
 data = json.load(sys.stdin)
 
-if 'PATCH' in data:
-    print('true')
+if "PATCH" in data:
+    print("true")
 else:
-    print('false')
-")
+    print("false")
+')
+
+          echo ""
+          echo "PATCH exists:"
+          echo "${PATCH_EXISTS}"
 
           if [ "${PATCH_EXISTS}" != "true" ]; then
 
             echo ""
             echo "ERROR: PATCH method was NOT found on /orders/{id}."
-            echo ""
 
-            echo "Methods currently configured on /orders/{id}:"
+            echo ""
+            echo "Methods currently configured:"
             echo "${METHODS}"
 
             exit 1
@@ -1252,12 +1316,155 @@ else:
 
 
       # ======================================================
-      # 30. SHOW API STACK STATUS
+      # 31. VERIFY DEV STAGE DEPLOYMENT
+      #
+      # This is different from checking get-resource.
+      #
+      # We verify that the dev stage has a deployment ID.
       # ======================================================
 
-      - name: Show API Stack status
+      - name: Verify API Gateway dev stage
         shell: bash
         run: |
+          set -e
+
+          echo "======================================"
+          echo "VERIFYING API GATEWAY DEV STAGE"
+          echo "======================================"
+
+          API_ID=$(aws cloudformation describe-stacks \
+            --stack-name "${API_STACK_NAME}" \
+            --region "${AWS_REGION}" \
+            --query "Stacks[0].Outputs[?OutputKey=='ProductApiId'].OutputValue | [0]" \
+            --output text)
+
+          if [ -z "${API_ID}" ] || [ "${API_ID}" = "None" ]; then
+            echo "ERROR: ProductApiId was not found."
+            exit 1
+          fi
+
+          echo ""
+          echo "API ID:"
+          echo "${API_ID}"
+
+          echo ""
+          echo "Stage information:"
+
+          STAGE_INFO=$(aws apigateway get-stage \
+            --rest-api-id "${API_ID}" \
+            --stage-name "${ENVIRONMENT}" \
+            --region "${AWS_REGION}")
+
+          echo "${STAGE_INFO}"
+
+          DEPLOYMENT_ID=$(echo "${STAGE_INFO}" | python -c '
+import sys
+import json
+
+data = json.load(sys.stdin)
+print(data.get("deploymentId", ""))
+')
+
+          if [ -z "${DEPLOYMENT_ID}" ]; then
+            echo ""
+            echo "ERROR: dev stage does not have a deployment ID."
+            exit 1
+          fi
+
+          echo ""
+          echo "======================================"
+          echo "DEV STAGE DEPLOYMENT VERIFIED"
+          echo "======================================"
+
+          echo ""
+          echo "Stage:"
+          echo "${ENVIRONMENT}"
+
+          echo ""
+          echo "Deployment ID:"
+          echo "${DEPLOYMENT_ID}"
+
+
+      # ======================================================
+      # 32. VERIFY DEPLOYED API EXPORT
+      #
+      # This checks the API that is actually deployed to the
+      # dev stage rather than only the REST API configuration.
+      # ======================================================
+
+      - name: Verify deployed PATCH API
+        shell: bash
+        run: |
+          set -e
+
+          echo "======================================"
+          echo "VERIFYING DEPLOYED PATCH API"
+          echo "======================================"
+
+          API_ID=$(aws cloudformation describe-stacks \
+            --stack-name "${API_STACK_NAME}" \
+            --region "${AWS_REGION}" \
+            --query "Stacks[0].Outputs[?OutputKey=='ProductApiId'].OutputValue | [0]" \
+            --output text)
+
+          if [ -z "${API_ID}" ] || [ "${API_ID}" = "None" ]; then
+            echo "ERROR: ProductApiId was not found."
+            exit 1
+          fi
+
+          echo ""
+          echo "Exporting deployed ${ENVIRONMENT} API..."
+
+          aws apigateway get-export \
+            --rest-api-id "${API_ID}" \
+            --stage-name "${ENVIRONMENT}" \
+            --export-type swagger \
+            --parameters extensions='integrations' \
+            --accepts application/json \
+            --region "${AWS_REGION}" \
+            deployed-api.json
+
+          echo ""
+          echo "Checking deployed API for PATCH..."
+
+          if grep -qi '"patch"' deployed-api.json; then
+
+            echo ""
+            echo "======================================"
+            echo "DEPLOYED PATCH VERIFIED"
+            echo "======================================"
+
+            echo ""
+            echo "PATCH /orders/{id} is present in the deployed API."
+
+          else
+
+            echo ""
+            echo "ERROR: PATCH was NOT found in the deployed API."
+
+            echo ""
+            echo "The REST API may contain PATCH, but the dev stage"
+            echo "does not contain PATCH in its deployed definition."
+
+            exit 1
+
+          fi
+
+          echo ""
+          echo "Relevant PATCH entries:"
+
+          grep -i -C 3 '"patch"' deployed-api.json || true
+
+
+      # ======================================================
+      # 33. SHOW API STACK STATUS
+      # ======================================================
+
+      - name: Show API Stack Status
+        shell: bash
+        run: |
+          set -e
+
           echo "======================================"
           echo "CLOUDFORMATION STACK STATUS"
           echo "======================================"
@@ -1270,12 +1477,14 @@ else:
 
 
       # ======================================================
-      # 31. SHOW API STACK OUTPUTS
+      # 34. SHOW API STACK OUTPUTS
       # ======================================================
 
-      - name: Show API Stack outputs
+      - name: Show API Stack Outputs
         shell: bash
         run: |
+          set -e
+
           echo "======================================"
           echo "API STACK OUTPUTS"
           echo "======================================"
@@ -1288,7 +1497,7 @@ else:
 
 
       # ======================================================
-      # 32. SHOW CLOUDFORMATION EVENTS
+      # 35. SHOW CLOUDFORMATION EVENTS
       # ======================================================
 
       - name: Show CloudFormation events
