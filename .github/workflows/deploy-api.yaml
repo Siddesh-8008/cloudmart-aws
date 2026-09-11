@@ -1,1219 +1,1510 @@
-AWSTemplateFormatVersion: '2010-09-09'
+name: CloudMart API Infrastructure
 
-Description: >
-  CloudMart Milestone 4 API Stack.
-  Creates Product Lambda, Schema Lambda,
-  single Order Processor Lambda, API Gateway,
-  Lambda Authorizer and low-stock SNS alerts.
+on:
 
+  push:
+    branches:
+      - milestone-3
 
-# ==============================================================
-# PARAMETERS
-# ==============================================================
+    paths:
+      - "cloudformation/api/api-stack.yaml"
+      - "lambda/product/**"
+      - "lambda/schema/**"
+      - "lambda/order_processor/**"
+      - "schema/**"
+      - ".github/workflows/deploy-api.yaml"
 
-Parameters:
+  workflow_dispatch:
 
-  # ============================================================
-  # ENVIRONMENT
-  # ============================================================
 
-  Environment:
-    Type: String
-    Default: dev
-    AllowedValues:
-      - dev
-      - prod
+# ============================================================
+# GITHUB ACTIONS PERMISSIONS
+# ============================================================
 
+permissions:
+  id-token: write
+  contents: read
 
-  # ============================================================
-  # NETWORK
-  # ============================================================
 
-  PrivateSubnetIds:
-    Type: List<AWS::EC2::Subnet::Id>
-    Description: Private subnet IDs for Lambda functions
+# ============================================================
+# GLOBAL ENVIRONMENT
+# ============================================================
 
+env:
 
-  LambdaSecurityGroupId:
-    Type: AWS::EC2::SecurityGroup::Id
-    Description: Security group for Lambda functions
+  AWS_REGION: ap-south-1
 
+  ENVIRONMENT: dev
 
-  # ============================================================
-  # IAM
-  # ==============================================================
+  API_STACK_NAME: cloudmart-dev-api
 
-  ProductLambdaExecutionRoleArn:
-    Type: String
-    Description: >
-      IAM role ARN used by Product Lambda and Schema Lambda
+  DATA_STACK_NAME: cloudmart-dev-data-new
 
+  NETWORK_STACK_NAME: cloudmart-dev-network
 
-  OrderProcessorLambdaExecutionRoleArn:
-    Type: String
-    Description: >
-      IAM role ARN used by Order Processor Lambda
+  IAM_STACK_NAME: cloudmart-dev-iam
 
+  AUTH_STACK_NAME: cloudmart-dev-auth
 
-  # ============================================================
-  # AUTHORIZER
-  # ==============================================================
+  # IMPORTANT:
+  # Every commit gets a different S3 key.
+  # This forces CloudFormation/Lambda to use the new ZIP.
 
-  AuthorizerLambdaArn:
-    Type: String
-    Description: ARN of the Lambda Authorizer
+  PRODUCT_CODE_KEY: product/product-${{ github.sha }}.zip
 
+  SCHEMA_CODE_KEY: schema/schema-${{ github.sha }}.zip
 
-  # ============================================================
-  # LAMBDA ARTIFACTS
-  # ==============================================================
+  ORDER_PROCESSOR_CODE_KEY: order-processor/order-processor-${{ github.sha }}.zip
 
-  ProductLambdaCodeBucket:
-    Type: String
-    Description: S3 bucket containing Lambda packages
 
+# ============================================================
+# JOB
+# ============================================================
 
-  ProductLambdaCodeKey:
-    Type: String
-    Default: product/product.zip
-    Description: S3 key of Product Lambda package
+jobs:
 
+  build-and-deploy:
 
-  SchemaLambdaCodeKey:
-    Type: String
-    Default: schema/schema.zip
-    Description: S3 key of Schema Lambda package
+    name: Build and Deploy API Stack
 
+    runs-on: ubuntu-latest
 
-  OrderProcessorLambdaCodeKey:
-    Type: String
-    Default: order-processor/order-processor.zip
-    Description: S3 key of Order Processor Lambda package
+    steps:
 
 
-  # ============================================================
-  # DATABASE PARAMETERS
-  # ==============================================================
+      # ======================================================
+      # 1. CHECKOUT
+      # ======================================================
 
-  DBHostParameter:
-    Type: String
-    Default: /cloudmart/dev/db/host
-    Description: >
-      SSM parameter containing database host
+      - name: Checkout source code
 
+        uses: actions/checkout@v4
 
-  DBPortParameter:
-    Type: String
-    Default: /cloudmart/dev/db/port
-    Description: >
-      SSM parameter containing database port
 
+      # ======================================================
+      # 2. SETUP PYTHON
+      # ======================================================
+      #
+      # IMPORTANT:
+      # Lambda runtime is Python 3.12.
+      #
+      # Therefore we package dependencies using Python 3.12.
+      #
+      # This is especially important for cryptography.
+      # ======================================================
 
-  DBNameParameter:
-    Type: String
-    Default: /cloudmart/dev/db/name
-    Description: >
-      SSM parameter containing database name
+      - name: Setup Python 3.12
 
+        uses: actions/setup-python@v5
 
-  DBUsernameParameter:
-    Type: String
-    Default: /cloudmart/dev/db/username
-    Description: >
-      SSM SecureString parameter containing database username
+        with:
+          python-version: "3.12"
 
 
-  DBPasswordParameter:
-    Type: String
-    Default: /cloudmart/dev/db/password
-    Description: >
-      SSM SecureString parameter containing database password
+      # ======================================================
+      # 3. CONFIGURE AWS CREDENTIALS
+      # ======================================================
 
+      - name: Configure AWS credentials
 
-  # ============================================================
-  # API SETTINGS
-  # ==============================================================
+        uses: aws-actions/configure-aws-credentials@v4
 
-  AuthorizerCacheTTL:
-    Type: Number
-    Default: 0
-    Description: API Gateway authorizer cache TTL in seconds
+        with:
 
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
 
-  # ============================================================
-  # API DEPLOYMENT VERSION
-  # ============================================================
+          aws-region: ${{ env.AWS_REGION }}
 
-  ApiDeploymentVersion:
-    Type: String
-    Default: initial
-    Description: >
-      Version used to force a new API Gateway deployment
 
+      # ======================================================
+      # 4. VERIFY AWS
+      # ======================================================
 
-  # ============================================================
-  # EVENTBRIDGE
-  # ==============================================================
+      - name: Verify AWS identity
 
-  EventBusName:
-    Type: String
-    Default: cloudmart-dev-event-bus
-    Description: CloudMart EventBridge event bus name
+        shell: bash
 
+        run: |
 
-  # ============================================================
-  # SNS
-  # ==============================================================
+          set -e
 
-  LowStockEmail:
-    Type: String
-    Description: Email address for low-stock notifications
+          echo "======================================"
+          echo "AWS ACCOUNT"
+          echo "======================================"
 
+          aws sts get-caller-identity
 
-# ==============================================================
-# RESOURCES
-# ==============================================================
+          echo ""
+          echo "AWS Region:"
+          echo "${AWS_REGION}"
 
-Resources:
+          echo ""
+          echo "Environment:"
+          echo "${ENVIRONMENT}"
 
+          echo ""
+          echo "Git Commit:"
+          echo "${GITHUB_SHA}"
 
-  # ============================================================
-  # SNS LOW STOCK TOPIC
-  # ============================================================
 
-  LowStockTopic:
-    Type: AWS::SNS::Topic
+      # ======================================================
+      # 5. VERIFY REQUIRED STACKS
+      # ======================================================
 
-    Properties:
+      - name: Verify required CloudFormation stacks
 
-      TopicName:
-        !Sub cloudmart-${Environment}-low-stock-alerts
+        shell: bash
 
-      Tags:
+        run: |
 
-        - Key: Project
-          Value: CloudMart
+          set -e
 
-        - Key: Environment
-          Value: !Ref Environment
+          echo "======================================"
+          echo "VERIFYING REQUIRED STACKS"
+          echo "======================================"
 
+          for STACK in \
+            "${NETWORK_STACK_NAME}" \
+            "${DATA_STACK_NAME}" \
+            "${IAM_STACK_NAME}" \
+            "${AUTH_STACK_NAME}"
+          do
 
-  # ============================================================
-  # SNS EMAIL SUBSCRIPTION
-  # ============================================================
+            echo ""
+            echo "Checking stack:"
+            echo "${STACK}"
 
-  LowStockEmailSubscription:
-    Type: AWS::SNS::Subscription
+            STATUS=$(aws cloudformation describe-stacks \
+              --stack-name "${STACK}" \
+              --region "${AWS_REGION}" \
+              --query "Stacks[0].StackStatus" \
+              --output text)
 
-    Properties:
+            echo "Status:"
+            echo "${STATUS}"
 
-      TopicArn:
-        !Ref LowStockTopic
+            case "${STATUS}" in
 
-      Protocol:
-        email
+              CREATE_COMPLETE)
+                echo "Stack is ready."
+                ;;
 
-      Endpoint:
-        !Ref LowStockEmail
+              UPDATE_COMPLETE)
+                echo "Stack is ready."
+                ;;
 
+              UPDATE_ROLLBACK_COMPLETE)
+                echo "Stack is available after rollback."
+                ;;
 
-  # ============================================================
-  # PRODUCT LAMBDA
-  # ============================================================
+              *)
+                echo ""
+                echo "ERROR: Stack ${STACK} is not ready."
+                exit 1
+                ;;
 
-  ProductLambda:
-    Type: AWS::Lambda::Function
+            esac
 
-    Properties:
+          done
 
-      FunctionName:
-        !Sub CloudMart-${Environment}-product
 
-      Description:
-        CloudMart Product Lambda
+      # ======================================================
+      # 6. SHOW DATA STACK OUTPUTS
+      # ======================================================
 
-      Runtime:
-        python3.12
+      - name: Show Data Stack Outputs
 
-      Handler:
-        lambda_function.lambda_handler
+        shell: bash
 
-      Role:
-        !Ref ProductLambdaExecutionRoleArn
+        run: |
 
-      Timeout:
-        30
+          set -e
 
-      MemorySize:
-        256
+          echo "======================================"
+          echo "DATA STACK OUTPUTS"
+          echo "======================================"
 
-      Code:
+          aws cloudformation describe-stacks \
+            --stack-name "${DATA_STACK_NAME}" \
+            --region "${AWS_REGION}" \
+            --query "Stacks[0].Outputs" \
+            --output table
 
-        S3Bucket:
-          !Ref ProductLambdaCodeBucket
 
-        S3Key:
-          !Ref ProductLambdaCodeKey
+      # ======================================================
+      # 7. GET LAMBDA ARTIFACT BUCKET
+      # ======================================================
 
+      - name: Get Lambda Artifact Bucket
 
-      # --------------------------------------------------------
-      # VPC
-      # --------------------------------------------------------
+        id: artifact-bucket
 
-      VpcConfig:
+        shell: bash
 
-        SubnetIds:
-          !Ref PrivateSubnetIds
+        run: |
 
-        SecurityGroupIds:
+          set -e
 
-          - !Ref LambdaSecurityGroupId
+          echo "======================================"
+          echo "GETTING LAMBDA ARTIFACT BUCKET"
+          echo "======================================"
 
+          BUCKET_NAME=$(aws cloudformation describe-stacks \
+            --stack-name "${DATA_STACK_NAME}" \
+            --region "${AWS_REGION}" \
+            --query "Stacks[0].Outputs[?OutputKey=='LambdaArtifactBucketName'].OutputValue | [0]" \
+            --output text)
 
-      # --------------------------------------------------------
-      # ENVIRONMENT VARIABLES
-      # --------------------------------------------------------
+          if [ -z "${BUCKET_NAME}" ] || [ "${BUCKET_NAME}" = "None" ]; then
 
-      Environment:
+            echo ""
+            echo "ERROR: LambdaArtifactBucketName was not found."
 
-        Variables:
+            echo ""
+            echo "Available Data Stack outputs:"
 
-          DB_HOST_PARAMETER:
-            !Ref DBHostParameter
+            aws cloudformation describe-stacks \
+              --stack-name "${DATA_STACK_NAME}" \
+              --region "${AWS_REGION}" \
+              --query "Stacks[0].Outputs" \
+              --output table
 
-          DB_NAME_PARAMETER:
-            !Ref DBNameParameter
+            exit 1
 
-          DB_USERNAME_PARAMETER:
-            !Ref DBUsernameParameter
+          fi
 
-          DB_PASSWORD_PARAMETER:
-            !Ref DBPasswordParameter
+          echo ""
+          echo "Lambda Artifact Bucket:"
+          echo "${BUCKET_NAME}"
 
-          LOW_STOCK_TOPIC_ARN:
-            !Ref LowStockTopic
+          echo "bucket=${BUCKET_NAME}" >> "${GITHUB_OUTPUT}"
 
-          ENVIRONMENT:
-            !Ref Environment
 
-          EVENT_BUS_NAME:
-            !Ref EventBusName
+      # ======================================================
+      # 8. PACKAGE PRODUCT LAMBDA
+      # ======================================================
 
+      - name: Package Product Lambda
 
-  # ============================================================
-  # SCHEMA LAMBDA
-  # ============================================================
+        shell: bash
 
-  SchemaLambda:
-    Type: AWS::Lambda::Function
+        run: |
 
-    Properties:
+          set -e
 
-      FunctionName:
-        !Sub CloudMart-${Environment}-schema
+          echo "======================================"
+          echo "PACKAGING PRODUCT LAMBDA"
+          echo "======================================"
 
-      Description:
-        CloudMart Database Schema Lambda
+          rm -rf build/product
 
-      Runtime:
-        python3.12
+          rm -f product.zip
 
-      Handler:
-        lambda_function.lambda_handler
+          mkdir -p build/product
 
-      Role:
-        !Ref ProductLambdaExecutionRoleArn
+          echo ""
+          echo "Copying Product Lambda source..."
 
-      Timeout:
-        120
+          cp lambda/product/lambda_function.py \
+             build/product/
 
-      MemorySize:
-        256
+          echo ""
+          echo "Checking Product Lambda requirements..."
 
-      Code:
+          if [ -f lambda/product/requirements.txt ]; then
 
-        S3Bucket:
-          !Ref ProductLambdaCodeBucket
+            if [ -s lambda/product/requirements.txt ]; then
 
-        S3Key:
-          !Ref SchemaLambdaCodeKey
+              echo "Installing Product Lambda dependencies..."
 
+              python -m pip install \
+                -r lambda/product/requirements.txt \
+                -t build/product \
+                --upgrade \
+                --no-cache-dir
 
-      # --------------------------------------------------------
-      # VPC
-      # --------------------------------------------------------
+            else
 
-      VpcConfig:
+              echo "Product requirements.txt is empty."
 
-        SubnetIds:
-          !Ref PrivateSubnetIds
+            fi
 
-        SecurityGroupIds:
+          else
 
-          - !Ref LambdaSecurityGroupId
+            echo "No Product requirements.txt found."
 
+          fi
 
-      # --------------------------------------------------------
-      # ENVIRONMENT VARIABLES
-      # --------------------------------------------------------
+          echo ""
+          echo "Creating product.zip..."
 
-      Environment:
+          cd build/product
 
-        Variables:
+          zip -r ../../product.zip . > /dev/null
 
-          DB_HOST_PARAMETER:
-            !Ref DBHostParameter
+          cd ../..
 
-          DB_PORT_PARAMETER:
-            !Ref DBPortParameter
+          echo ""
+          echo "======================================"
+          echo "PRODUCT ZIP CREATED"
+          echo "======================================"
 
-          DB_NAME_PARAMETER:
-            !Ref DBNameParameter
+          ls -lh product.zip
 
-          DB_USERNAME_PARAMETER:
-            !Ref DBUsernameParameter
+          echo ""
+          echo "PRODUCT ZIP CONTENTS:"
 
-          DB_PASSWORD_PARAMETER:
-            !Ref DBPasswordParameter
+          unzip -l product.zip | head -100
 
-          ENVIRONMENT:
-            !Ref Environment
 
+      # ======================================================
+      # 9. VERIFY PRODUCT ZIP
+      # ======================================================
 
-  # ============================================================
-  # ORDER PROCESSOR LAMBDA
-  #
-  # THIS IS NOW THE ONLY ORDER LAMBDA
-  # ============================================================
+      - name: Verify Product Lambda package
 
-  OrderProcessorLambda:
-    Type: AWS::Lambda::Function
+        shell: bash
 
-    Properties:
+        run: |
 
-      FunctionName:
-        !Sub CloudMart-${Environment}-order-processor
+          set -e
 
-      Description:
-        CloudMart Order Processing Lambda
+          echo "======================================"
+          echo "VERIFYING PRODUCT LAMBDA PACKAGE"
+          echo "======================================"
 
-      Runtime:
-        python3.12
+          if [ ! -f product.zip ]; then
 
-      Handler:
-        lambda_function.lambda_handler
+            echo "ERROR: product.zip was not created."
 
-      Role:
-        !Ref OrderProcessorLambdaExecutionRoleArn
+            exit 1
 
-      Timeout:
-        60
+          fi
 
-      MemorySize:
-        256
+          unzip -t product.zip >/dev/null
 
-      Code:
+          if ! unzip -l product.zip | grep -q "lambda_function.py"; then
 
-        S3Bucket:
-          !Ref ProductLambdaCodeBucket
+            echo "ERROR: Product lambda_function.py is missing."
 
-        S3Key:
-          !Ref OrderProcessorLambdaCodeKey
+            exit 1
 
+          fi
 
-      # --------------------------------------------------------
-      # VPC
-      # --------------------------------------------------------
+          echo ""
+          echo "Product Lambda package is valid."
 
-      VpcConfig:
 
-        SubnetIds:
-          !Ref PrivateSubnetIds
+      # ======================================================
+      # 10. PACKAGE SCHEMA LAMBDA
+      # ======================================================
 
-        SecurityGroupIds:
+      - name: Package Schema Lambda
 
-          - !Ref LambdaSecurityGroupId
+        shell: bash
 
+        run: |
 
-      # --------------------------------------------------------
-      # ENVIRONMENT VARIABLES
-      # --------------------------------------------------------
+          set -e
 
-      Environment:
+          echo "======================================"
+          echo "PACKAGING SCHEMA LAMBDA"
+          echo "======================================"
 
-        Variables:
+          rm -rf build/schema
 
-          DB_HOST_PARAMETER:
-            !Ref DBHostParameter
+          rm -f schema.zip
 
-          DB_PORT_PARAMETER:
-            !Ref DBPortParameter
+          mkdir -p build/schema
 
-          DB_NAME_PARAMETER:
-            !Ref DBNameParameter
+          echo ""
+          echo "Copying Schema Lambda source..."
 
-          DB_USERNAME_PARAMETER:
-            !Ref DBUsernameParameter
+          cp lambda/schema/lambda_function.py \
+             build/schema/
 
-          DB_PASSWORD_PARAMETER:
-            !Ref DBPasswordParameter
+          echo ""
+          echo "Checking Schema Lambda requirements..."
 
-          EVENT_BUS_NAME:
-            !Ref EventBusName
+          if [ ! -f lambda/schema/requirements.txt ]; then
 
-          ENVIRONMENT:
-            !Ref Environment
+            echo "ERROR: lambda/schema/requirements.txt not found."
 
+            exit 1
 
-  # ============================================================
-  # API GATEWAY REST API
-  # ============================================================
+          fi
 
-  ProductApi:
-    Type: AWS::ApiGateway::RestApi
+          if [ ! -s lambda/schema/requirements.txt ]; then
 
-    Properties:
+            echo "ERROR: lambda/schema/requirements.txt is empty."
 
-      Name:
-        !Sub CloudMart-${Environment}-product-api
+            exit 1
 
-      Description:
-        CloudMart Product and Order API
+          fi
 
-      EndpointConfiguration:
+          echo ""
+          echo "Schema requirements.txt:"
 
-        Types:
+          cat lambda/schema/requirements.txt
 
-          - REGIONAL
+          echo ""
+          echo "Installing Schema Lambda dependencies..."
 
+          python -m pip install \
+            -r lambda/schema/requirements.txt \
+            -t build/schema \
+            --upgrade \
+            --no-cache-dir
 
-  # ============================================================
-  # API GATEWAY AUTHORIZER
-  # ============================================================
+          echo ""
+          echo "Checking cryptography installation..."
 
-  ProductApiAuthorizer:
-    Type: AWS::ApiGateway::Authorizer
+          if ! find build/schema -maxdepth 1 -type d -name "cryptography*" | grep -q "cryptography"; then
 
-    Properties:
+            echo "ERROR: cryptography was NOT installed into Schema Lambda package."
 
-      Name:
-        !Sub CloudMart-${Environment}-authorizer
+            exit 1
 
-      RestApiId:
-        !Ref ProductApi
+          fi
 
-      Type:
-        TOKEN
+          echo ""
+          echo "cryptography found in Schema Lambda package."
 
-      IdentitySource:
-        method.request.header.Authorization
+          echo ""
+          echo "Creating schema.zip..."
 
-      AuthorizerUri:
-        !Sub
-          - arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${AuthorizerArn}/invocations
-          - AuthorizerArn: !Ref AuthorizerLambdaArn
+          cd build/schema
 
-      AuthorizerResultTtlInSeconds:
-        !Ref AuthorizerCacheTTL
+          zip -r ../../schema.zip . > /dev/null
 
+          cd ../..
 
-  # ============================================================
-  # /products
-  # ============================================================
+          echo ""
+          echo "======================================"
+          echo "SCHEMA ZIP CREATED"
+          echo "======================================"
 
-  ProductsResource:
-    Type: AWS::ApiGateway::Resource
+          ls -lh schema.zip
 
-    Properties:
+          echo ""
+          echo "SCHEMA ZIP CONTENTS:"
 
-      RestApiId:
-        !Ref ProductApi
+          unzip -l schema.zip | head -150
 
-      ParentId:
-        !GetAtt ProductApi.RootResourceId
 
-      PathPart:
-        products
+      # ======================================================
+      # 11. VERIFY SCHEMA ZIP
+      # ======================================================
 
+      - name: Verify Schema Lambda package
 
-  # ============================================================
-  # /products/{id}
-  # ============================================================
+        shell: bash
 
-  ProductIdResource:
-    Type: AWS::ApiGateway::Resource
+        run: |
 
-    Properties:
+          set -e
 
-      RestApiId:
-        !Ref ProductApi
+          echo "======================================"
+          echo "VERIFYING SCHEMA LAMBDA PACKAGE"
+          echo "======================================"
 
-      ParentId:
-        !Ref ProductsResource
+          if [ ! -f schema.zip ]; then
 
-      PathPart:
-        "{id}"
+            echo "ERROR: schema.zip was not created."
 
+            exit 1
 
-  # ============================================================
-  # GET /products
-  # ============================================================
+          fi
 
-  GetProductsMethod:
-    Type: AWS::ApiGateway::Method
+          unzip -t schema.zip >/dev/null
 
-    Properties:
+          if ! unzip -l schema.zip | grep -q "lambda_function.py"; then
 
-      RestApiId:
-        !Ref ProductApi
+            echo "ERROR: Schema lambda_function.py is missing."
 
-      ResourceId:
-        !Ref ProductsResource
+            exit 1
 
-      HttpMethod:
-        GET
+          fi
 
-      AuthorizationType:
-        CUSTOM
+          if ! unzip -l schema.zip | grep -q "cryptography"; then
 
-      AuthorizerId:
-        !Ref ProductApiAuthorizer
+            echo "ERROR: cryptography is missing from schema.zip."
 
-      Integration:
+            exit 1
 
-        Type:
-          AWS_PROXY
+          fi
 
-        IntegrationHttpMethod:
-          POST
+          if ! unzip -l schema.zip | grep -q "pymysql"; then
 
-        Uri:
-          !Sub
-            - arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaArn}/invocations
-            - LambdaArn: !GetAtt ProductLambda.Arn
+            echo "ERROR: PyMySQL is missing from schema.zip."
 
+            exit 1
 
-  # ============================================================
-  # POST /products
-  # ============================================================
+          fi
 
-  CreateProductMethod:
-    Type: AWS::ApiGateway::Method
+          echo ""
+          echo "Schema Lambda package is valid."
 
-    Properties:
+          echo "PyMySQL found."
 
-      RestApiId:
-        !Ref ProductApi
+          echo "cryptography found."
 
-      ResourceId:
-        !Ref ProductsResource
 
-      HttpMethod:
-        POST
+      # ======================================================
+      # 12. PACKAGE SINGLE ORDER PROCESSOR LAMBDA
+      # ======================================================
 
-      AuthorizationType:
-        CUSTOM
+      - name: Package Order Processor Lambda
 
-      AuthorizerId:
-        !Ref ProductApiAuthorizer
+        shell: bash
 
-      Integration:
+        run: |
 
-        Type:
-          AWS_PROXY
+          set -e
 
-        IntegrationHttpMethod:
-          POST
+          echo "======================================"
+          echo "PACKAGING ORDER PROCESSOR LAMBDA"
+          echo "======================================"
 
-        Uri:
-          !Sub
-            - arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaArn}/invocations
-            - LambdaArn: !GetAtt ProductLambda.Arn
+          rm -rf build/order-processor
 
+          rm -f order-processor.zip
 
-  # ============================================================
-  # GET /products/{id}
-  # ============================================================
+          mkdir -p build/order-processor
 
-  GetProductMethod:
-    Type: AWS::ApiGateway::Method
+          echo ""
+          echo "Checking Order Processor source..."
 
-    Properties:
+          if [ ! -f lambda/order_processor/lambda_function.py ]; then
 
-      RestApiId:
-        !Ref ProductApi
+            echo "ERROR: lambda/order_processor/lambda_function.py not found."
 
-      ResourceId:
-        !Ref ProductIdResource
+            exit 1
 
-      HttpMethod:
-        GET
+          fi
 
-      AuthorizationType:
-        CUSTOM
+          echo ""
+          echo "Copying Order Processor Lambda source..."
 
-      AuthorizerId:
-        !Ref ProductApiAuthorizer
+          cp lambda/order_processor/lambda_function.py \
+             build/order-processor/
 
-      Integration:
+          echo ""
+          echo "Checking Order Processor requirements..."
 
-        Type:
-          AWS_PROXY
+          if [ ! -f lambda/order_processor/requirements.txt ]; then
 
-        IntegrationHttpMethod:
-          POST
+            echo "ERROR: lambda/order_processor/requirements.txt not found."
 
-        Uri:
-          !Sub
-            - arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaArn}/invocations
-            - LambdaArn: !GetAtt ProductLambda.Arn
+            exit 1
 
+          fi
 
-  # ============================================================
-  # PUT /products/{id}
-  # ============================================================
+          if [ ! -s lambda/order_processor/requirements.txt ]; then
 
-  UpdateProductMethod:
-    Type: AWS::ApiGateway::Method
+            echo "ERROR: lambda/order_processor/requirements.txt is empty."
 
-    Properties:
+            exit 1
 
-      RestApiId:
-        !Ref ProductApi
+          fi
 
-      ResourceId:
-        !Ref ProductIdResource
+          echo ""
+          echo "Order Processor requirements.txt:"
 
-      HttpMethod:
-        PUT
+          cat lambda/order_processor/requirements.txt
 
-      AuthorizationType:
-        CUSTOM
+          echo ""
+          echo "Installing Order Processor dependencies..."
 
-      AuthorizerId:
-        !Ref ProductApiAuthorizer
+          python -m pip install \
+            -r lambda/order_processor/requirements.txt \
+            -t build/order-processor \
+            --upgrade \
+            --no-cache-dir
 
-      Integration:
+          echo ""
+          echo "Checking cryptography installation..."
 
-        Type:
-          AWS_PROXY
+          if ! find build/order-processor -maxdepth 1 -type d -name "cryptography*" | grep -q "cryptography"; then
 
-        IntegrationHttpMethod:
-          POST
+            echo "ERROR: cryptography was NOT installed into Order Processor package."
 
-        Uri:
-          !Sub
-            - arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaArn}/invocations
-            - LambdaArn: !GetAtt ProductLambda.Arn
+            exit 1
 
+          fi
 
-  # ============================================================
-  # DELETE /products/{id}
-  # ============================================================
+          echo ""
+          echo "cryptography found in Order Processor package."
 
-  DeleteProductMethod:
-    Type: AWS::ApiGateway::Method
+          echo ""
+          echo "Creating order-processor.zip..."
 
-    Properties:
+          cd build/order-processor
 
-      RestApiId:
-        !Ref ProductApi
+          zip -r ../../order-processor.zip . > /dev/null
 
-      ResourceId:
-        !Ref ProductIdResource
+          cd ../..
 
-      HttpMethod:
-        DELETE
+          echo ""
+          echo "======================================"
+          echo "ORDER PROCESSOR ZIP CREATED"
+          echo "======================================"
 
-      AuthorizationType:
-        CUSTOM
+          ls -lh order-processor.zip
 
-      AuthorizerId:
-        !Ref ProductApiAuthorizer
+          echo ""
+          echo "ORDER PROCESSOR ZIP CONTENTS:"
 
-      Integration:
+          unzip -l order-processor.zip | head -150
 
-        Type:
-          AWS_PROXY
 
-        IntegrationHttpMethod:
-          POST
+      # ======================================================
+      # 13. VERIFY ORDER PROCESSOR ZIP
+      # ======================================================
 
-        Uri:
-          !Sub
-            - arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaArn}/invocations
-            - LambdaArn: !GetAtt ProductLambda.Arn
+      - name: Verify Order Processor Lambda package
 
+        shell: bash
 
-  # ============================================================
-  # /orders
-  # ============================================================
+        run: |
 
-  OrdersResource:
-    Type: AWS::ApiGateway::Resource
+          set -e
 
-    Properties:
+          echo "======================================"
+          echo "VERIFYING ORDER PROCESSOR PACKAGE"
+          echo "======================================"
 
-      RestApiId:
-        !Ref ProductApi
+          if [ ! -f order-processor.zip ]; then
 
-      ParentId:
-        !GetAtt ProductApi.RootResourceId
+            echo "ERROR: order-processor.zip was not created."
 
-      PathPart:
-        orders
+            exit 1
 
+          fi
 
-  # ============================================================
-  # /orders/{id}
-  # ============================================================
+          unzip -t order-processor.zip >/dev/null
 
-  OrderIdResource:
-    Type: AWS::ApiGateway::Resource
+          if ! unzip -l order-processor.zip | grep -q "lambda_function.py"; then
 
-    Properties:
+            echo "ERROR: Order Processor lambda_function.py is missing."
 
-      RestApiId:
-        !Ref ProductApi
+            exit 1
 
-      ParentId:
-        !Ref OrdersResource
+          fi
 
-      PathPart:
-        "{id}"
+          if ! unzip -l order-processor.zip | grep -q "cryptography"; then
 
+            echo "ERROR: cryptography is missing from order-processor.zip."
 
-  # ============================================================
-  # POST /orders
-  #
-  # DIRECTLY -> ORDER PROCESSOR LAMBDA
-  # ============================================================
+            exit 1
 
-  CreateOrderMethod:
-    Type: AWS::ApiGateway::Method
+          fi
 
-    Properties:
+          if ! unzip -l order-processor.zip | grep -q "pymysql"; then
 
-      RestApiId:
-        !Ref ProductApi
+            echo "ERROR: PyMySQL is missing from order-processor.zip."
 
-      ResourceId:
-        !Ref OrdersResource
+            exit 1
 
-      HttpMethod:
-        POST
+          fi
 
-      AuthorizationType:
-        CUSTOM
+          echo ""
+          echo "Order Processor package is valid."
 
-      AuthorizerId:
-        !Ref ProductApiAuthorizer
+          echo "PyMySQL found."
 
-      Integration:
+          echo "cryptography found."
 
-        Type:
-          AWS_PROXY
 
-        IntegrationHttpMethod:
-          POST
+      # ======================================================
+      # 14. UPLOAD PRODUCT LAMBDA
+      # ======================================================
 
-        Uri:
-          !Sub
-            - arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaArn}/invocations
-            - LambdaArn: !GetAtt OrderProcessorLambda.Arn
+      - name: Upload Product Lambda package
 
+        shell: bash
 
-  # ============================================================
-  # GET /orders
-  #
-  # DIRECTLY -> ORDER PROCESSOR LAMBDA
-  # ============================================================
+        run: |
 
-  GetOrdersMethod:
-    Type: AWS::ApiGateway::Method
+          set -e
 
-    Properties:
+          BUCKET_NAME="${{ steps.artifact-bucket.outputs.bucket }}"
 
-      RestApiId:
-        !Ref ProductApi
+          echo "======================================"
+          echo "UPLOADING PRODUCT LAMBDA"
+          echo "======================================"
 
-      ResourceId:
-        !Ref OrdersResource
+          aws s3 cp \
+            product.zip \
+            "s3://${BUCKET_NAME}/${PRODUCT_CODE_KEY}" \
+            --region "${AWS_REGION}"
 
-      HttpMethod:
-        GET
+          echo ""
+          echo "Product Lambda uploaded successfully."
 
-      AuthorizationType:
-        CUSTOM
+          echo ""
+          echo "S3 Object:"
+          echo "s3://${BUCKET_NAME}/${PRODUCT_CODE_KEY}"
 
-      AuthorizerId:
-        !Ref ProductApiAuthorizer
 
-      Integration:
+      # ======================================================
+      # 15. UPLOAD SCHEMA LAMBDA
+      # ======================================================
 
-        Type:
-          AWS_PROXY
+      - name: Upload Schema Lambda package
 
-        IntegrationHttpMethod:
-          POST
+        shell: bash
 
-        Uri:
-          !Sub
-            - arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaArn}/invocations
-            - LambdaArn: !GetAtt OrderProcessorLambda.Arn
+        run: |
 
+          set -e
 
-  # ============================================================
-  # GET /orders/{id}
-  #
-  # DIRECTLY -> ORDER PROCESSOR LAMBDA
-  # ============================================================
+          BUCKET_NAME="${{ steps.artifact-bucket.outputs.bucket }}"
 
-  GetOrderMethod:
-    Type: AWS::ApiGateway::Method
+          echo "======================================"
+          echo "UPLOADING SCHEMA LAMBDA"
+          echo "======================================"
 
-    Properties:
+          aws s3 cp \
+            schema.zip \
+            "s3://${BUCKET_NAME}/${SCHEMA_CODE_KEY}" \
+            --region "${AWS_REGION}"
 
-      RestApiId:
-        !Ref ProductApi
+          echo ""
+          echo "Schema Lambda uploaded successfully."
 
-      ResourceId:
-        !Ref OrderIdResource
+          echo ""
+          echo "S3 Object:"
+          echo "s3://${BUCKET_NAME}/${SCHEMA_CODE_KEY}"
 
-      HttpMethod:
-        GET
 
-      AuthorizationType:
-        CUSTOM
+      # ======================================================
+      # 16. UPLOAD ORDER PROCESSOR LAMBDA
+      # ======================================================
 
-      AuthorizerId:
-        !Ref ProductApiAuthorizer
+      - name: Upload Order Processor Lambda package
 
-      Integration:
+        shell: bash
 
-        Type:
-          AWS_PROXY
+        run: |
 
-        IntegrationHttpMethod:
-          POST
+          set -e
 
-        Uri:
-          !Sub
-            - arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaArn}/invocations
-            - LambdaArn: !GetAtt OrderProcessorLambda.Arn
+          BUCKET_NAME="${{ steps.artifact-bucket.outputs.bucket }}"
 
+          echo "======================================"
+          echo "UPLOADING ORDER PROCESSOR LAMBDA"
+          echo "======================================"
 
-  # ============================================================
-  # PATCH /orders/{id}
-  #
-  # CANCEL ORDER
-  # DIRECTLY -> ORDER PROCESSOR LAMBDA
-  # ============================================================
+          aws s3 cp \
+            order-processor.zip \
+            "s3://${BUCKET_NAME}/${ORDER_PROCESSOR_CODE_KEY}" \
+            --region "${AWS_REGION}"
 
-  CancelOrderMethod:
-    Type: AWS::ApiGateway::Method
+          echo ""
+          echo "Order Processor Lambda uploaded successfully."
 
-    Properties:
+          echo ""
+          echo "S3 Object:"
+          echo "s3://${BUCKET_NAME}/${ORDER_PROCESSOR_CODE_KEY}"
 
-      RestApiId:
-        !Ref ProductApi
 
-      ResourceId:
-        !Ref OrderIdResource
+      # ======================================================
+      # 17. VERIFY PRODUCT PACKAGE IN S3
+      # ======================================================
 
-      HttpMethod:
-        PATCH
+      - name: Verify Product Lambda package in S3
 
-      AuthorizationType:
-        CUSTOM
+        shell: bash
 
-      AuthorizerId:
-        !Ref ProductApiAuthorizer
+        run: |
 
-      Integration:
+          set -e
 
-        Type:
-          AWS_PROXY
+          BUCKET_NAME="${{ steps.artifact-bucket.outputs.bucket }}"
 
-        IntegrationHttpMethod:
-          POST
+          echo "======================================"
+          echo "VERIFYING PRODUCT PACKAGE IN S3"
+          echo "======================================"
 
-        Uri:
-          !Sub
-            - arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaArn}/invocations
-            - LambdaArn: !GetAtt OrderProcessorLambda.Arn
+          aws s3api head-object \
+            --bucket "${BUCKET_NAME}" \
+            --key "${PRODUCT_CODE_KEY}" \
+            --region "${AWS_REGION}"
 
+          echo ""
+          echo "Product package verified in S3."
 
-  # ============================================================
-  # API GATEWAY -> PRODUCT LAMBDA PERMISSION
-  # ============================================================
 
-  ProductLambdaApiPermission:
-    Type: AWS::Lambda::Permission
+      # ======================================================
+      # 18. VERIFY SCHEMA PACKAGE IN S3
+      # ======================================================
 
-    Properties:
+      - name: Verify Schema Lambda package in S3
 
-      FunctionName:
-        !Ref ProductLambda
+        shell: bash
 
-      Action:
-        lambda:InvokeFunction
+        run: |
 
-      Principal:
-        apigateway.amazonaws.com
+          set -e
 
-      SourceArn:
-        !Sub
-          arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${ProductApi}/*/*
+          BUCKET_NAME="${{ steps.artifact-bucket.outputs.bucket }}"
 
+          echo "======================================"
+          echo "VERIFYING SCHEMA PACKAGE IN S3"
+          echo "======================================"
 
-  # ============================================================
-  # API GATEWAY -> ORDER PROCESSOR LAMBDA PERMISSION
-  # ============================================================
+          aws s3api head-object \
+            --bucket "${BUCKET_NAME}" \
+            --key "${SCHEMA_CODE_KEY}" \
+            --region "${AWS_REGION}"
 
-  OrderProcessorLambdaApiPermission:
-    Type: AWS::Lambda::Permission
+          echo ""
+          echo "Schema package verified in S3."
 
-    Properties:
 
-      FunctionName:
-        !Ref OrderProcessorLambda
+      # ======================================================
+      # 19. VERIFY ORDER PROCESSOR PACKAGE IN S3
+      # ======================================================
 
-      Action:
-        lambda:InvokeFunction
+      - name: Verify Order Processor package in S3
 
-      Principal:
-        apigateway.amazonaws.com
+        shell: bash
 
-      SourceArn:
-        !Sub
-          arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${ProductApi}/*/*
+        run: |
 
+          set -e
 
-  # ============================================================
-  # API GATEWAY -> AUTHORIZER LAMBDA PERMISSION
-  # ============================================================
+          BUCKET_NAME="${{ steps.artifact-bucket.outputs.bucket }}"
 
-  AuthorizerLambdaPermission:
-    Type: AWS::Lambda::Permission
+          echo "======================================"
+          echo "VERIFYING ORDER PROCESSOR PACKAGE IN S3"
+          echo "======================================"
 
-    Properties:
+          aws s3api head-object \
+            --bucket "${BUCKET_NAME}" \
+            --key "${ORDER_PROCESSOR_CODE_KEY}" \
+            --region "${AWS_REGION}"
 
-      FunctionName:
-        !Ref AuthorizerLambdaArn
+          echo ""
+          echo "Order Processor package verified in S3."
 
-      Action:
-        lambda:InvokeFunction
 
-      Principal:
-        apigateway.amazonaws.com
+      # ======================================================
+      # 20. SHOW NETWORK OUTPUTS
+      # ======================================================
 
-      SourceArn:
-        !Sub
-          arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${ProductApi}/authorizers/*
+      - name: Show Network Stack Outputs
 
+        shell: bash
 
-  # ============================================================
-  # API DEPLOYMENT
-  # ============================================================
+        run: |
 
-  ApiDeployment:
-    Type: AWS::ApiGateway::Deployment
+          set -e
 
-    DependsOn:
+          echo "======================================"
+          echo "NETWORK STACK OUTPUTS"
+          echo "======================================"
 
-      # --------------------------------------------------------
-      # PRODUCT METHODS
-      # --------------------------------------------------------
+          aws cloudformation describe-stacks \
+            --stack-name "${NETWORK_STACK_NAME}" \
+            --region "${AWS_REGION}" \
+            --query "Stacks[0].Outputs" \
+            --output table
 
-      - GetProductsMethod
-      - CreateProductMethod
-      - GetProductMethod
-      - UpdateProductMethod
-      - DeleteProductMethod
 
-      # --------------------------------------------------------
-      # ORDER METHODS
-      # --------------------------------------------------------
+      # ======================================================
+      # 21. GET PRIVATE SUBNET A
+      # ======================================================
 
-      - CreateOrderMethod
-      - GetOrdersMethod
-      - GetOrderMethod
-      - CancelOrderMethod
+      - name: Get Private Subnet A
 
-    Properties:
+        id: subnet-a
 
-      RestApiId:
-        !Ref ProductApi
+        shell: bash
 
-      Description:
-        !Sub >
-          CloudMart ${Environment} API deployment ${ApiDeploymentVersion}
+        run: |
 
+          set -e
 
-  # ============================================================
-  # API STAGE
-  # ============================================================
+          SUBNET_A=$(aws cloudformation describe-stacks \
+            --stack-name "${NETWORK_STACK_NAME}" \
+            --region "${AWS_REGION}" \
+            --query "Stacks[0].Outputs[?OutputKey=='PrivateSubnetAId'].OutputValue | [0]" \
+            --output text)
 
-  ApiStage:
-    Type: AWS::ApiGateway::Stage
+          if [ -z "${SUBNET_A}" ] || [ "${SUBNET_A}" = "None" ]; then
 
-    Properties:
+            echo "ERROR: PrivateSubnetAId not found."
 
-      RestApiId:
-        !Ref ProductApi
+            exit 1
 
-      DeploymentId:
-        !Ref ApiDeployment
+          fi
 
-      StageName:
-        !Ref Environment
+          echo "Private Subnet A:"
+          echo "${SUBNET_A}"
 
+          echo "subnet=${SUBNET_A}" >> "${GITHUB_OUTPUT}"
 
-# ==============================================================
-# OUTPUTS
-# ==============================================================
 
-Outputs:
+      # ======================================================
+      # 22. GET PRIVATE SUBNET B
+      # ======================================================
 
+      - name: Get Private Subnet B
 
-  # ============================================================
-  # PRODUCT LAMBDA
-  # ============================================================
+        id: subnet-b
 
-  ProductLambdaArn:
-    Description:
-      Product Lambda ARN
+        shell: bash
 
-    Value:
-      !GetAtt ProductLambda.Arn
+        run: |
 
-    Export:
-      Name:
-        !Sub CloudMart-${Environment}-ProductLambdaArn
+          set -e
 
+          SUBNET_B=$(aws cloudformation describe-stacks \
+            --stack-name "${NETWORK_STACK_NAME}" \
+            --region "${AWS_REGION}" \
+            --query "Stacks[0].Outputs[?OutputKey=='PrivateSubnetBId'].OutputValue | [0]" \
+            --output text)
 
-  ProductLambdaName:
-    Description:
-      Product Lambda name
+          if [ -z "${SUBNET_B}" ] || [ "${SUBNET_B}" = "None" ]; then
 
-    Value:
-      !Ref ProductLambda
+            echo "ERROR: PrivateSubnetBId not found."
 
-    Export:
-      Name:
-        !Sub CloudMart-${Environment}-ProductLambdaName
+            exit 1
 
+          fi
 
-  # ============================================================
-  # SCHEMA LAMBDA
-  # ============================================================
+          echo "Private Subnet B:"
+          echo "${SUBNET_B}"
 
-  SchemaLambdaArn:
-    Description:
-      Schema Lambda ARN
+          echo "subnet=${SUBNET_B}" >> "${GITHUB_OUTPUT}"
 
-    Value:
-      !GetAtt SchemaLambda.Arn
 
-    Export:
-      Name:
-        !Sub CloudMart-${Environment}-SchemaLambdaArn
+      # ======================================================
+      # 23. GET LAMBDA SECURITY GROUP
+      # ======================================================
 
+      - name: Get Lambda Security Group
 
-  SchemaLambdaName:
-    Description:
-      Schema Lambda name
+        id: security-group
 
-    Value:
-      !Ref SchemaLambda
+        shell: bash
 
-    Export:
-      Name:
-        !Sub CloudMart-${Environment}-SchemaLambdaName
+        run: |
 
+          set -e
 
-  # ============================================================
-  # ORDER PROCESSOR LAMBDA
-  # ============================================================
+          SECURITY_GROUP=$(aws cloudformation describe-stacks \
+            --stack-name "${NETWORK_STACK_NAME}" \
+            --region "${AWS_REGION}" \
+            --query "Stacks[0].Outputs[?OutputKey=='LambdaSecurityGroupId'].OutputValue | [0]" \
+            --output text)
 
-  OrderProcessorLambdaArn:
-    Description:
-      Order Processor Lambda ARN
+          if [ -z "${SECURITY_GROUP}" ] || [ "${SECURITY_GROUP}" = "None" ]; then
 
-    Value:
-      !GetAtt OrderProcessorLambda.Arn
+            echo "ERROR: LambdaSecurityGroupId not found."
 
-    Export:
-      Name:
-        !Sub CloudMart-${Environment}-OrderProcessorLambdaArn
+            exit 1
 
+          fi
 
-  OrderProcessorLambdaName:
-    Description:
-      Order Processor Lambda name
+          echo "Lambda Security Group:"
+          echo "${SECURITY_GROUP}"
 
-    Value:
-      !Ref OrderProcessorLambda
+          echo "security_group=${SECURITY_GROUP}" >> "${GITHUB_OUTPUT}"
 
-    Export:
-      Name:
-        !Sub CloudMart-${Environment}-OrderProcessorLambdaName
 
+      # ======================================================
+      # 24. GET IAM ROLES
+      # ======================================================
 
-  # ============================================================
-  # API ID
-  # ============================================================
+      - name: Get Lambda IAM Roles
 
-  ProductApiId:
-    Description:
-      API Gateway REST API ID
+        id: iam
 
-    Value:
-      !Ref ProductApi
+        shell: bash
 
-    Export:
-      Name:
-        !Sub CloudMart-${Environment}-ProductApiId
+        run: |
 
+          set -e
 
-  # ============================================================
-  # PRODUCT API URL
-  # ============================================================
+          echo "======================================"
+          echo "GETTING LAMBDA IAM ROLES"
+          echo "======================================"
 
-  ProductApiUrl:
-    Description:
-      CloudMart Product API URL
+          aws cloudformation describe-stacks \
+            --stack-name "${IAM_STACK_NAME}" \
+            --region "${AWS_REGION}" \
+            --query "Stacks[0].Outputs" \
+            --output table
 
-    Value:
-      !Sub
-        https://${ProductApi}.execute-api.${AWS::Region}.amazonaws.com/${Environment}/products
+          PRODUCT_ROLE_ARN=$(aws cloudformation describe-stacks \
+            --stack-name "${IAM_STACK_NAME}" \
+            --region "${AWS_REGION}" \
+            --query "Stacks[0].Outputs[?OutputKey=='ProductLambdaRoleArn'].OutputValue | [0]" \
+            --output text)
 
+          ORDER_PROCESSOR_ROLE_ARN=$(aws cloudformation describe-stacks \
+            --stack-name "${IAM_STACK_NAME}" \
+            --region "${AWS_REGION}" \
+            --query "Stacks[0].Outputs[?OutputKey=='OrderProcessorLambdaRoleArn'].OutputValue | [0]" \
+            --output text)
 
-  # ============================================================
-  # ORDER API URL
-  # ============================================================
+          if [ -z "${PRODUCT_ROLE_ARN}" ] || [ "${PRODUCT_ROLE_ARN}" = "None" ]; then
 
-  OrderApiUrl:
-    Description:
-      CloudMart Order API URL
+            echo "ERROR: ProductLambdaRoleArn not found."
 
-    Value:
-      !Sub
-        https://${ProductApi}.execute-api.${AWS::Region}.amazonaws.com/${Environment}/orders
+            exit 1
 
+          fi
 
-  # ============================================================
-  # SNS
-  # ============================================================
+          if [ -z "${ORDER_PROCESSOR_ROLE_ARN}" ] || [ "${ORDER_PROCESSOR_ROLE_ARN}" = "None" ]; then
 
-  LowStockTopicArn:
-    Description:
-      Low-stock SNS topic ARN
+            echo "ERROR: OrderProcessorLambdaRoleArn not found."
 
-    Value:
-      !Ref LowStockTopic
+            echo ""
+            echo "IMPORTANT:"
+            echo "Deploy the updated IAM stack first."
 
-    Export:
-      Name:
-        !Sub CloudMart-${Environment}-LowStockTopicArn
+            exit 1
+
+          fi
+
+          echo ""
+          echo "Product Lambda Role:"
+          echo "${PRODUCT_ROLE_ARN}"
+
+          echo ""
+          echo "Order Processor Lambda Role:"
+          echo "${ORDER_PROCESSOR_ROLE_ARN}"
+
+          echo "product_role_arn=${PRODUCT_ROLE_ARN}" >> "${GITHUB_OUTPUT}"
+
+          echo "order_processor_role_arn=${ORDER_PROCESSOR_ROLE_ARN}" >> "${GITHUB_OUTPUT}"
+
+
+      # ======================================================
+      # 25. GET AUTHORIZER LAMBDA ARN
+      # ======================================================
+
+      - name: Get Authorizer Lambda ARN
+
+        id: authorizer
+
+        shell: bash
+
+        run: |
+
+          set -e
+
+          echo "======================================"
+          echo "GETTING AUTHORIZER LAMBDA ARN"
+          echo "======================================"
+
+          aws cloudformation describe-stacks \
+            --stack-name "${AUTH_STACK_NAME}" \
+            --region "${AWS_REGION}" \
+            --query "Stacks[0].Outputs" \
+            --output table
+
+          AUTHORIZE_ARN=$(aws cloudformation describe-stacks \
+            --stack-name "${AUTH_STACK_NAME}" \
+            --region "${AWS_REGION}" \
+            --query "Stacks[0].Outputs[?OutputKey=='AuthorizerLambdaArn'].OutputValue | [0]" \
+            --output text)
+
+          if [ -z "${AUTHORIZE_ARN}" ] || [ "${AUTHORIZE_ARN}" = "None" ]; then
+
+            echo "ERROR: AuthorizerLambdaArn not found."
+
+            exit 1
+
+          fi
+
+          echo ""
+          echo "Authorizer Lambda:"
+          echo "${AUTHORIZE_ARN}"
+
+          echo "authorizer_arn=${AUTHORIZE_ARN}" >> "${GITHUB_OUTPUT}"
+
+
+      # ======================================================
+      # 26. VALIDATE API CLOUDFORMATION
+      # ======================================================
+
+      - name: Validate API CloudFormation
+
+        shell: bash
+
+        run: |
+
+          set -e
+
+          echo "======================================"
+          echo "VALIDATING API CLOUDFORMATION"
+          echo "======================================"
+
+          aws cloudformation validate-template \
+            --template-body file://cloudformation/api/api-stack.yaml \
+            --region "${AWS_REGION}"
+
+          echo ""
+          echo "CloudFormation validation successful."
+
+
+      # ======================================================
+      # 27. DEPLOY API STACK
+      # ======================================================
+
+      - name: Deploy API CloudFormation
+
+        shell: bash
+
+        run: |
+
+          set -e
+
+          echo "======================================"
+          echo "DEPLOYING CLOUDMART API"
+          echo "======================================"
+
+          PRIVATE_SUBNET_A="${{ steps.subnet-a.outputs.subnet }}"
+
+          PRIVATE_SUBNET_B="${{ steps.subnet-b.outputs.subnet }}"
+
+          PRIVATE_SUBNETS="${PRIVATE_SUBNET_A},${PRIVATE_SUBNET_B}"
+
+          LAMBDA_SECURITY_GROUP="${{ steps.security-group.outputs.security_group }}"
+
+          PRODUCT_ROLE="${{ steps.iam.outputs.product_role_arn }}"
+
+          ORDER_PROCESSOR_ROLE="${{ steps.iam.outputs.order_processor_role_arn }}"
+
+          AUTHORIZE_ARN="${{ steps.authorizer.outputs.authorizer_arn }}"
+
+          PRODUCT_BUCKET="${{ steps.artifact-bucket.outputs.bucket }}"
+
+          echo ""
+          echo "Environment:"
+          echo "${ENVIRONMENT}"
+
+          echo ""
+          echo "Private Subnets:"
+          echo "${PRIVATE_SUBNETS}"
+
+          echo ""
+          echo "Lambda Security Group:"
+          echo "${LAMBDA_SECURITY_GROUP}"
+
+          echo ""
+          echo "Product Lambda IAM Role:"
+          echo "${PRODUCT_ROLE}"
+
+          echo ""
+          echo "Order Processor IAM Role:"
+          echo "${ORDER_PROCESSOR_ROLE}"
+
+          echo ""
+          echo "Authorizer Lambda:"
+          echo "${AUTHORIZE_ARN}"
+
+          echo ""
+          echo "Lambda Artifact Bucket:"
+          echo "${PRODUCT_BUCKET}"
+
+          echo ""
+          echo "Product Code Key:"
+          echo "${PRODUCT_CODE_KEY}"
+
+          echo ""
+          echo "Schema Code Key:"
+          echo "${SCHEMA_CODE_KEY}"
+
+          echo ""
+          echo "Order Processor Code Key:"
+          echo "${ORDER_PROCESSOR_CODE_KEY}"
+
+          echo ""
+          echo "Starting CloudFormation deployment..."
+
+          aws cloudformation deploy \
+            --stack-name "${API_STACK_NAME}" \
+            --template-file cloudformation/api/api-stack.yaml \
+            --region "${AWS_REGION}" \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --parameter-overrides \
+              Environment="${ENVIRONMENT}" \
+              PrivateSubnetIds="${PRIVATE_SUBNETS}" \
+              LambdaSecurityGroupId="${LAMBDA_SECURITY_GROUP}" \
+              ProductLambdaExecutionRoleArn="${PRODUCT_ROLE}" \
+              OrderProcessorLambdaExecutionRoleArn="${ORDER_PROCESSOR_ROLE}" \
+              AuthorizerLambdaArn="${AUTHORIZE_ARN}" \
+              ProductLambdaCodeBucket="${PRODUCT_BUCKET}" \
+              ProductLambdaCodeKey="${PRODUCT_CODE_KEY}" \
+              SchemaLambdaCodeKey="${SCHEMA_CODE_KEY}" \
+              OrderProcessorLambdaCodeKey="${ORDER_PROCESSOR_CODE_KEY}" \
+              DBHostParameter="/cloudmart/dev/db/host" \
+              DBPortParameter="/cloudmart/dev/db/port" \
+              DBNameParameter="/cloudmart/dev/db/name" \
+              DBUsernameParameter="/cloudmart/dev/db/username" \
+              DBPasswordParameter="/cloudmart/dev/db/password" \
+              AuthorizerCacheTTL="300" \
+              EventBusName="cloudmart-dev-event-bus" \
+              LowStockEmail="${{ secrets.LOW_STOCK_EMAIL }}" \
+            --no-fail-on-empty-changeset
+
+          echo ""
+          echo "======================================"
+          echo "API DEPLOYMENT COMPLETE"
+          echo "======================================"
+
+
+      # ======================================================
+      # 28. INITIALIZE / UPDATE DATABASE SCHEMA
+      # ======================================================
+
+      - name: Initialize Database Schema
+
+        shell: bash
+
+        run: |
+
+          set -e
+
+          echo "======================================"
+          echo "INITIALIZING DATABASE SCHEMA"
+          echo "======================================"
+
+          SCHEMA_LAMBDA_NAME="CloudMart-${ENVIRONMENT}-schema"
+
+          echo ""
+          echo "Invoking:"
+          echo "${SCHEMA_LAMBDA_NAME}"
+
+          aws lambda invoke \
+            --function-name "${SCHEMA_LAMBDA_NAME}" \
+            --invocation-type RequestResponse \
+            --region "${AWS_REGION}" \
+            --payload '{}' \
+            schema-response.json
+
+          echo ""
+          echo "Schema Lambda response:"
+
+          cat schema-response.json
+
+          echo ""
+
+          if grep -q '"errorMessage"' schema-response.json; then
+
+            echo ""
+            echo "ERROR: Schema Lambda returned an error."
+
+            exit 1
+
+          fi
+
+          echo ""
+          echo "Database schema initialization completed."
+
+
+      # ======================================================
+      # 29. VERIFY PATCH ORDER API
+      #
+      # NEW STEP
+      #
+      # This verifies that API Gateway contains:
+      #
+      # PATCH /orders/{id}
+      #
+      # It does NOT call the API.
+      # It only verifies that the PATCH method exists
+      # in the deployed API Gateway resource.
+      # ======================================================
+
+      - name: Verify PATCH /orders/{id} API
+
+        shell: bash
+
+        run: |
+
+          set -e
+
+          echo "======================================"
+          echo "VERIFYING PATCH /orders/{id}"
+          echo "======================================"
+
+          API_ID=$(aws cloudformation describe-stacks \
+            --stack-name "${API_STACK_NAME}" \
+            --region "${AWS_REGION}" \
+            --query "Stacks[0].Outputs[?OutputKey=='ProductApiId'].OutputValue | [0]" \
+            --output text)
+
+          if [ -z "${API_ID}" ] || [ "${API_ID}" = "None" ]; then
+
+            echo "ERROR: ProductApiId was not found."
+
+            exit 1
+
+          fi
+
+          echo ""
+          echo "API Gateway ID:"
+          echo "${API_ID}"
+
+          echo ""
+          echo "Finding /orders/{id} resource..."
+
+          ORDER_ID_RESOURCE=$(aws apigateway get-resources \
+            --rest-api-id "${API_ID}" \
+            --region "${AWS_REGION}" \
+            --query "items[?path=='/orders/{id}'].id | [0]" \
+            --output text)
+
+          if [ -z "${ORDER_ID_RESOURCE}" ] || [ "${ORDER_ID_RESOURCE}" = "None" ]; then
+
+            echo ""
+            echo "ERROR: /orders/{id} resource was not found."
+
+            echo ""
+            echo "Available API resources:"
+
+            aws apigateway get-resources \
+              --rest-api-id "${API_ID}" \
+              --region "${AWS_REGION}" \
+              --query "items[*].path" \
+              --output table
+
+            exit 1
+
+          fi
+
+          echo ""
+          echo "/orders/{id} Resource ID:"
+          echo "${ORDER_ID_RESOURCE}"
+
+          echo ""
+          echo "Checking PATCH method..."
+
+          PATCH_METHOD=$(aws apigateway get-resource \
+            --rest-api-id "${API_ID}" \
+            --resource-id "${ORDER_ID_RESOURCE}" \
+            --region "${AWS_REGION}" \
+            --query "resourceMethods.PATCH.httpMethod" \
+            --output text)
+
+          if [ -z "${PATCH_METHOD}" ] || [ "${PATCH_METHOD}" = "None" ]; then
+
+            echo ""
+            echo "ERROR: PATCH method was NOT found on /orders/{id}."
+
+            echo ""
+            echo "Methods currently configured on /orders/{id}:"
+
+            aws apigateway get-resource \
+              --rest-api-id "${API_ID}" \
+              --resource-id "${ORDER_ID_RESOURCE}" \
+              --region "${AWS_REGION}" \
+              --query "resourceMethods" \
+              --output json
+
+            exit 1
+
+          fi
+
+          if [ "${PATCH_METHOD}" != "PATCH" ]; then
+
+            echo ""
+            echo "ERROR: Unexpected PATCH method value:"
+            echo "${PATCH_METHOD}"
+
+            exit 1
+
+          fi
+
+          echo ""
+          echo "======================================"
+          echo "PATCH METHOD VERIFIED"
+          echo "======================================"
+
+          echo ""
+          echo "PATCH /orders/{id} exists in API Gateway."
+
+          echo ""
+          echo "API ID:"
+          echo "${API_ID}"
+
+          echo ""
+          echo "Resource ID:"
+          echo "${ORDER_ID_RESOURCE}"
+
+          echo ""
+          echo "HTTP Method:"
+          echo "${PATCH_METHOD}"
+
+
+      # ======================================================
+      # 30. SHOW API STACK STATUS
+      # ======================================================
+
+      - name: Show API Stack status
+
+        shell: bash
+
+        run: |
+
+          echo "======================================"
+          echo "CLOUDFORMATION STACK STATUS"
+          echo "======================================"
+
+          aws cloudformation describe-stacks \
+            --stack-name "${API_STACK_NAME}" \
+            --region "${AWS_REGION}" \
+            --query "Stacks[0].[StackName,StackStatus]" \
+            --output table
+
+
+      # ======================================================
+      # 31. SHOW API STACK OUTPUTS
+      # ======================================================
+
+      - name: Show API Stack outputs
+
+        shell: bash
+
+        run: |
+
+          echo "======================================"
+          echo "API STACK OUTPUTS"
+          echo "======================================"
+
+          aws cloudformation describe-stacks \
+            --stack-name "${API_STACK_NAME}" \
+            --region "${AWS_REGION}" \
+            --query "Stacks[0].Outputs" \
+            --output table
+
+
+      # ======================================================
+      # 32. SHOW CLOUDFORMATION EVENTS
+      # ======================================================
+
+      - name: Show CloudFormation events
+
+        if: always()
+
+        shell: bash
+
+        run: |
+
+          echo "======================================"
+          echo "CLOUDFORMATION EVENTS"
+          echo "======================================"
+
+          aws cloudformation describe-stack-events \
+            --stack-name "${API_STACK_NAME}" \
+            --region "${AWS_REGION}" \
+            --max-items 30 \
+            --query "StackEvents[*].[Timestamp,LogicalResourceId,ResourceType,ResourceStatus,ResourceStatusReason]" \
+            --output table || true
