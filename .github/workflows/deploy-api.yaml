@@ -1,11 +1,9 @@
 name: CloudMart API Infrastructure
 
 on:
-
   push:
     branches:
       - orders
-
     paths:
       - "cloudformation/api/api-stack.yaml"
       - "lambda/product/**"
@@ -31,29 +29,20 @@ permissions:
 # ============================================================
 
 env:
-
   AWS_REGION: ap-south-1
-
   ENVIRONMENT: dev
 
   API_STACK_NAME: cloudmart-dev-api
-
   DATA_STACK_NAME: cloudmart-dev-data-new
-
   NETWORK_STACK_NAME: cloudmart-dev-network
-
   IAM_STACK_NAME: cloudmart-dev-iam
-
   AUTH_STACK_NAME: cloudmart-dev-auth
 
-  # IMPORTANT:
   # Every commit gets a different S3 key.
   # This forces CloudFormation/Lambda to use the new ZIP.
 
   PRODUCT_CODE_KEY: product/product-${{ github.sha }}.zip
-
   SCHEMA_CODE_KEY: schema/schema-${{ github.sha }}.zip
-
   ORDER_PROCESSOR_CODE_KEY: order-processor/order-processor-${{ github.sha }}.zip
 
 
@@ -77,26 +66,15 @@ jobs:
       # ======================================================
 
       - name: Checkout source code
-
         uses: actions/checkout@v4
 
 
       # ======================================================
       # 2. SETUP PYTHON
       # ======================================================
-      #
-      # IMPORTANT:
-      # Lambda runtime is Python 3.12.
-      #
-      # Therefore we package dependencies using Python 3.12.
-      #
-      # This is especially important for cryptography.
-      # ======================================================
 
       - name: Setup Python 3.12
-
         uses: actions/setup-python@v5
-
         with:
           python-version: "3.12"
 
@@ -106,13 +84,9 @@ jobs:
       # ======================================================
 
       - name: Configure AWS credentials
-
         uses: aws-actions/configure-aws-credentials@v4
-
         with:
-
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
-
           aws-region: ${{ env.AWS_REGION }}
 
 
@@ -121,11 +95,8 @@ jobs:
       # ======================================================
 
       - name: Verify AWS identity
-
         shell: bash
-
         run: |
-
           set -e
 
           echo "======================================"
@@ -152,11 +123,8 @@ jobs:
       # ======================================================
 
       - name: Verify required CloudFormation stacks
-
         shell: bash
-
         run: |
-
           set -e
 
           echo "======================================"
@@ -213,11 +181,8 @@ jobs:
       # ======================================================
 
       - name: Show Data Stack Outputs
-
         shell: bash
-
         run: |
-
           set -e
 
           echo "======================================"
@@ -236,13 +201,9 @@ jobs:
       # ======================================================
 
       - name: Get Lambda Artifact Bucket
-
         id: artifact-bucket
-
         shell: bash
-
         run: |
-
           set -e
 
           echo "======================================"
@@ -259,8 +220,8 @@ jobs:
 
             echo ""
             echo "ERROR: LambdaArtifactBucketName was not found."
-
             echo ""
+
             echo "Available Data Stack outputs:"
 
             aws cloudformation describe-stacks \
@@ -270,7 +231,6 @@ jobs:
               --output table
 
             exit 1
-
           fi
 
           echo ""
@@ -285,11 +245,8 @@ jobs:
       # ======================================================
 
       - name: Package Product Lambda
-
         shell: bash
-
         run: |
-
           set -e
 
           echo "======================================"
@@ -297,7 +254,6 @@ jobs:
           echo "======================================"
 
           rm -rf build/product
-
           rm -f product.zip
 
           mkdir -p build/product
@@ -362,11 +318,8 @@ jobs:
       # ======================================================
 
       - name: Verify Product Lambda package
-
         shell: bash
-
         run: |
-
           set -e
 
           echo "======================================"
@@ -374,21 +327,15 @@ jobs:
           echo "======================================"
 
           if [ ! -f product.zip ]; then
-
             echo "ERROR: product.zip was not created."
-
             exit 1
-
           fi
 
           unzip -t product.zip >/dev/null
 
           if ! unzip -l product.zip | grep -q "lambda_function.py"; then
-
             echo "ERROR: Product lambda_function.py is missing."
-
             exit 1
-
           fi
 
           echo ""
@@ -400,11 +347,8 @@ jobs:
       # ======================================================
 
       - name: Package Schema Lambda
-
         shell: bash
-
         run: |
-
           set -e
 
           echo "======================================"
@@ -412,7 +356,6 @@ jobs:
           echo "======================================"
 
           rm -rf build/schema
-
           rm -f schema.zip
 
           mkdir -p build/schema
@@ -427,19 +370,13 @@ jobs:
           echo "Checking Schema Lambda requirements..."
 
           if [ ! -f lambda/schema/requirements.txt ]; then
-
             echo "ERROR: lambda/schema/requirements.txt not found."
-
             exit 1
-
           fi
 
           if [ ! -s lambda/schema/requirements.txt ]; then
-
             echo "ERROR: lambda/schema/requirements.txt is empty."
-
             exit 1
-
           fi
 
           echo ""
@@ -460,11 +397,8 @@ jobs:
           echo "Checking cryptography installation..."
 
           if ! find build/schema -maxdepth 1 -type d -name "cryptography*" | grep -q "cryptography"; then
-
             echo "ERROR: cryptography was NOT installed into Schema Lambda package."
-
             exit 1
-
           fi
 
           echo ""
@@ -497,11 +431,8 @@ jobs:
       # ======================================================
 
       - name: Verify Schema Lambda package
-
         shell: bash
-
         run: |
-
           set -e
 
           echo "======================================"
@@ -509,57 +440,40 @@ jobs:
           echo "======================================"
 
           if [ ! -f schema.zip ]; then
-
             echo "ERROR: schema.zip was not created."
-
             exit 1
-
           fi
 
           unzip -t schema.zip >/dev/null
 
           if ! unzip -l schema.zip | grep -q "lambda_function.py"; then
-
             echo "ERROR: Schema lambda_function.py is missing."
-
             exit 1
-
           fi
 
           if ! unzip -l schema.zip | grep -q "cryptography"; then
-
             echo "ERROR: cryptography is missing from schema.zip."
-
             exit 1
-
           fi
 
           if ! unzip -l schema.zip | grep -q "pymysql"; then
-
             echo "ERROR: PyMySQL is missing from schema.zip."
-
             exit 1
-
           fi
 
           echo ""
           echo "Schema Lambda package is valid."
-
           echo "PyMySQL found."
-
           echo "cryptography found."
 
 
       # ======================================================
-      # 12. PACKAGE SINGLE ORDER PROCESSOR LAMBDA
+      # 12. PACKAGE ORDER PROCESSOR LAMBDA
       # ======================================================
 
       - name: Package Order Processor Lambda
-
         shell: bash
-
         run: |
-
           set -e
 
           echo "======================================"
@@ -567,7 +481,6 @@ jobs:
           echo "======================================"
 
           rm -rf build/order-processor
-
           rm -f order-processor.zip
 
           mkdir -p build/order-processor
@@ -576,11 +489,8 @@ jobs:
           echo "Checking Order Processor source..."
 
           if [ ! -f lambda/order_processor/lambda_function.py ]; then
-
             echo "ERROR: lambda/order_processor/lambda_function.py not found."
-
             exit 1
-
           fi
 
           echo ""
@@ -593,19 +503,13 @@ jobs:
           echo "Checking Order Processor requirements..."
 
           if [ ! -f lambda/order_processor/requirements.txt ]; then
-
             echo "ERROR: lambda/order_processor/requirements.txt not found."
-
             exit 1
-
           fi
 
           if [ ! -s lambda/order_processor/requirements.txt ]; then
-
             echo "ERROR: lambda/order_processor/requirements.txt is empty."
-
             exit 1
-
           fi
 
           echo ""
@@ -626,11 +530,8 @@ jobs:
           echo "Checking cryptography installation..."
 
           if ! find build/order-processor -maxdepth 1 -type d -name "cryptography*" | grep -q "cryptography"; then
-
             echo "ERROR: cryptography was NOT installed into Order Processor package."
-
             exit 1
-
           fi
 
           echo ""
@@ -663,11 +564,8 @@ jobs:
       # ======================================================
 
       - name: Verify Order Processor Lambda package
-
         shell: bash
-
         run: |
-
           set -e
 
           echo "======================================"
@@ -675,44 +573,30 @@ jobs:
           echo "======================================"
 
           if [ ! -f order-processor.zip ]; then
-
             echo "ERROR: order-processor.zip was not created."
-
             exit 1
-
           fi
 
           unzip -t order-processor.zip >/dev/null
 
           if ! unzip -l order-processor.zip | grep -q "lambda_function.py"; then
-
             echo "ERROR: Order Processor lambda_function.py is missing."
-
             exit 1
-
           fi
 
           if ! unzip -l order-processor.zip | grep -q "cryptography"; then
-
             echo "ERROR: cryptography is missing from order-processor.zip."
-
             exit 1
-
           fi
 
           if ! unzip -l order-processor.zip | grep -q "pymysql"; then
-
             echo "ERROR: PyMySQL is missing from order-processor.zip."
-
             exit 1
-
           fi
 
           echo ""
           echo "Order Processor package is valid."
-
           echo "PyMySQL found."
-
           echo "cryptography found."
 
 
@@ -721,11 +605,8 @@ jobs:
       # ======================================================
 
       - name: Upload Product Lambda package
-
         shell: bash
-
         run: |
-
           set -e
 
           BUCKET_NAME="${{ steps.artifact-bucket.outputs.bucket }}"
@@ -752,11 +633,8 @@ jobs:
       # ======================================================
 
       - name: Upload Schema Lambda package
-
         shell: bash
-
         run: |
-
           set -e
 
           BUCKET_NAME="${{ steps.artifact-bucket.outputs.bucket }}"
@@ -783,11 +661,8 @@ jobs:
       # ======================================================
 
       - name: Upload Order Processor Lambda package
-
         shell: bash
-
         run: |
-
           set -e
 
           BUCKET_NAME="${{ steps.artifact-bucket.outputs.bucket }}"
@@ -814,11 +689,8 @@ jobs:
       # ======================================================
 
       - name: Verify Product Lambda package in S3
-
         shell: bash
-
         run: |
-
           set -e
 
           BUCKET_NAME="${{ steps.artifact-bucket.outputs.bucket }}"
@@ -841,11 +713,8 @@ jobs:
       # ======================================================
 
       - name: Verify Schema Lambda package in S3
-
         shell: bash
-
         run: |
-
           set -e
 
           BUCKET_NAME="${{ steps.artifact-bucket.outputs.bucket }}"
@@ -868,11 +737,8 @@ jobs:
       # ======================================================
 
       - name: Verify Order Processor package in S3
-
         shell: bash
-
         run: |
-
           set -e
 
           BUCKET_NAME="${{ steps.artifact-bucket.outputs.bucket }}"
@@ -895,11 +761,8 @@ jobs:
       # ======================================================
 
       - name: Show Network Stack Outputs
-
         shell: bash
-
         run: |
-
           set -e
 
           echo "======================================"
@@ -918,13 +781,9 @@ jobs:
       # ======================================================
 
       - name: Get Private Subnet A
-
         id: subnet-a
-
         shell: bash
-
         run: |
-
           set -e
 
           SUBNET_A=$(aws cloudformation describe-stacks \
@@ -934,11 +793,8 @@ jobs:
             --output text)
 
           if [ -z "${SUBNET_A}" ] || [ "${SUBNET_A}" = "None" ]; then
-
             echo "ERROR: PrivateSubnetAId not found."
-
             exit 1
-
           fi
 
           echo "Private Subnet A:"
@@ -952,13 +808,9 @@ jobs:
       # ======================================================
 
       - name: Get Private Subnet B
-
         id: subnet-b
-
         shell: bash
-
         run: |
-
           set -e
 
           SUBNET_B=$(aws cloudformation describe-stacks \
@@ -968,11 +820,8 @@ jobs:
             --output text)
 
           if [ -z "${SUBNET_B}" ] || [ "${SUBNET_B}" = "None" ]; then
-
             echo "ERROR: PrivateSubnetBId not found."
-
             exit 1
-
           fi
 
           echo "Private Subnet B:"
@@ -986,13 +835,9 @@ jobs:
       # ======================================================
 
       - name: Get Lambda Security Group
-
         id: security-group
-
         shell: bash
-
         run: |
-
           set -e
 
           SECURITY_GROUP=$(aws cloudformation describe-stacks \
@@ -1002,11 +847,8 @@ jobs:
             --output text)
 
           if [ -z "${SECURITY_GROUP}" ] || [ "${SECURITY_GROUP}" = "None" ]; then
-
             echo "ERROR: LambdaSecurityGroupId not found."
-
             exit 1
-
           fi
 
           echo "Lambda Security Group:"
@@ -1020,13 +862,9 @@ jobs:
       # ======================================================
 
       - name: Get Lambda IAM Roles
-
         id: iam
-
         shell: bash
-
         run: |
-
           set -e
 
           echo "======================================"
@@ -1052,23 +890,16 @@ jobs:
             --output text)
 
           if [ -z "${PRODUCT_ROLE_ARN}" ] || [ "${PRODUCT_ROLE_ARN}" = "None" ]; then
-
             echo "ERROR: ProductLambdaRoleArn not found."
-
             exit 1
-
           fi
 
           if [ -z "${ORDER_PROCESSOR_ROLE_ARN}" ] || [ "${ORDER_PROCESSOR_ROLE_ARN}" = "None" ]; then
-
             echo "ERROR: OrderProcessorLambdaRoleArn not found."
-
             echo ""
             echo "IMPORTANT:"
             echo "Deploy the updated IAM stack first."
-
             exit 1
-
           fi
 
           echo ""
@@ -1080,7 +911,6 @@ jobs:
           echo "${ORDER_PROCESSOR_ROLE_ARN}"
 
           echo "product_role_arn=${PRODUCT_ROLE_ARN}" >> "${GITHUB_OUTPUT}"
-
           echo "order_processor_role_arn=${ORDER_PROCESSOR_ROLE_ARN}" >> "${GITHUB_OUTPUT}"
 
 
@@ -1089,13 +919,9 @@ jobs:
       # ======================================================
 
       - name: Get Authorizer Lambda ARN
-
         id: authorizer
-
         shell: bash
-
         run: |
-
           set -e
 
           echo "======================================"
@@ -1115,11 +941,8 @@ jobs:
             --output text)
 
           if [ -z "${AUTHORIZE_ARN}" ] || [ "${AUTHORIZE_ARN}" = "None" ]; then
-
             echo "ERROR: AuthorizerLambdaArn not found."
-
             exit 1
-
           fi
 
           echo ""
@@ -1134,11 +957,8 @@ jobs:
       # ======================================================
 
       - name: Validate API CloudFormation
-
         shell: bash
-
         run: |
-
           set -e
 
           echo "======================================"
@@ -1158,11 +978,8 @@ jobs:
       # ======================================================
 
       - name: Deploy API CloudFormation
-
         shell: bash
-
         run: |
-
           set -e
 
           echo "======================================"
@@ -1170,7 +987,6 @@ jobs:
           echo "======================================"
 
           PRIVATE_SUBNET_A="${{ steps.subnet-a.outputs.subnet }}"
-
           PRIVATE_SUBNET_B="${{ steps.subnet-b.outputs.subnet }}"
 
           PRIVATE_SUBNETS="${PRIVATE_SUBNET_A},${PRIVATE_SUBNET_B}"
@@ -1178,7 +994,6 @@ jobs:
           LAMBDA_SECURITY_GROUP="${{ steps.security-group.outputs.security_group }}"
 
           PRODUCT_ROLE="${{ steps.iam.outputs.product_role_arn }}"
-
           ORDER_PROCESSOR_ROLE="${{ steps.iam.outputs.order_processor_role_arn }}"
 
           AUTHORIZE_ARN="${{ steps.authorizer.outputs.authorizer_arn }}"
@@ -1202,7 +1017,7 @@ jobs:
           echo "${PRODUCT_ROLE}"
 
           echo ""
-          echo "Order Processor IAM Role:"
+          echo "Order Processor Lambda IAM Role:"
           echo "${ORDER_PROCESSOR_ROLE}"
 
           echo ""
@@ -1265,11 +1080,8 @@ jobs:
       # ======================================================
 
       - name: Initialize Database Schema
-
         shell: bash
-
         run: |
-
           set -e
 
           echo "======================================"
@@ -1297,12 +1109,9 @@ jobs:
           echo ""
 
           if grep -q '"errorMessage"' schema-response.json; then
-
             echo ""
             echo "ERROR: Schema Lambda returned an error."
-
             exit 1
-
           fi
 
           echo ""
@@ -1312,25 +1121,23 @@ jobs:
       # ======================================================
       # 29. VERIFY PATCH ORDER API
       #
-      # This verifies that API Gateway contains:
+      # Verifies:
       #
       # PATCH /orders/{id}
       #
-      # IMPORTANT:
-      # API Gateway returns PATCH as:
+      # API Gateway returns methods like:
       #
-      # "PATCH": {}
+      # {
+      #   "GET": {},
+      #   "PATCH": {}
+      # }
       #
-      # Therefore we check whether the PATCH KEY exists,
-      # instead of checking PATCH.httpMethod.
+      # Therefore we check whether PATCH exists as a key.
       # ======================================================
 
       - name: Verify PATCH /orders/{id} API
-
         shell: bash
-
         run: |
-
           set -e
 
           echo "======================================"
@@ -1344,11 +1151,8 @@ jobs:
             --output text)
 
           if [ -z "${API_ID}" ] || [ "${API_ID}" = "None" ]; then
-
             echo "ERROR: ProductApiId was not found."
-
             exit 1
-
           fi
 
           echo ""
@@ -1368,8 +1172,8 @@ jobs:
 
             echo ""
             echo "ERROR: /orders/{id} resource was not found."
-
             echo ""
+
             echo "Available API resources:"
 
             aws apigateway get-resources \
@@ -1379,7 +1183,6 @@ jobs:
               --output table
 
             exit 1
-
           fi
 
           echo ""
@@ -1387,7 +1190,7 @@ jobs:
           echo "${ORDER_ID_RESOURCE}"
 
           echo ""
-          echo "Checking PATCH method..."
+          echo "Checking methods..."
 
           METHODS=$(aws apigateway get-resource \
             --rest-api-id "${API_ID}" \
@@ -1419,14 +1222,12 @@ else:
 
             echo ""
             echo "ERROR: PATCH method was NOT found on /orders/{id}."
-
             echo ""
-            echo "Methods currently configured on /orders/{id}:"
 
+            echo "Methods currently configured on /orders/{id}:"
             echo "${METHODS}"
 
             exit 1
-
           fi
 
           echo ""
@@ -1455,11 +1256,8 @@ else:
       # ======================================================
 
       - name: Show API Stack status
-
         shell: bash
-
         run: |
-
           echo "======================================"
           echo "CLOUDFORMATION STACK STATUS"
           echo "======================================"
@@ -1476,11 +1274,8 @@ else:
       # ======================================================
 
       - name: Show API Stack outputs
-
         shell: bash
-
         run: |
-
           echo "======================================"
           echo "API STACK OUTPUTS"
           echo "======================================"
@@ -1497,13 +1292,9 @@ else:
       # ======================================================
 
       - name: Show CloudFormation events
-
         if: always()
-
         shell: bash
-
         run: |
-
           echo "======================================"
           echo "CLOUDFORMATION EVENTS"
           echo "======================================"
