@@ -893,6 +893,48 @@ Resources:
 
 
   # ============================================================
+  # PATCH /orders/{id}
+  #
+  # USED TO CANCEL AN ORDER
+  #
+  # DIRECTLY -> ORDER PROCESSOR LAMBDA
+  # ============================================================
+
+  CancelOrderMethod:
+    Type: AWS::ApiGateway::Method
+
+    Properties:
+
+      RestApiId:
+        !Ref ProductApi
+
+      ResourceId:
+        !Ref OrderIdResource
+
+      HttpMethod:
+        PATCH
+
+      AuthorizationType:
+        CUSTOM
+
+      AuthorizerId:
+        !Ref ProductApiAuthorizer
+
+      Integration:
+
+        Type:
+          AWS_PROXY
+
+        IntegrationHttpMethod:
+          POST
+
+        Uri:
+          !Sub
+            - arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaArn}/invocations
+            - LambdaArn: !GetAtt OrderProcessorLambda.Arn
+
+
+  # ============================================================
   # API GATEWAY -> PRODUCT LAMBDA PERMISSION
   # ============================================================
 
@@ -987,14 +1029,17 @@ Resources:
       - CreateOrderMethod
       - GetOrdersMethod
       - GetOrderMethod
+      - CancelOrderMethod
 
     Properties:
 
       RestApiId:
         !Ref ProductApi
 
+      # v2 forces a new API Gateway deployment so that
+      # PATCH /orders/{id} becomes available in the dev stage.
       Description:
-        !Sub CloudMart ${Environment} API deployment
+        !Sub CloudMart ${Environment} API deployment v2
 
 
   # ============================================================

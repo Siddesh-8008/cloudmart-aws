@@ -1127,6 +1127,7 @@ def get_order_by_id(event):
 # GET ORDERS
 # GET /orders
 # GET /orders?customerId=CUST001
+# GET /orders?customer_id=CUST001
 # ============================================================
 
 def get_orders_by_customer(event):
@@ -1169,11 +1170,25 @@ def get_orders_by_customer(event):
             or {}
         )
 
+        # First support camelCase:
+        # ?customerId=CUST001
+
         requested_customer_id = (
             query_parameters.get(
                 "customerId"
             )
         )
+
+        # Also support snake_case:
+        # ?customer_id=CUST001
+
+        if requested_customer_id is None:
+
+            requested_customer_id = (
+                query_parameters.get(
+                    "customer_id"
+                )
+            )
 
         if requested_customer_id:
 
@@ -1198,7 +1213,17 @@ def get_orders_by_customer(event):
         #
         # -> Still returns CUST001 orders.
         #
+        # GET /orders?customer_id=CUST001
+        # Authorization: Bearer CUST001_TOKEN
+        #
+        # -> Still returns CUST001 orders.
+        #
         # GET /orders?customerId=CUST002
+        # Authorization: Bearer CUST001_TOKEN
+        #
+        # -> 403 Forbidden.
+        #
+        # GET /orders?customer_id=CUST002
         # Authorization: Bearer CUST001_TOKEN
         #
         # -> 403 Forbidden.
@@ -1246,6 +1271,7 @@ def get_orders_by_customer(event):
                 )
 
             # Use customerId from authorizer token.
+
             customer_id = (
                 authenticated_customer_id
             )
@@ -1260,6 +1286,9 @@ def get_orders_by_customer(event):
         # -> ALL orders
         #
         # GET /orders?customerId=CUST001
+        # -> Only CUST001 orders.
+        #
+        # GET /orders?customer_id=CUST001
         # -> Only CUST001 orders.
         # ----------------------------------------------------
 
@@ -1367,6 +1396,7 @@ def get_orders_by_customer(event):
             # ------------------------------------------------
 
             # Admin requested ALL orders.
+
             if role == "admin" and not customer_id:
 
                 return response(
@@ -1379,6 +1409,7 @@ def get_orders_by_customer(event):
 
             # Customer or admin requested a
             # particular customer's orders.
+
             return response(
                 200,
                 {
