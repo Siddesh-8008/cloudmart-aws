@@ -244,11 +244,6 @@ Resources:
         S3Key:
           !Ref ProductLambdaCodeKey
 
-
-      # --------------------------------------------------------
-      # VPC
-      # --------------------------------------------------------
-
       VpcConfig:
 
         SubnetIds:
@@ -257,11 +252,6 @@ Resources:
         SecurityGroupIds:
 
           - !Ref LambdaSecurityGroupId
-
-
-      # --------------------------------------------------------
-      # ENVIRONMENT VARIABLES
-      # --------------------------------------------------------
 
       Environment:
 
@@ -327,11 +317,6 @@ Resources:
         S3Key:
           !Ref SchemaLambdaCodeKey
 
-
-      # --------------------------------------------------------
-      # VPC
-      # --------------------------------------------------------
-
       VpcConfig:
 
         SubnetIds:
@@ -340,11 +325,6 @@ Resources:
         SecurityGroupIds:
 
           - !Ref LambdaSecurityGroupId
-
-
-      # --------------------------------------------------------
-      # ENVIRONMENT VARIABLES
-      # --------------------------------------------------------
 
       Environment:
 
@@ -371,8 +351,6 @@ Resources:
 
   # ============================================================
   # ORDER PROCESSOR LAMBDA
-  #
-  # THIS IS NOW THE ONLY ORDER LAMBDA
   # ============================================================
 
   OrderProcessorLambda:
@@ -409,11 +387,6 @@ Resources:
         S3Key:
           !Ref OrderProcessorLambdaCodeKey
 
-
-      # --------------------------------------------------------
-      # VPC
-      # --------------------------------------------------------
-
       VpcConfig:
 
         SubnetIds:
@@ -422,11 +395,6 @@ Resources:
         SecurityGroupIds:
 
           - !Ref LambdaSecurityGroupId
-
-
-      # --------------------------------------------------------
-      # ENVIRONMENT VARIABLES
-      # --------------------------------------------------------
 
       Environment:
 
@@ -774,8 +742,6 @@ Resources:
 
   # ============================================================
   # POST /orders
-  #
-  # DIRECTLY -> ORDER PROCESSOR LAMBDA
   # ============================================================
 
   CreateOrderMethod:
@@ -814,8 +780,6 @@ Resources:
 
   # ============================================================
   # GET /orders
-  #
-  # DIRECTLY -> ORDER PROCESSOR LAMBDA
   # ============================================================
 
   GetOrdersMethod:
@@ -854,8 +818,6 @@ Resources:
 
   # ============================================================
   # GET /orders/{id}
-  #
-  # DIRECTLY -> ORDER PROCESSOR LAMBDA
   # ============================================================
 
   GetOrderMethod:
@@ -895,9 +857,7 @@ Resources:
   # ============================================================
   # PATCH /orders/{id}
   #
-  # USED TO CANCEL AN ORDER
-  #
-  # DIRECTLY -> ORDER PROCESSOR LAMBDA
+  # CANCEL ORDER
   # ============================================================
 
   CancelOrderMethod:
@@ -1005,9 +965,11 @@ Resources:
 
   # ============================================================
   # API DEPLOYMENT
+  #
+  # V2 FORCES A NEW API GATEWAY DEPLOYMENT
   # ============================================================
 
-  ApiDeployment:
+  ApiDeploymentV2:
     Type: AWS::ApiGateway::Deployment
 
     DependsOn:
@@ -1036,10 +998,8 @@ Resources:
       RestApiId:
         !Ref ProductApi
 
-      # v2 forces a new API Gateway deployment so that
-      # PATCH /orders/{id} becomes available in the dev stage.
       Description:
-        !Sub CloudMart ${Environment} API deployment v2
+        !Sub CloudMart ${Environment} API deployment
 
 
   # ============================================================
@@ -1055,7 +1015,7 @@ Resources:
         !Ref ProductApi
 
       DeploymentId:
-        !Ref ApiDeployment
+        !Ref ApiDeploymentV2
 
       StageName:
         !Ref Environment
