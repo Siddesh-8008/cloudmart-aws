@@ -4,7 +4,7 @@ on:
 
   push:
     branches:
-      - milestone-3
+      - orders
 
     paths:
       - "cloudformation/api/api-stack.yaml"
