@@ -43,7 +43,6 @@ DB_PASSWORD_PARAMETER = os.environ["DB_PASSWORD_PARAMETER"]
 # ============================================================
 
 def response(status_code, body):
-
     return {
         "statusCode": status_code,
         "headers": {
@@ -54,14 +53,13 @@ def response(status_code, body):
 
 
 # ============================================================
-# SSM PARAMETER
+# SSM PARAMETER HELPER
 # ============================================================
 
-def get_parameter(name):
-
+def get_parameter(name, with_decryption=False):
     result = ssm.get_parameter(
         Name=name,
-        WithDecryption=True
+        WithDecryption=with_decryption
     )
 
     return result["Parameter"]["Value"]
@@ -72,7 +70,6 @@ def get_parameter(name):
 # ============================================================
 
 def get_db_connection():
-
     host = get_parameter(DB_HOST_PARAMETER)
 
     if DB_PORT_PARAMETER:
@@ -81,8 +78,16 @@ def get_db_connection():
         port = 3306
 
     database = get_parameter(DB_NAME_PARAMETER)
-    username = get_parameter(DB_USERNAME_PARAMETER)
-    password = get_parameter(DB_PASSWORD_PARAMETER)
+
+    username = get_parameter(
+        DB_USERNAME_PARAMETER,
+        with_decryption=False
+    )
+
+    password = get_parameter(
+        DB_PASSWORD_PARAMETER,
+        with_decryption=True
+    )
 
     return pymysql.connect(
         host=host,
@@ -90,108 +95,91 @@ def get_db_connection():
         user=username,
         password=password,
         database=database,
-        connect_timeout=10,
-        read_timeout=10,
-        write_timeout=10,
         cursorclass=pymysql.cursors.DictCursor,
-        autocommit=False
+        autocommit=False,
+        connect_timeout=10
     )
 
 
 # ============================================================
-# AUTHORIZER CONTEXT
+# API GATEWAY AUTHORIZER CONTEXT
 # ============================================================
 
 def get_authorizer_context(event):
+    request_context = event.get("requestContext", {})
 
-    request_context = event.get("requestContext") or {}
+    authorizer = request_context.get("authorizer", {})
 
-    authorizer = request_context.get("authorizer") or {}
+    # REST API Lambda authorizer
+    if isinstance(authorizer, dict):
+        return authorizer
 
-    return authorizer
+    return {}
 
+
+# ============================================================
+# AUTHENTICATED CUSTOMER ID
+# ============================================================
 
 def get_authenticated_customer_id(event):
+    context = get_authorizer_context(event)
 
-    authorizer = get_authorizer_context(event)
-
-    customer_id = authorizer.get("customerId")
+    customer_id = context.get("customerId")
 
     if customer_id is None:
         return None
 
-    customer_id = str(customer_id).strip()
+    return str(customer_id)
 
-    if not customer_id:
-        return None
 
-    return customer_id
-
+# ============================================================
+# AUTHENTICATED ROLE
+# ============================================================
 
 def get_authenticated_role(event):
+    context = get_authorizer_context(event)
 
-    authorizer = get_authorizer_context(event)
-
-    role = authorizer.get("role")
+    role = context.get("role")
 
     if role is None:
         return None
 
-    return str(role).strip().lower()
+    return str(role).lower()
 
 
 # ============================================================
-# EVENTBRIDGE
+# EVENTBRIDGE PUBLISH
 # ============================================================
 
 def publish_event(detail_type, detail):
-
     try:
-
         result = events.put_events(
             Entries=[
                 {
+                    "EventBusName": EVENT_BUS_NAME,
                     "Source": "cloudmart.order",
                     "DetailType": detail_type,
-                    "Detail": json.dumps(detail),
-                    "EventBusName": EVENT_BUS_NAME
+                    "Detail": json.dumps(detail, default=str)
                 }
             ]
         )
 
-        if result.get("FailedEntryCount", 0) > 0:
-
-            logger.error(
-                json.dumps({
-                    "action": "event_publish_failed",
-                    "detail_type": detail_type,
-                    "response": result
-                })
-            )
-
-            return False
-
         logger.info(
-            json.dumps({
-                "action": "event_published",
-                "detail_type": detail_type,
-                "detail": detail
-            })
+            "Published EventBridge event: %s",
+            result
         )
 
-        return True
+        return result
 
-    except Exception as error:
-
-        logger.error(
-            json.dumps({
-                "action": "event_publish_exception",
-                "detail_type": detail_type,
-                "error": str(error)
-            })
+    except Exception as exc:
+        logger.exception(
+            "Failed to publish EventBridge event: %s",
+            exc
         )
 
-        return False
+        # Do not fail the database transaction because
+        # EventBridge publishing failed.
+        return None
 
 
 # ============================================================
@@ -199,23 +187,18 @@ def publish_event(detail_type, detail):
 # ============================================================
 
 def get_request_body(event):
-
     body = event.get("body")
 
     if body is None:
-        return event
-
-    if isinstance(body, str):
-
-        if not body.strip():
-            return {}
-
-        return json.loads(body)
+        return {}
 
     if isinstance(body, dict):
         return body
 
-    return {}
+    try:
+        return json.loads(body)
+    except json.JSONDecodeError:
+        raise ValueError("Invalid JSON request body")
 
 
 # ============================================================
@@ -223,174 +206,83 @@ def get_request_body(event):
 # ============================================================
 
 def validate_items(items):
+    if not isinstance(items, list):
+        raise ValueError("items must be an array")
 
-    if not isinstance(items, list) or len(items) == 0:
-
-        return False, "items must contain at least one product"
+    if len(items) == 0:
+        raise ValueError("At least one item is required")
 
     for item in items:
 
         if not isinstance(item, dict):
-
-            return False, "Each item must be an object"
+            raise ValueError("Each item must be an object")
 
         if "productId" not in item:
-
-            return False, "productId is required"
+            raise ValueError("productId is required for every item")
 
         if "quantity" not in item:
-
-            return False, "quantity is required"
+            raise ValueError("quantity is required for every item")
 
         try:
-
             product_id = int(item["productId"])
             quantity = int(item["quantity"])
-
-        except (TypeError, ValueError):
-
-            return False, "productId and quantity must be numbers"
+        except (ValueError, TypeError):
+            raise ValueError(
+                "productId and quantity must be integers"
+            )
 
         if product_id <= 0:
-
-            return False, "productId must be greater than zero"
+            raise ValueError(
+                "productId must be greater than 0"
+            )
 
         if quantity <= 0:
-
-            return False, "quantity must be greater than zero"
-
-    return True, None
+            raise ValueError(
+                "quantity must be greater than 0"
+            )
 
 
 # ============================================================
-# POST /orders
+# CREATE ORDER
 # ============================================================
 
 def create_order(event):
 
     connection = None
-
     order_id = None
-    customer_id = None
-    failed_status_id = None
 
     try:
 
-        logger.info(
-            json.dumps({
-                "action": "order_creation_started"
-            })
-        )
-
         # ----------------------------------------------------
-        # AUTHENTICATED USER
+        # AUTHENTICATION
         # ----------------------------------------------------
 
+        role = get_authenticated_role(event)
         authenticated_customer_id = get_authenticated_customer_id(event)
-        authenticated_role = get_authenticated_role(event)
 
-        logger.info(
-            json.dumps({
-                "action": "authenticated_user",
-                "role": authenticated_role,
-                "customer_id": authenticated_customer_id
-            })
-        )
-
-        # ----------------------------------------------------
-        # CUSTOMER AUTHENTICATION CHECK
-        # ----------------------------------------------------
-
-        if authenticated_role == "customer":
-
-            if not authenticated_customer_id:
-
-                return response(
-                    403,
-                    {
-                        "message": "Authenticated customer identity not found"
-                    }
-                )
-
-            # Customer ID MUST come from authorizer context.
-            customer_id = authenticated_customer_id
-
-        elif authenticated_role == "admin":
-
-            # ------------------------------------------------
-            # ADMIN
-            # ------------------------------------------------
-            # Admin does not have a customerId in authorizer
-            # context, so admin can specify the customer ID
-            # in the request body.
-            # ------------------------------------------------
-
-            try:
-
-                request = get_request_body(event)
-
-            except json.JSONDecodeError:
-
-                return response(
-                    400,
-                    {
-                        "message": "Request body must contain valid JSON"
-                    }
-                )
-
-            customer_id = request.get("customerId")
-
-            if (
-                customer_id is None
-                or str(customer_id).strip() == ""
-            ):
-
-                return response(
-                    400,
-                    {
-                        "message": "customerId is required for admin requests"
-                    }
-                )
-
-            customer_id = str(customer_id).strip()
-
-        else:
-
+        if role not in ("admin", "customer"):
             return response(
                 403,
                 {
-                    "message": "Invalid or missing authorization context"
+                    "message": "Unauthorized role"
                 }
             )
 
-        # ----------------------------------------------------
-        # READ BODY
-        # ----------------------------------------------------
-
-        try:
-
-            request = get_request_body(event)
-
-        except json.JSONDecodeError:
-
+        if role == "customer" and not authenticated_customer_id:
             return response(
-                400,
+                403,
                 {
-                    "message": "Request body must contain valid JSON"
+                    "message": "Customer identity not found in authorization context"
                 }
             )
 
-        items = request.get("items")
-
         # ----------------------------------------------------
-        # CUSTOMER VALIDATION
+        # REQUEST BODY
         # ----------------------------------------------------
 
-        if (
-            customer_id is None
-            or str(customer_id).strip() == ""
-        ):
+        body = get_request_body(event)
 
+        if "customerId" not in body:
             return response(
                 400,
                 {
@@ -398,78 +290,77 @@ def create_order(event):
                 }
             )
 
-        # ----------------------------------------------------
-        # VALIDATE ITEMS
-        # ----------------------------------------------------
+        requested_customer_id = str(
+            body["customerId"]
+        ).strip()
 
-        valid, error_message = validate_items(items)
-
-        if not valid:
-
+        if not requested_customer_id:
             return response(
                 400,
                 {
-                    "message": error_message
+                    "message": "customerId cannot be empty"
                 }
             )
 
         # ----------------------------------------------------
-        # DATABASE CONNECTION
+        # CUSTOMER OWNERSHIP CHECK
+        # ----------------------------------------------------
+
+        if role == "customer":
+
+            # IMPORTANT:
+            # The customerId in the JSON body MUST match
+            # the customerId from the authenticated token.
+
+            if requested_customer_id != authenticated_customer_id:
+
+                logger.warning(
+                    "Customer ownership violation. "
+                    "Token customer=%s, requested customer=%s",
+                    authenticated_customer_id,
+                    requested_customer_id
+                )
+
+                return response(
+                    403,
+                    {
+                        "message": "You can only place orders for your own customerId",
+                        "authenticatedCustomerId": authenticated_customer_id,
+                        "requestedCustomerId": requested_customer_id
+                    }
+                )
+
+            customer_id = authenticated_customer_id
+
+        else:
+            # Admin can create an order for any customer.
+            customer_id = requested_customer_id
+
+        # ----------------------------------------------------
+        # ITEMS
+        # ----------------------------------------------------
+
+        items = body.get("items")
+
+        validate_items(items)
+
+        # ----------------------------------------------------
+        # DATABASE
         # ----------------------------------------------------
 
         connection = get_db_connection()
 
         with connection.cursor() as cursor:
 
-            # =================================================
-            # GET ORDER STATUS IDS
-            # =================================================
+            # ------------------------------------------------
+            # VERIFY CUSTOMER
+            # ------------------------------------------------
 
             cursor.execute(
                 """
-                SELECT status_id, status_name
-                FROM order_status
-                WHERE status_name IN ('PENDING', 'CONFIRMED', 'FAILED')
-                """
-            )
-
-            statuses = cursor.fetchall()
-
-            status_map = {
-                row["status_name"]: row["status_id"]
-                for row in statuses
-            }
-
-            if "PENDING" not in status_map:
-                raise Exception(
-                    "PENDING order status not found"
-                )
-
-            if "CONFIRMED" not in status_map:
-                raise Exception(
-                    "CONFIRMED order status not found"
-                )
-
-            if "FAILED" not in status_map:
-                raise Exception(
-                    "FAILED order status not found"
-                )
-
-            pending_status_id = status_map["PENDING"]
-            confirmed_status_id = status_map["CONFIRMED"]
-            failed_status_id = status_map["FAILED"]
-
-            # =================================================
-            # VERIFY CUSTOMER EXISTS
-            # =================================================
-
-            cursor.execute(
-                """
-                SELECT customer_id
+                SELECT customer_id, status
                 FROM customers
                 WHERE customer_id = %s
-                  AND status = 'ACTIVE'
-                LIMIT 1
                 """,
                 (customer_id,)
             )
@@ -477,33 +368,58 @@ def create_order(event):
             customer = cursor.fetchone()
 
             if not customer:
-
                 return response(
                     404,
                     {
-                        "message": "Customer not found or inactive",
+                        "message": "Customer not found",
                         "customerId": customer_id
                     }
                 )
 
-            # =================================================
-            # CREATE ORDER AS PENDING
-            # =================================================
+            if customer["status"] != "ACTIVE":
+                return response(
+                    409,
+                    {
+                        "message": "Customer is not active",
+                        "customerId": customer_id
+                    }
+                )
+
+            # ------------------------------------------------
+            # GET PENDING STATUS
+            # ------------------------------------------------
 
             cursor.execute(
                 """
-                INSERT INTO orders
-                (
+                SELECT status_id
+                FROM order_status
+                WHERE status_name = 'PENDING'
+                LIMIT 1
+                """
+            )
+
+            pending_status = cursor.fetchone()
+
+            if not pending_status:
+                raise ValueError(
+                    "PENDING order status does not exist"
+                )
+
+            pending_status_id = pending_status["status_id"]
+
+            # ------------------------------------------------
+            # CREATE ORDER
+            # ------------------------------------------------
+
+            cursor.execute(
+                """
+                INSERT INTO orders (
                     customer_id,
                     total_amount,
-                    status_id
+                    status_id,
+                    failure_reason
                 )
-                VALUES
-                (
-                    %s,
-                    %s,
-                    %s
-                )
+                VALUES (%s, %s, %s, NULL)
                 """,
                 (
                     customer_id,
@@ -514,8 +430,16 @@ def create_order(event):
 
             order_id = cursor.lastrowid
 
-            # Keep order row if business processing fails.
-            # Item/inventory changes can be rolled back.
+            logger.info(
+                "Created PENDING order %s for customer %s",
+                order_id,
+                customer_id
+            )
+
+            # ------------------------------------------------
+            # SAVEPOINT
+            # ------------------------------------------------
+
             cursor.execute(
                 "SAVEPOINT order_processing"
             )
@@ -523,19 +447,16 @@ def create_order(event):
             total_amount = 0
             low_stock_products = []
 
-            # =================================================
-            # PROCESS EACH ITEM
-            # =================================================
+            # ------------------------------------------------
+            # PROCESS ITEMS
+            # ------------------------------------------------
 
             for item in items:
 
                 product_id = int(item["productId"])
                 quantity = int(item["quantity"])
 
-                # ------------------------------------------------
-                # LOCK PRODUCT ROW
-                # ------------------------------------------------
-
+                # Lock product row.
                 cursor.execute(
                     """
                     SELECT
@@ -543,7 +464,8 @@ def create_order(event):
                         name,
                         price,
                         stock,
-                        low_stock_threshold
+                        low_stock_threshold,
+                        is_active
                     FROM products
                     WHERE id = %s
                     FOR UPDATE
@@ -554,37 +476,34 @@ def create_order(event):
                 product = cursor.fetchone()
 
                 if not product:
-
                     raise ValueError(
                         f"Product {product_id} not found"
                     )
 
-                current_stock = int(product["stock"])
-                price = float(product["price"])
-                threshold = int(
-                    product["low_stock_threshold"]
+                if not product["is_active"]:
+                    raise ValueError(
+                        f"Product {product_id} is inactive"
+                    )
+
+                current_stock = int(
+                    product["stock"]
                 )
 
-                # ------------------------------------------------
-                # CHECK STOCK
-                # ------------------------------------------------
-
                 if current_stock < quantity:
-
                     raise ValueError(
                         f"Insufficient stock for product "
                         f"{product_id}. Available: "
-                        f"{current_stock}, requested: "
+                        f"{current_stock}, Requested: "
                         f"{quantity}"
                     )
 
-                # ------------------------------------------------
-                # CALCULATE TOTAL
-                # ------------------------------------------------
+                price = float(
+                    product["price"]
+                )
 
-                line_total = price * quantity
+                item_total = price * quantity
 
-                total_amount += line_total
+                total_amount += item_total
 
                 # ------------------------------------------------
                 # INSERT ORDER ITEM
@@ -592,29 +511,21 @@ def create_order(event):
 
                 cursor.execute(
                     """
-                    INSERT INTO order_items
-                    (
+                    INSERT INTO order_items (
                         order_id,
                         product_id,
                         quantity,
                         unit_price,
-                        line_total
+                        total_price
                     )
-                    VALUES
-                    (
-                        %s,
-                        %s,
-                        %s,
-                        %s,
-                        %s
-                    )
+                    VALUES (%s, %s, %s, %s, %s)
                     """,
                     (
                         order_id,
                         product_id,
                         quantity,
                         price,
-                        line_total
+                        item_total
                     )
                 )
 
@@ -637,34 +548,59 @@ def create_order(event):
                 )
 
                 # ------------------------------------------------
-                # LOW STOCK DETECTION
+                # LOW STOCK CHECK
                 # ------------------------------------------------
 
-                if (
-                    current_stock > threshold
-                    and new_stock <= threshold
-                ):
+                threshold = int(
+                    product["low_stock_threshold"]
+                )
+
+                if new_stock <= threshold:
 
                     low_stock_products.append(
                         {
                             "productId": product_id,
                             "productName": product["name"],
-                            "oldStock": current_stock,
-                            "newStock": new_stock,
+                            "stock": new_stock,
                             "lowStockThreshold": threshold
                         }
                     )
 
-            # =================================================
-            # UPDATE ORDER TOTAL
-            # =================================================
+            # ------------------------------------------------
+            # GET CONFIRMED STATUS
+            # ------------------------------------------------
+
+            cursor.execute(
+                """
+                SELECT status_id
+                FROM order_status
+                WHERE status_name = 'CONFIRMED'
+                LIMIT 1
+                """
+            )
+
+            confirmed_status = cursor.fetchone()
+
+            if not confirmed_status:
+                raise ValueError(
+                    "CONFIRMED order status does not exist"
+                )
+
+            confirmed_status_id = confirmed_status[
+                "status_id"
+            ]
+
+            # ------------------------------------------------
+            # CONFIRM ORDER
+            # ------------------------------------------------
 
             cursor.execute(
                 """
                 UPDATE orders
                 SET
                     total_amount = %s,
-                    status_id = %s
+                    status_id = %s,
+                    failure_reason = NULL
                 WHERE order_id = %s
                 """,
                 (
@@ -674,85 +610,74 @@ def create_order(event):
                 )
             )
 
-        # ====================================================
-        # COMMIT
-        # ====================================================
+            connection.commit()
 
-        connection.commit()
+            logger.info(
+                "Order %s confirmed successfully",
+                order_id
+            )
 
-        logger.info(
-            json.dumps({
-                "action": "order_confirmed",
-                "order_id": order_id,
-                "customer_id": customer_id,
-                "total_amount": total_amount
-            })
-        )
-
-        # ====================================================
-        # ORDER CONFIRMED EVENT
-        # ====================================================
-
-        publish_event(
-            "OrderConfirmed",
-            {
-                "orderId": order_id,
-                "customerId": customer_id,
-                "totalAmount": total_amount,
-                "status": "CONFIRMED"
-            }
-        )
-
-        # ====================================================
-        # LOW STOCK EVENTS
-        # ====================================================
-
-        for product in low_stock_products:
+            # ------------------------------------------------
+            # ORDER CONFIRMED EVENT
+            # ------------------------------------------------
 
             publish_event(
-                "Low Stock Alert",
+                "OrderConfirmed",
                 {
                     "orderId": order_id,
                     "customerId": customer_id,
-                    "productId": product["productId"],
-                    "productName": product["productName"],
-                    "oldStock": product["oldStock"],
-                    "newStock": product["newStock"],
-                    "lowStockThreshold": product["lowStockThreshold"]
+                    "totalAmount": total_amount,
+                    "status": "CONFIRMED",
+                    "items": items
                 }
             )
 
-        # ====================================================
-        # RESPONSE
-        # ====================================================
+            # ------------------------------------------------
+            # LOW STOCK EVENTS
+            # ------------------------------------------------
 
-        return response(
-            201,
-            {
-                "message": "Order confirmed successfully",
-                "orderId": order_id,
-                "customerId": customer_id,
-                "totalAmount": total_amount,
-                "status": "CONFIRMED",
-                "items": items
-            }
+            for product in low_stock_products:
+
+                publish_event(
+                    "Low Stock Alert",
+                    {
+                        "productId": product["productId"],
+                        "productName": product["productName"],
+                        "stock": product["stock"],
+                        "lowStockThreshold": product[
+                            "lowStockThreshold"
+                        ]
+                    }
+                )
+
+            # ------------------------------------------------
+            # RESPONSE
+            # ------------------------------------------------
+
+            return response(
+                201,
+                {
+                    "message": "Order placed successfully",
+                    "orderId": order_id,
+                    "customerId": customer_id,
+                    "totalAmount": total_amount,
+                    "status": "CONFIRMED",
+                    "items": items
+                }
+            )
+
+    except ValueError as exc:
+
+        logger.warning(
+            "Order processing failed: %s",
+            exc
         )
 
-    except ValueError as error:
+        # ----------------------------------------------------
+        # HANDLE BUSINESS FAILURE
+        # ----------------------------------------------------
 
-        # ====================================================
-        # BUSINESS FAILURE
-        # ====================================================
-        # Example:
-        # Product not found
-        # Insufficient stock
-        # ====================================================
-
-        if (
-            connection
-            and order_id is not None
-            and failed_status_id is not None
-        ):
+        if connection and order_id:
 
             try:
 
@@ -764,83 +689,76 @@ def create_order(event):
 
                     cursor.execute(
                         """
-                        UPDATE orders
-                        SET
-                            total_amount = %s,
-                            status_id = %s,
-                            failure_reason = %s
-                        WHERE order_id = %s
-                        """,
-                        (
-                            0,
-                            failed_status_id,
-                            str(error),
-                            order_id
-                        )
+                        SELECT status_id
+                        FROM order_status
+                        WHERE status_name = 'FAILED'
+                        LIMIT 1
+                        """
                     )
 
-                connection.commit()
+                    failed_status = cursor.fetchone()
 
-                logger.warning(
-                    json.dumps({
-                        "action": "order_failed",
-                        "order_id": order_id,
-                        "customer_id": customer_id,
-                        "reason": str(error)
-                    })
-                )
+                    if failed_status:
+
+                        cursor.execute(
+                            """
+                            UPDATE orders
+                            SET
+                                status_id = %s,
+                                failure_reason = %s
+                            WHERE order_id = %s
+                            """,
+                            (
+                                failed_status["status_id"],
+                                str(exc),
+                                order_id
+                            )
+                        )
+
+                    connection.commit()
+
+                # ------------------------------------------------
+                # FAILED EVENT
+                # ------------------------------------------------
 
                 publish_event(
                     "OrderFailed",
                     {
                         "orderId": order_id,
-                        "customerId": customer_id,
-                        "status": "FAILED",
-                        "failureReason": str(error)
+                        "reason": str(exc)
                     }
                 )
 
-            except Exception as failure_handling_error:
-
-                connection.rollback()
-
-                logger.error(
-                    json.dumps({
-                        "action": "failed_order_persistence_error",
-                        "order_id": order_id,
-                        "error": str(
-                            failure_handling_error
-                        )
-                    })
+            except Exception:
+                logger.exception(
+                    "Failed to update order as FAILED"
                 )
 
         return response(
             409,
             {
-                "message": str(error),
-                "status": "FAILED",
+                "message": str(exc),
                 "orderId": order_id
             }
         )
 
-    except Exception as error:
+    except Exception as exc:
+
+        logger.exception(
+            "Unexpected error while creating order"
+        )
 
         if connection:
 
-            connection.rollback()
-
-        logger.error(
-            json.dumps({
-                "action": "order_processing_failed",
-                "error": str(error)
-            })
-        )
+            try:
+                connection.rollback()
+            except Exception:
+                pass
 
         return response(
             500,
             {
-                "message": "Order processing failed",
-                "error": str(error)
+                "message": "Internal server error"
             }
         )
 
@@ -848,11 +766,14 @@ def create_order(event):
 
         if connection:
 
-            connection.close()
+            try:
+                connection.close()
+            except Exception:
+                pass
 
 
 # ============================================================
-# GET /orders/{id}
+# GET ORDER BY ID
 # ============================================================
 
 def get_order_by_id(event):
@@ -861,14 +782,40 @@ def get_order_by_id(event):
 
     try:
 
+        # ----------------------------------------------------
+        # AUTHENTICATION
+        # ----------------------------------------------------
+
+        role = get_authenticated_role(event)
+        authenticated_customer_id = get_authenticated_customer_id(event)
+
+        if role not in ("admin", "customer"):
+            return response(
+                403,
+                {
+                    "message": "Unauthorized role"
+                }
+            )
+
+        if role == "customer" and not authenticated_customer_id:
+            return response(
+                403,
+                {
+                    "message": "Customer identity not found"
+                }
+            )
+
+        # ----------------------------------------------------
+        # ORDER ID
+        # ----------------------------------------------------
+
         path_parameters = event.get(
             "pathParameters"
         ) or {}
 
-        order_id = path_parameters.get("id")
+        order_id_value = path_parameters.get("id")
 
-        if order_id is None:
-
+        if not order_id_value:
             return response(
                 400,
                 {
@@ -877,115 +824,48 @@ def get_order_by_id(event):
             )
 
         try:
-
-            order_id = int(order_id)
-
-        except (TypeError, ValueError):
-
+            order_id = int(order_id_value)
+        except (ValueError, TypeError):
             return response(
                 400,
                 {
-                    "message": "Order id must be a number"
-                }
-            )
-
-        if order_id <= 0:
-
-            return response(
-                400,
-                {
-                    "message": "Order id must be greater than zero"
+                    "message": "Order id must be an integer"
                 }
             )
 
         # ----------------------------------------------------
-        # AUTHORIZER CONTEXT
+        # DATABASE
         # ----------------------------------------------------
-
-        customer_id = get_authenticated_customer_id(event)
-        role = get_authenticated_role(event)
-
-        if role not in ("customer", "admin"):
-
-            return response(
-                403,
-                {
-                    "message": "Invalid or missing authorization context"
-                }
-            )
 
         connection = get_db_connection()
 
         with connection.cursor() as cursor:
 
             # ------------------------------------------------
-            # CUSTOMER
-            # ------------------------------------------------
-            # Customer can only retrieve their own order.
+            # GET ORDER
             # ------------------------------------------------
 
-            if role == "customer":
-
-                if not customer_id:
-
-                    return response(
-                        403,
-                        {
-                            "message":
-                            "Authenticated customer identity not found"
-                        }
-                    )
-
-                cursor.execute(
-                    """
-                    SELECT
-                        o.order_id,
-                        o.customer_id,
-                        o.total_amount,
-                        os.status_name AS status,
-                        o.failure_reason,
-                        o.created_at,
-                        o.updated_at
-                    FROM orders o
-                    INNER JOIN order_status os
-                        ON o.status_id = os.status_id
-                    WHERE o.order_id = %s
-                      AND o.customer_id = %s
-                    """,
-                    (
-                        order_id,
-                        customer_id
-                    )
-                )
-
-            # ------------------------------------------------
-            # ADMIN
-            # ------------------------------------------------
-
-            else:
-
-                cursor.execute(
-                    """
-                    SELECT
-                        o.order_id,
-                        o.customer_id,
-                        o.total_amount,
-                        os.status_name AS status,
-                        o.failure_reason,
-                        o.created_at,
-                        o.updated_at
-                    FROM orders o
-                    INNER JOIN order_status os
-                        ON o.status_id = os.status_id
-                    WHERE o.order_id = %s
-                    """,
-                    (order_id,)
-                )
+            cursor.execute(
+                """
+                SELECT
+                    o.order_id,
+                    o.customer_id,
+                    o.total_amount,
+                    os.status_name AS status,
+                    o.failure_reason,
+                    o.created_at,
+                    o.updated_at
+                FROM orders o
+                JOIN order_status os
+                    ON o.status_id = os.status_id
+                WHERE o.order_id = %s
+                """,
+                (order_id,)
+            )
 
             order = cursor.fetchone()
 
             if not order:
-
                 return response(
                     404,
                     {
@@ -994,50 +874,70 @@ def get_order_by_id(event):
                 )
 
             # ------------------------------------------------
-            # GET ITEMS
+            # CUSTOMER OWNERSHIP CHECK
+            # ------------------------------------------------
+
+            if role == "customer":
+
+                if str(order["customer_id"]) != str(
+                    authenticated_customer_id
+                ):
+
+                    logger.warning(
+                        "Customer %s attempted to access "
+                        "order %s belonging to customer %s",
+                        authenticated_customer_id,
+                        order_id,
+                        order["customer_id"]
+                    )
+
+                    return response(
+                        403,
+                        {
+                            "message": "You are not authorized to access this order"
+                        }
+                    )
+
+            # ------------------------------------------------
+            # GET ORDER ITEMS
             # ------------------------------------------------
 
             cursor.execute(
                 """
                 SELECT
-                    oi.order_item_id,
                     oi.product_id,
                     p.name AS product_name,
                     oi.quantity,
                     oi.unit_price,
-                    oi.line_total
+                    oi.total_price
                 FROM order_items oi
-                INNER JOIN products p
+                JOIN products p
                     ON oi.product_id = p.id
                 WHERE oi.order_id = %s
-                ORDER BY oi.order_item_id
+                ORDER BY oi.product_id
                 """,
                 (order_id,)
             )
 
             items = cursor.fetchall()
 
-        order["items"] = items
+            order["items"] = items
 
-        return response(
-            200,
-            order
-        )
+            return response(
+                200,
+                order
+            )
 
-    except Exception as error:
+    except Exception:
 
-        logger.error(
-            json.dumps({
-                "action": "get_order_failed",
-                "error": str(error)
-            })
+        logger.exception(
+            "Failed to get order"
         )
 
         return response(
             500,
             {
-                "message": "Failed to retrieve order",
-                "error": str(error)
+                "message": "Internal server error"
             }
         )
 
@@ -1045,11 +945,14 @@ def get_order_by_id(event):
 
         if connection:
 
-            connection.close()
+            try:
+                connection.close()
+            except Exception:
+                pass
 
 
 # ============================================================
-# GET /orders?customerId=X
+# GET ORDERS BY CUSTOMER
 # ============================================================
 
 def get_orders_by_customer(event):
@@ -1058,76 +961,76 @@ def get_orders_by_customer(event):
 
     try:
 
-        query_parameters = (
-            event.get("queryStringParameters") or {}
-        )
+        # ----------------------------------------------------
+        # AUTHENTICATION
+        # ----------------------------------------------------
+
+        role = get_authenticated_role(event)
+        authenticated_customer_id = get_authenticated_customer_id(event)
+
+        if role not in ("admin", "customer"):
+            return response(
+                403,
+                {
+                    "message": "Unauthorized role"
+                }
+            )
+
+        # ----------------------------------------------------
+        # QUERY PARAMETERS
+        # ----------------------------------------------------
+
+        query_parameters = event.get(
+            "queryStringParameters"
+        ) or {}
 
         requested_customer_id = query_parameters.get(
             "customerId"
         )
 
-        authenticated_customer_id = (
-            get_authenticated_customer_id(event)
-        )
-
-        role = get_authenticated_role(event)
-
-        # ----------------------------------------------------
-        # AUTHORIZATION CHECK
-        # ----------------------------------------------------
-
-        if role not in ("customer", "admin"):
-
+        if not requested_customer_id:
             return response(
-                403,
+                400,
                 {
-                    "message": "Invalid or missing authorization context"
+                    "message": "customerId query parameter is required"
                 }
             )
 
+        requested_customer_id = str(
+            requested_customer_id
+        ).strip()
+
         # ----------------------------------------------------
-        # CUSTOMER
-        # ----------------------------------------------------
-        # Ignore customerId supplied in URL.
-        # Always use customerId from authorizer.
+        # CUSTOMER OWNERSHIP CHECK
         # ----------------------------------------------------
 
         if role == "customer":
 
             if not authenticated_customer_id:
+                return response(
+                    403,
+                    {
+                        "message": "Customer identity not found"
+                    }
+                )
+
+            if requested_customer_id != authenticated_customer_id:
+
+                logger.warning(
+                    "Customer %s attempted to query orders "
+                    "for customer %s",
+                    authenticated_customer_id,
+                    requested_customer_id
+                )
 
                 return response(
                     403,
                     {
-                        "message":
-                        "Authenticated customer identity not found"
+                        "message": "You can only access your own orders",
+                        "authenticatedCustomerId": authenticated_customer_id,
+                        "requestedCustomerId": requested_customer_id
                     }
                 )
-
-            customer_id = authenticated_customer_id
-
-        # ----------------------------------------------------
-        # ADMIN
-        # ----------------------------------------------------
-
-        else:
-
-            if (
-                requested_customer_id is None
-                or str(requested_customer_id).strip() == ""
-            ):
-
-                return response(
-                    400,
-                    {
-                        "message":
-                        "customerId query parameter is required for admin requests"
-                    }
-                )
-
-            customer_id = str(
-                requested_customer_id
-            ).strip()
 
         # ----------------------------------------------------
         # DATABASE
@@ -1148,130 +1051,53 @@ def get_orders_by_customer(event):
                     o.created_at,
                     o.updated_at
                 FROM orders o
-                INNER JOIN order_status os
+                JOIN order_status os
                     ON o.status_id = os.status_id
                 WHERE o.customer_id = %s
                 ORDER BY o.created_at DESC
                 """,
-                (customer_id,)
+                (requested_customer_id,)
             )
 
             orders = cursor.fetchall()
 
-        return response(
-            200,
-            {
-                "customerId": customer_id,
-                "orders": orders,
-                "count": len(orders)
-            }
-        )
+            # ------------------------------------------------
+            # GET ITEMS FOR EACH ORDER
+            # ------------------------------------------------
 
-    except Exception as error:
+            for order in orders:
 
-        logger.error(
-            json.dumps({
-                "action": "get_customer_orders_failed",
-                "error": str(error)
-            })
-        )
-
-        return response(
-            500,
-            {
-                "message": "Failed to retrieve customer orders",
-                "error": str(error)
-            }
-        )
-
-    finally:
-
-        if connection:
-
-            connection.close()
-
-
-# ============================================================
-# MAIN HANDLER
-# ============================================================
-
-def lambda_handler(event, context):
-
-    try:
-
-        http_method = (
-            event.get("httpMethod", "")
-            .upper()
-        )
-
-        resource = event.get("resource", "")
-
-        path = event.get("path", "")
-
-        logger.info(
-            json.dumps({
-                "action": "request_received",
-                "http_method": http_method,
-                "resource": resource,
-                "path": path,
-                "authorizer": (
-                    event.get("requestContext", {})
-                    .get("authorizer", {})
+                cursor.execute(
+                    """
+                    SELECT
+                        oi.product_id,
+                        p.name AS product_name,
+                        oi.quantity,
+                        oi.unit_price,
+                        oi.total_price
+                    FROM order_items oi
+                    JOIN products p
+                        ON oi.product_id = p.id
+                    WHERE oi.order_id = %s
+                    ORDER BY oi.product_id
+                    """,
+                    (order["order_id"],)
                 )
-            })
-        )
 
-        # ----------------------------------------------------
-        # POST /orders
-        # ----------------------------------------------------
+                order["items"] = cursor.fetchall()
 
-        if (
-            http_method == "POST"
-            and resource == "/orders"
-        ):
+            return response(
+                200,
+                {
+                    "customerId": requested_customer_id,
+                    "orders": orders
+                }
+            )
 
-            return create_order(event)
+    except Exception:
 
-        # ----------------------------------------------------
-        # GET /orders/{id}
-        # ----------------------------------------------------
-
-        if (
-            http_method == "GET"
-            and resource == "/orders/{id}"
-        ):
-
-            return get_order_by_id(event)
-
-        # ----------------------------------------------------
-        # GET /orders?customerId=X
-        # ----------------------------------------------------
-
-        if (
-            http_method == "GET"
-            and resource == "/orders"
-        ):
-
-            return get_orders_by_customer(event)
-
-        # ----------------------------------------------------
-        # UNKNOWN ROUTE
-        # ----------------------------------------------------
-
-        return response(
-            404,
-            {
-                "message": "Order API route not found"
-            }
-        )
-
-    except Exception as error:
-
-        logger.error(
-            json.dumps({
-                "action": "request_failed",
-                "error": str(error)
-            })
+        logger.exception(
+            "Failed to get customer orders"
         )
 
         return response(
@@ -1280,3 +1106,459 @@ def lambda_handler(event, context):
                 "message": "Internal server error"
             }
         )
+
+    finally:
+
+        if connection:
+
+            try:
+                connection.close()
+            except Exception:
+                pass
+
+
+# ============================================================
+# CANCEL ORDER
+# PATCH /orders/{id}
+# ============================================================
+
+def cancel_order(event):
+
+    connection = None
+
+    try:
+
+        # ----------------------------------------------------
+        # AUTHENTICATION
+        # ----------------------------------------------------
+
+        role = get_authenticated_role(event)
+        authenticated_customer_id = get_authenticated_customer_id(event)
+
+        if role not in ("admin", "customer"):
+            return response(
+                403,
+                {
+                    "message": "Unauthorized role"
+                }
+            )
+
+        if role == "customer" and not authenticated_customer_id:
+            return response(
+                403,
+                {
+                    "message": "Customer identity not found"
+                }
+            )
+
+        # ----------------------------------------------------
+        # ORDER ID
+        # ----------------------------------------------------
+
+        path_parameters = event.get(
+            "pathParameters"
+        ) or {}
+
+        order_id_value = path_parameters.get("id")
+
+        if not order_id_value:
+            return response(
+                400,
+                {
+                    "message": "Order id is required"
+                }
+            )
+
+        try:
+            order_id = int(order_id_value)
+        except (ValueError, TypeError):
+            return response(
+                400,
+                {
+                    "message": "Order id must be an integer"
+                }
+            )
+
+        # ----------------------------------------------------
+        # REQUEST BODY
+        # ----------------------------------------------------
+
+        body = get_request_body(event)
+
+        requested_status = body.get("status")
+
+        if requested_status is None:
+            return response(
+                400,
+                {
+                    "message": "status is required"
+                }
+            )
+
+        if str(requested_status).upper() != "CANCELLED":
+            return response(
+                400,
+                {
+                    "message": "Only status CANCELLED is supported for this operation"
+                }
+            )
+
+        # ----------------------------------------------------
+        # DATABASE
+        # ----------------------------------------------------
+
+        connection = get_db_connection()
+
+        with connection.cursor() as cursor:
+
+            # ------------------------------------------------
+            # GET STATUS IDs
+            # ------------------------------------------------
+
+            cursor.execute(
+                """
+                SELECT status_id, status_name
+                FROM order_status
+                WHERE status_name IN ('CONFIRMED', 'CANCELLED')
+                """
+            )
+
+            status_rows = cursor.fetchall()
+
+            status_map = {
+                row["status_name"]: row["status_id"]
+                for row in status_rows
+            }
+
+            if "CONFIRMED" not in status_map:
+                raise ValueError(
+                    "CONFIRMED order status does not exist"
+                )
+
+            if "CANCELLED" not in status_map:
+                raise ValueError(
+                    "CANCELLED order status does not exist. "
+                    "Add CANCELLED to order_status table first."
+                )
+
+            confirmed_status_id = status_map[
+                "CONFIRMED"
+            ]
+
+            cancelled_status_id = status_map[
+                "CANCELLED"
+            ]
+
+            # ------------------------------------------------
+            # LOCK ORDER
+            # ------------------------------------------------
+
+            cursor.execute(
+                """
+                SELECT
+                    o.order_id,
+                    o.customer_id,
+                    o.total_amount,
+                    o.status_id,
+                    os.status_name AS status
+                FROM orders o
+                JOIN order_status os
+                    ON o.status_id = os.status_id
+                WHERE o.order_id = %s
+                FOR UPDATE
+                """,
+                (order_id,)
+            )
+
+            order = cursor.fetchone()
+
+            if not order:
+                return response(
+                    404,
+                    {
+                        "message": "Order not found"
+                    }
+                )
+
+            # ------------------------------------------------
+            # CUSTOMER OWNERSHIP CHECK
+            # ------------------------------------------------
+
+            if role == "customer":
+
+                if str(order["customer_id"]) != str(
+                    authenticated_customer_id
+                ):
+
+                    logger.warning(
+                        "Customer %s attempted to cancel "
+                        "order %s belonging to customer %s",
+                        authenticated_customer_id,
+                        order_id,
+                        order["customer_id"]
+                    )
+
+                    return response(
+                        403,
+                        {
+                            "message": "You are not authorized to cancel this order"
+                        }
+                    )
+
+            # ------------------------------------------------
+            # STATUS CHECK
+            # ------------------------------------------------
+
+            if order["status_id"] != confirmed_status_id:
+
+                return response(
+                    409,
+                    {
+                        "message": (
+                            "Only CONFIRMED orders can be cancelled"
+                        ),
+                        "orderId": order_id,
+                        "currentStatus": order["status"]
+                    }
+                )
+
+            # ------------------------------------------------
+            # LOCK ORDER ITEMS
+            # ------------------------------------------------
+
+            cursor.execute(
+                """
+                SELECT
+                    oi.product_id,
+                    oi.quantity
+                FROM order_items oi
+                WHERE oi.order_id = %s
+                FOR UPDATE
+                """,
+                (order_id,)
+            )
+
+            order_items = cursor.fetchall()
+
+            if not order_items:
+                raise ValueError(
+                    "Order has no items"
+                )
+
+            # ------------------------------------------------
+            # RESTORE PRODUCT STOCK
+            # ------------------------------------------------
+
+            for item in order_items:
+
+                product_id = item["product_id"]
+                quantity = int(
+                    item["quantity"]
+                )
+
+                cursor.execute(
+                    """
+                    UPDATE products
+                    SET stock = stock + %s
+                    WHERE id = %s
+                    """,
+                    (
+                        quantity,
+                        product_id
+                    )
+                )
+
+                if cursor.rowcount == 0:
+                    raise ValueError(
+                        f"Product {product_id} not found "
+                        f"while restoring stock"
+                    )
+
+            # ------------------------------------------------
+            # UPDATE ORDER STATUS
+            # ------------------------------------------------
+
+            cancelled_by = (
+                "admin"
+                if role == "admin"
+                else "customer"
+            )
+
+            cursor.execute(
+                """
+                UPDATE orders
+                SET
+                    status_id = %s,
+                    failure_reason = %s
+                WHERE order_id = %s
+                """,
+                (
+                    cancelled_status_id,
+                    f"Order cancelled by {cancelled_by}",
+                    order_id
+                )
+            )
+
+            connection.commit()
+
+            logger.info(
+                "Order %s cancelled successfully by %s",
+                order_id,
+                cancelled_by
+            )
+
+            # ------------------------------------------------
+            # ORDER CANCELLED EVENT
+            # ------------------------------------------------
+
+            publish_event(
+                "OrderCancelled",
+                {
+                    "orderId": order_id,
+                    "customerId": order["customer_id"],
+                    "totalAmount": float(
+                        order["total_amount"]
+                    ),
+                    "status": "CANCELLED",
+                    "cancelledBy": cancelled_by
+                }
+            )
+
+            # ------------------------------------------------
+            # RESPONSE
+            # ------------------------------------------------
+
+            return response(
+                200,
+                {
+                    "message": "Order cancelled successfully",
+                    "orderId": order_id,
+                    "customerId": order["customer_id"],
+                    "status": "CANCELLED"
+                }
+            )
+
+    except ValueError as exc:
+
+        logger.warning(
+            "Order cancellation failed: %s",
+            exc
+        )
+
+        if connection:
+
+            try:
+                connection.rollback()
+            except Exception:
+                pass
+
+        return response(
+            409,
+            {
+                "message": str(exc),
+                "orderId": order_id
+            }
+        )
+
+    except Exception:
+
+        logger.exception(
+            "Failed to cancel order"
+        )
+
+        if connection:
+
+            try:
+                connection.rollback()
+            except Exception:
+                pass
+
+        return response(
+            500,
+            {
+                "message": "Internal server error"
+            }
+        )
+
+    finally:
+
+        if connection:
+
+            try:
+                connection.close()
+            except Exception:
+                pass
+
+
+# ============================================================
+# LAMBDA HANDLER
+# ============================================================
+
+def lambda_handler(event, context):
+
+    logger.info(
+        "Received event: %s",
+        json.dumps(event, default=str)
+    )
+
+    http_method = (
+        event.get("httpMethod", "")
+        .upper()
+    )
+
+    resource = event.get(
+        "resource",
+        ""
+    )
+
+    # ========================================================
+    # POST /orders
+    # ========================================================
+
+    if (
+        http_method == "POST"
+        and resource == "/orders"
+    ):
+        return create_order(event)
+
+    # ========================================================
+    # GET /orders/{id}
+    # ========================================================
+
+    if (
+        http_method == "GET"
+        and resource == "/orders/{id}"
+    ):
+        return get_order_by_id(event)
+
+    # ========================================================
+    # GET /orders
+    # ========================================================
+
+    if (
+        http_method == "GET"
+        and resource == "/orders"
+    ):
+        return get_orders_by_customer(event)
+
+    # ========================================================
+    # PATCH /orders/{id}
+    # CANCEL ORDER
+    # ========================================================
+
+    if (
+        http_method == "PATCH"
+        and resource == "/orders/{id}"
+    ):
+        return cancel_order(event)
+
+    # ========================================================
+    # UNSUPPORTED ROUTE
+    # ========================================================
+
+    return response(
+        404,
+        {
+            "message": "Route not found"
+        }
+    )
