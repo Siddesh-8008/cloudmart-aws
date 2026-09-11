@@ -1312,15 +1312,17 @@ jobs:
       # ======================================================
       # 29. VERIFY PATCH ORDER API
       #
-      # NEW STEP
-      #
       # This verifies that API Gateway contains:
       #
       # PATCH /orders/{id}
       #
-      # It does NOT call the API.
-      # It only verifies that the PATCH method exists
-      # in the deployed API Gateway resource.
+      # IMPORTANT:
+      # API Gateway returns PATCH as:
+      #
+      # "PATCH": {}
+      #
+      # Therefore we check whether the PATCH KEY exists,
+      # instead of checking PATCH.httpMethod.
       # ======================================================
 
       - name: Verify PATCH /orders/{id} API
@@ -1387,14 +1389,33 @@ jobs:
           echo ""
           echo "Checking PATCH method..."
 
-          PATCH_METHOD=$(aws apigateway get-resource \
+          METHODS=$(aws apigateway get-resource \
             --rest-api-id "${API_ID}" \
             --resource-id "${ORDER_ID_RESOURCE}" \
             --region "${AWS_REGION}" \
-            --query "resourceMethods.PATCH.httpMethod" \
-            --output text)
+            --query "resourceMethods" \
+            --output json)
 
-          if [ -z "${PATCH_METHOD}" ] || [ "${PATCH_METHOD}" = "None" ]; then
+          echo ""
+          echo "Methods currently configured on /orders/{id}:"
+          echo "${METHODS}"
+
+          echo ""
+          echo "Checking whether PATCH key exists..."
+
+          PATCH_EXISTS=$(echo "${METHODS}" | python -c "
+import sys
+import json
+
+data = json.load(sys.stdin)
+
+if 'PATCH' in data:
+    print('true')
+else:
+    print('false')
+")
+
+          if [ "${PATCH_EXISTS}" != "true" ]; then
 
             echo ""
             echo "ERROR: PATCH method was NOT found on /orders/{id}."
@@ -1402,22 +1423,7 @@ jobs:
             echo ""
             echo "Methods currently configured on /orders/{id}:"
 
-            aws apigateway get-resource \
-              --rest-api-id "${API_ID}" \
-              --resource-id "${ORDER_ID_RESOURCE}" \
-              --region "${AWS_REGION}" \
-              --query "resourceMethods" \
-              --output json
-
-            exit 1
-
-          fi
-
-          if [ "${PATCH_METHOD}" != "PATCH" ]; then
-
-            echo ""
-            echo "ERROR: Unexpected PATCH method value:"
-            echo "${PATCH_METHOD}"
+            echo "${METHODS}"
 
             exit 1
 
@@ -1441,7 +1447,7 @@ jobs:
 
           echo ""
           echo "HTTP Method:"
-          echo "${PATCH_METHOD}"
+          echo "PATCH"
 
 
       # ======================================================
