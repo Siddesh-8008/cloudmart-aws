@@ -3,6 +3,7 @@ name: CloudMart Infrastructure
 on:
   push:
     branches:
+      - main
       - orders
 
   workflow_dispatch:
