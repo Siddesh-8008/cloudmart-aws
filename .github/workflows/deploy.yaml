@@ -30,7 +30,7 @@ env:
   AWS_REGION: ap-south-1
   ENVIRONMENT: dev
   NETWORK_STACK_NAME: cloudmart-dev-network
-  DATA_STACK_NAME: cloudmart-dev-data-new
+  DATA_STACK_NAME: cloudmart-dev-data
   IAM_STACK_NAME: cloudmart-dev-iam
   AUTH_STACK_NAME: cloudmart-dev-auth
   API_STACK_NAME: cloudmart-dev-api
