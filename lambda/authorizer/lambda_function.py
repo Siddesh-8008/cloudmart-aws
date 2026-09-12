@@ -50,13 +50,18 @@ DB_PASSWORD_PARAMETER = os.environ[
 
 # ============================================================
 # SSM PARAMETER
+#
+# All CloudMart SSM parameters used by this Lambda are
+# normal String parameters.
+#
+# Therefore WithDecryption is NOT required.
 # ============================================================
 
 def get_parameter(name):
 
     return ssm.get_parameter(
         Name=name,
-        WithDecryption=True
+        WithDecryption=False
     )["Parameter"]["Value"]
 
 
@@ -222,17 +227,30 @@ def get_customer_resources(method_arn):
 
     return [
 
-        # Products - READ
+        # ====================================================
+        # PRODUCTS - READ ONLY
+        # ====================================================
+
         api_stage_arn + "/GET/products",
 
         api_stage_arn + "/GET/products/*",
 
-        # Orders
+
+        # ====================================================
+        # ORDERS
+        # ====================================================
+
+        # Create order
         api_stage_arn + "/POST/orders",
 
+        # Get orders
         api_stage_arn + "/GET/orders",
 
-        api_stage_arn + "/GET/orders/*"
+        # Get specific order
+        api_stage_arn + "/GET/orders/*",
+
+        # Cancel order
+        api_stage_arn + "/PATCH/orders/*"
     ]
 
 
@@ -285,9 +303,10 @@ def find_customer_by_token(
 
             return None
 
-        # ----------------------------------------------------
-        # Optional expiration check
-        # ----------------------------------------------------
+
+        # ====================================================
+        # OPTIONAL EXPIRATION CHECK
+        # ====================================================
 
         if customer["expires_at"]:
 
@@ -307,9 +326,10 @@ def find_customer_by_token(
 
                 return None
 
-        # ----------------------------------------------------
-        # Update last used
-        # ----------------------------------------------------
+
+        # ====================================================
+        # UPDATE LAST USED
+        # ====================================================
 
         with connection.cursor() as cursor:
 
@@ -352,10 +372,20 @@ def handler(event, context):
         })
     )
 
+
+    # ========================================================
+    # METHOD ARN
+    # ========================================================
+
     method_arn = event.get(
         "methodArn",
         "*"
     )
+
+
+    # ========================================================
+    # AUTHORIZATION TOKEN
+    # ========================================================
 
     authorization_token = event.get(
         "authorizationToken"
@@ -427,7 +457,9 @@ def handler(event, context):
     # ========================================================
     # ADMIN TOKEN
     #
-    # Admin token can remain in SSM.
+    # Admin token is stored in SSM as a normal String.
+    # No SecureString.
+    # No KMS decryption.
     # ========================================================
 
     admin_parameter = os.environ.get(
@@ -569,12 +601,20 @@ def handler(event, context):
     )
 
 
+    # ========================================================
+    # CUSTOMER API RESOURCES
+    # ========================================================
+
     customer_resources = (
         get_customer_resources(
             method_arn
         )
     )
 
+
+    # ========================================================
+    # RETURN CUSTOMER POLICY
+    # ========================================================
 
     return generate_policy(
 

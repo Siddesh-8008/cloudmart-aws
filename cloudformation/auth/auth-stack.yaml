@@ -40,7 +40,7 @@ Parameters:
     Default: /cloudmart/dev/auth/admin-token
 
     Description: >
-      SSM SecureString containing the CloudMart
+      SSM String containing the CloudMart
       admin authentication token
 
 
@@ -85,7 +85,7 @@ Parameters:
     Default: /cloudmart/dev/db/password
 
     Description: >
-      SSM SecureString containing the RDS database password
+      SSM parameter containing the RDS database password
 
 
   # ============================================================
@@ -239,12 +239,13 @@ Resources:
   # LAMBDA PERMISSION FOR API GATEWAY
   # ============================================================
 
-  AuthorizerLambdaPermission:
+  ApiGatewayInvokePermission:
     Type: AWS::Lambda::Permission
 
     Properties:
 
-      Action: lambda:InvokeFunction
+      Action:
+        lambda:InvokeFunction
 
       FunctionName:
         !Ref LambdaAuthorizer
@@ -253,7 +254,8 @@ Resources:
         apigateway.amazonaws.com
 
       SourceArn:
-        !Sub arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:*/*/*
+        !Sub >
+          arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:*/*/*
 
 
 # ==============================================================
@@ -262,15 +264,12 @@ Resources:
 
 Outputs:
 
-
   # ============================================================
-  # AUTHORIZER LAMBDA ARN
+  # AUTHORIZE LAMBDA ARN
   # ============================================================
 
   AuthorizerLambdaArn:
-
-    Description:
-      ARN of the CloudMart Lambda Authorizer
+    Description: Lambda Authorizer ARN
 
     Value:
       !GetAtt LambdaAuthorizer.Arn
@@ -281,13 +280,11 @@ Outputs:
 
 
   # ============================================================
-  # AUTHORIZER LAMBDA NAME
+  # AUTHORIZE LAMBDA NAME
   # ============================================================
 
   AuthorizerLambdaName:
-
-    Description:
-      Name of the CloudMart Lambda Authorizer
+    Description: Lambda Authorizer function name
 
     Value:
       !Ref LambdaAuthorizer
@@ -295,43 +292,3 @@ Outputs:
     Export:
       Name:
         !Sub CloudMart-${Environment}-AuthorizerLambdaName
-
-
-  # ============================================================
-  # ADMIN TOKEN PARAMETER
-  # ============================================================
-
-  AdminAuthTokenParameter:
-
-    Description:
-      SSM parameter used for admin authentication
-
-    Value:
-      !Ref AdminAuthTokenParameterName
-
-
-  # ============================================================
-  # DATABASE HOST PARAMETER
-  # ============================================================
-
-  DBHostParameter:
-
-    Description:
-      SSM parameter containing the RDS host
-
-    Value:
-      !Ref DBHostParameter
-
-
-  # ============================================================
-  # DATABASE NAME PARAMETER
-  # ============================================================
-
-  DBNameParameter:
-
-    Description:
-      SSM parameter containing the RDS database name
-
-    Value:
-      !Ref DBNameParameter
-

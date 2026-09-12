@@ -24,6 +24,12 @@ Parameters:
     NoEcho: true
     AllowedPattern: '^[a-zA-Z][a-zA-Z0-9_]*$'
 
+  DBPassword:
+    Type: String
+    NoEcho: true
+    MinLength: 8
+    MaxLength: 41
+
   DBInstanceClass:
     Type: String
     Default: db.t3.micro
@@ -86,7 +92,8 @@ Resources:
       MasterUsername:
         !Ref DBUsername
 
-      ManageMasterUserPassword: true
+      MasterUserPassword:
+        !Ref DBPassword
 
       DBInstanceClass:
         !Ref DBInstanceClass
@@ -241,6 +248,38 @@ Resources:
       Description: CloudMart database name
 
 
+  DBUsernameParameter:
+    Type: AWS::SSM::Parameter
+
+    Properties:
+
+      Name:
+        !Sub /cloudmart/${Environment}/db/username
+
+      Type: String
+
+      Value:
+        !Ref DBUsername
+
+      Description: CloudMart RDS MySQL master username
+
+
+  DBPasswordParameter:
+    Type: AWS::SSM::Parameter
+
+    Properties:
+
+      Name:
+        !Sub /cloudmart/${Environment}/db/password
+
+      Type: String
+
+      Value:
+        !Ref DBPassword
+
+      Description: CloudMart RDS MySQL master password
+
+
 Outputs:
 
   # ============================================================
@@ -281,16 +320,6 @@ Outputs:
     Export:
       Name:
         !Sub CloudMart-${Environment}-RDS-DBName
-
-
-  DBMasterUserSecretArn:
-    Description: Secrets Manager secret containing RDS master credentials
-    Value:
-      !GetAtt RDSInstance.MasterUserSecret.SecretArn
-
-    Export:
-      Name:
-        !Sub CloudMart-${Environment}-RDS-MasterSecretArn
 
 
   DBSubnetGroupName:

@@ -72,13 +72,11 @@ def get_database_connection():
         ),
 
         user=get_parameter(
-            os.environ["DB_USERNAME_PARAMETER"],
-            secure=True
+            os.environ["DB_USERNAME_PARAMETER"]
         ),
 
         password=get_parameter(
-            os.environ["DB_PASSWORD_PARAMETER"],
-            secure=True
+            os.environ["DB_PASSWORD_PARAMETER"]
         ),
 
         database=get_parameter(

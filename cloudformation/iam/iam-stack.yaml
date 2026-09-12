@@ -19,6 +19,7 @@ Parameters:
   Environment:
     Type: String
     Default: dev
+
     AllowedValues:
       - dev
       - prod
@@ -40,11 +41,14 @@ Resources:
 
     Properties:
 
-      RoleName: !Sub CloudMart-${Environment}-authorizer-lambda-role
+      RoleName:
+        !Sub CloudMart-${Environment}-authorizer-lambda-role
 
-      Description: IAM execution role for CloudMart Lambda Authorizer
+      Description:
+        IAM execution role for CloudMart Lambda Authorizer
 
       AssumeRolePolicyDocument:
+
         Version: '2012-10-17'
 
         Statement:
@@ -68,6 +72,7 @@ Resources:
         - PolicyName: AuthorizerCloudWatchLogs
 
           PolicyDocument:
+
             Version: '2012-10-17'
 
             Statement:
@@ -78,7 +83,8 @@ Resources:
                   - logs:CreateLogGroup
 
                 Resource:
-                  - !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/CloudMart-${Environment}-authorizer
+                  - !Sub >
+                    arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/CloudMart-${Environment}-authorizer
 
 
               - Effect: Allow
@@ -88,19 +94,24 @@ Resources:
                   - logs:PutLogEvents
 
                 Resource:
-                  - !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/CloudMart-${Environment}-authorizer:*
+                  - !Sub >
+                    arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/CloudMart-${Environment}-authorizer:*
 
 
         # --------------------------------------------------------
         # READ ADMIN AUTH TOKEN FROM SSM
         #
-        # Customer token is NO LONGER stored in SSM.
-        # Customer tokens are now validated using RDS.
+        # Admin token is stored as a normal String.
+        # No KMS decrypt permission is required.
+        #
+        # Customer token is NOT stored in SSM.
+        # Customer tokens are validated using RDS.
         # --------------------------------------------------------
 
         - PolicyName: AuthorizerReadAdminAuthToken
 
           PolicyDocument:
+
             Version: '2012-10-17'
 
             Statement:
@@ -111,19 +122,20 @@ Resources:
                   - ssm:GetParameter
 
                 Resource:
-                  - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/auth/admin-token
+                  - !Sub >
+                    arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/auth/admin-token
 
 
         # --------------------------------------------------------
         # READ DATABASE PARAMETERS FROM SSM
         #
-        # The Authorizer Lambda needs these parameters to connect
-        # to the RDS MySQL database.
+        # Database parameters are normal String parameters.
         # --------------------------------------------------------
 
         - PolicyName: AuthorizerReadDatabaseParameters
 
           PolicyDocument:
+
             Version: '2012-10-17'
 
             Statement:
@@ -136,42 +148,24 @@ Resources:
                 Resource:
 
                   # Database host
-                  - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/host
+                  - !Sub >
+                    arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/host
 
                   # Database port
-                  - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/port
+                  - !Sub >
+                    arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/port
 
                   # Database name
-                  - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/name
+                  - !Sub >
+                    arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/name
 
                   # Database username
-                  - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/username
+                  - !Sub >
+                    arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/username
 
                   # Database password
-                  - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/password
-
-
-        # --------------------------------------------------------
-        # KMS DECRYPT
-        #
-        # Required when the SSM SecureString parameters use
-        # encryption that requires KMS decrypt permission.
-        # --------------------------------------------------------
-
-        - PolicyName: AuthorizerReadSSMKMS
-
-          PolicyDocument:
-            Version: '2012-10-17'
-
-            Statement:
-
-              - Effect: Allow
-
-                Action:
-                  - kms:Decrypt
-
-                Resource:
-                  - !Sub arn:${AWS::Partition}:kms:${AWS::Region}:${AWS::AccountId}:key/*
+                  - !Sub >
+                    arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/password
 
 
         # --------------------------------------------------------
@@ -185,6 +179,7 @@ Resources:
         - PolicyName: AuthorizerVPCAccess
 
           PolicyDocument:
+
             Version: '2012-10-17'
 
             Statement:
@@ -201,14 +196,7 @@ Resources:
 
 
   # ============================================================
-  # PRODUCT LAMBDA ROLE
-  # ============================================================
-  #
-  # This role is used by:
-  #
-  # 1. Product Lambda
-  # 2. Schema Lambda
-  #
+  # PRODUCT + SCHEMA LAMBDA ROLE
   # ============================================================
 
   ProductLambdaRole:
@@ -216,13 +204,14 @@ Resources:
 
     Properties:
 
-      RoleName: !Sub CloudMart-${Environment}-product-lambda-role
+      RoleName:
+        !Sub CloudMart-${Environment}-product-lambda-role
 
-      Description: >
-        IAM execution role for CloudMart Product Lambda
-        and Schema Lambda
+      Description:
+        IAM execution role for CloudMart Product and Schema Lambdas
 
       AssumeRolePolicyDocument:
+
         Version: '2012-10-17'
 
         Statement:
@@ -243,25 +232,22 @@ Resources:
         # CLOUDWATCH LOGS
         # --------------------------------------------------------
 
-        - PolicyName: ProductCloudWatchLogs
+        - PolicyName: ProductAndSchemaCloudWatchLogs
 
           PolicyDocument:
+
             Version: '2012-10-17'
 
             Statement:
 
-              # Create Product and Schema log groups
               - Effect: Allow
 
                 Action:
                   - logs:CreateLogGroup
 
-                Resource:
-                  - !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/CloudMart-${Environment}-product
-                  - !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/CloudMart-${Environment}-schema
+                Resource: "*"
 
 
-              # Product Lambda logs
               - Effect: Allow
 
                 Action:
@@ -269,27 +255,22 @@ Resources:
                   - logs:PutLogEvents
 
                 Resource:
-                  - !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/CloudMart-${Environment}-product:*
-
-
-              # Schema Lambda logs
-              - Effect: Allow
-
-                Action:
-                  - logs:CreateLogStream
-                  - logs:PutLogEvents
-
-                Resource:
-                  - !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/CloudMart-${Environment}-schema:*
+                  - !Sub >
+                    arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/CloudMart-${Environment}-product:*
+                  - !Sub >
+                    arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/CloudMart-${Environment}-schema:*
 
 
         # --------------------------------------------------------
         # READ DATABASE PARAMETERS FROM SSM
+        #
+        # All database parameters are normal String parameters.
         # --------------------------------------------------------
 
-        - PolicyName: ProductAndSchemaReadDatabaseParameters
+        - PolicyName: ProductAndSchemaReadSSM
 
           PolicyDocument:
+
             Version: '2012-10-17'
 
             Statement:
@@ -300,31 +281,21 @@ Resources:
                   - ssm:GetParameter
 
                 Resource:
-                  - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/host
-                  - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/port
-                  - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/name
-                  - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/username
-                  - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/password
 
+                  - !Sub >
+                    arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/host
 
-        # --------------------------------------------------------
-        # KMS DECRYPT
-        # --------------------------------------------------------
+                  - !Sub >
+                    arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/port
 
-        - PolicyName: ProductAndSchemaReadSSMKMS
+                  - !Sub >
+                    arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/name
 
-          PolicyDocument:
-            Version: '2012-10-17'
+                  - !Sub >
+                    arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/username
 
-            Statement:
-
-              - Effect: Allow
-
-                Action:
-                  - kms:Decrypt
-
-                Resource:
-                  - !Sub arn:${AWS::Partition}:kms:${AWS::Region}:${AWS::AccountId}:key/*
+                  - !Sub >
+                    arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/password
 
 
         # --------------------------------------------------------
@@ -334,6 +305,7 @@ Resources:
         - PolicyName: ProductAndSchemaVPCAccess
 
           PolicyDocument:
+
             Version: '2012-10-17'
 
             Statement:
@@ -348,135 +320,9 @@ Resources:
                 Resource: "*"
 
 
-        # --------------------------------------------------------
-        # PUBLISH INVENTORY EVENTS
-        # --------------------------------------------------------
-
-        - PolicyName: ProductPublishInventoryEvents
-
-          PolicyDocument:
-            Version: '2012-10-17'
-
-            Statement:
-
-              - Effect: Allow
-
-                Action:
-                  - events:PutEvents
-
-                Resource:
-                  - !Sub arn:${AWS::Partition}:events:${AWS::Region}:${AWS::AccountId}:event-bus/cloudmart-${Environment}-event-bus
-
-
-
-  # ============================================================
-  # INVENTORY ALERT LAMBDA ROLE
-  # ============================================================
-
-  InventoryAlertLambdaRole:
-    Type: AWS::IAM::Role
-
-    Properties:
-
-      RoleName: !Sub CloudMart-${Environment}-inventory-alert-lambda-role
-
-      Description: IAM execution role for CloudMart Inventory Alert Lambda
-
-      AssumeRolePolicyDocument:
-        Version: '2012-10-17'
-
-        Statement:
-
-          - Effect: Allow
-
-            Principal:
-              Service:
-                - lambda.amazonaws.com
-
-            Action:
-              - sts:AssumeRole
-
-
-      Policies:
-
-        # --------------------------------------------------------
-        # CLOUDWATCH LOGS
-        # --------------------------------------------------------
-
-        - PolicyName: InventoryAlertCloudWatchLogs
-
-          PolicyDocument:
-            Version: '2012-10-17'
-
-            Statement:
-
-              - Effect: Allow
-
-                Action:
-                  - logs:CreateLogGroup
-
-                Resource:
-                  - !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/CloudMart-${Environment}-inventory-alert
-
-
-              - Effect: Allow
-
-                Action:
-                  - logs:CreateLogStream
-                  - logs:PutLogEvents
-
-                Resource:
-                  - !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/CloudMart-${Environment}-inventory-alert:*
-
-
-        # --------------------------------------------------------
-        # PUBLISH LOW STOCK ALERTS TO SNS
-        # --------------------------------------------------------
-
-        - PolicyName: InventoryAlertPublishSNS
-
-          PolicyDocument:
-            Version: '2012-10-17'
-
-            Statement:
-
-              - Effect: Allow
-
-                Action:
-                  - sns:Publish
-
-                Resource:
-                  - !Sub arn:${AWS::Partition}:sns:${AWS::Region}:${AWS::AccountId}:CloudMart-${Environment}-low-stock-alert
-
-
 
   # ============================================================
   # ORDER PROCESSOR LAMBDA ROLE
-  # ============================================================
-  #
-  # IMPORTANT:
-  #
-  # We now use ONLY ONE Lambda for Orders.
-  #
-  # API Gateway
-  #       |
-  #       v
-  # Order Processor Lambda
-  #
-  # Therefore:
-  #
-  # - There is NO separate OrderLambdaRole.
-  # - There is NO Lambda-to-Lambda invocation permission.
-  # - API Gateway directly invokes OrderProcessorLambda.
-  #
-  # This role provides:
-  #
-  # - CloudWatch Logs
-  # - SSM database parameter access
-  # - KMS decrypt
-  # - VPC access
-  # - EventBridge PutEvents
-  #
   # ============================================================
 
   OrderProcessorLambdaRole:
@@ -484,15 +330,14 @@ Resources:
 
     Properties:
 
-      RoleName: !Sub CloudMart-${Environment}-order-processor-lambda-role
+      RoleName:
+        !Sub CloudMart-${Environment}-order-processor-lambda-role
 
-      Description: >
-        IAM execution role for CloudMart single Order Processor Lambda.
-        Handles POST /orders, GET /orders/{id},
-        and GET /orders?customerId=.
-
+      Description:
+        IAM execution role for CloudMart Order Processor Lambda
 
       AssumeRolePolicyDocument:
+
         Version: '2012-10-17'
 
         Statement:
@@ -516,21 +361,19 @@ Resources:
         - PolicyName: OrderProcessorCloudWatchLogs
 
           PolicyDocument:
+
             Version: '2012-10-17'
 
             Statement:
 
-              # Create log group
               - Effect: Allow
 
                 Action:
                   - logs:CreateLogGroup
 
-                Resource:
-                  - !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/CloudMart-${Environment}-order-processor
+                Resource: "*"
 
 
-              # Write Order Processor logs
               - Effect: Allow
 
                 Action:
@@ -538,16 +381,18 @@ Resources:
                   - logs:PutLogEvents
 
                 Resource:
-                  - !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/CloudMart-${Environment}-order-processor:*
+                  - !Sub >
+                    arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/CloudMart-${Environment}-order-processor:*
 
 
         # --------------------------------------------------------
         # READ DATABASE PARAMETERS FROM SSM
         # --------------------------------------------------------
 
-        - PolicyName: OrderProcessorReadDatabaseParameters
+        - PolicyName: OrderProcessorReadSSM
 
           PolicyDocument:
+
             Version: '2012-10-17'
 
             Statement:
@@ -559,40 +404,20 @@ Resources:
 
                 Resource:
 
-                  # Database host
-                  - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/host
+                  - !Sub >
+                    arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/host
 
-                  # Database port
-                  - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/port
+                  - !Sub >
+                    arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/port
 
-                  # Database name
-                  - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/name
+                  - !Sub >
+                    arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/name
 
-                  # Database username
-                  - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/username
+                  - !Sub >
+                    arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/username
 
-                  # Database password
-                  - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/password
-
-
-        # --------------------------------------------------------
-        # KMS DECRYPT
-        # --------------------------------------------------------
-
-        - PolicyName: OrderProcessorSSMKMSDecrypt
-
-          PolicyDocument:
-            Version: '2012-10-17'
-
-            Statement:
-
-              - Effect: Allow
-
-                Action:
-                  - kms:Decrypt
-
-                Resource:
-                  - !Sub arn:${AWS::Partition}:kms:${AWS::Region}:${AWS::AccountId}:key/*
+                  - !Sub >
+                    arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/password
 
 
         # --------------------------------------------------------
@@ -602,6 +427,7 @@ Resources:
         - PolicyName: OrderProcessorVPCAccess
 
           PolicyDocument:
+
             Version: '2012-10-17'
 
             Statement:
@@ -617,12 +443,15 @@ Resources:
 
 
         # --------------------------------------------------------
-        # PUBLISH EVENTS TO EVENTBRIDGE
+        # EVENTBRIDGE
+        #
+        # Allows the Order Processor to publish order events.
         # --------------------------------------------------------
 
-        - PolicyName: OrderProcessorPublishEvents
+        - PolicyName: OrderProcessorEventBridge
 
           PolicyDocument:
+
             Version: '2012-10-17'
 
             Statement:
@@ -633,8 +462,8 @@ Resources:
                   - events:PutEvents
 
                 Resource:
-                  - !Sub arn:${AWS::Partition}:events:${AWS::Region}:${AWS::AccountId}:event-bus/cloudmart-${Environment}-event-bus
-
+                  - !Sub >
+                    arn:${AWS::Partition}:events:${AWS::Region}:${AWS::AccountId}:event-bus/cloudmart-${Environment}-event-bus
 
 
 # ==============================================================
@@ -643,118 +472,49 @@ Resources:
 
 Outputs:
 
-
   # ============================================================
-  # AUTHORIZE ROLE OUTPUTS
+  # AUTHORIZE ROLE ARN
   # ============================================================
 
   AuthorizerLambdaRoleArn:
-
-    Description: ARN of the CloudMart Authorizer Lambda execution role
+    Description:
+      ARN of the Lambda Authorizer execution role
 
     Value:
       !GetAtt AuthorizerLambdaRole.Arn
 
     Export:
-      Name: !Sub CloudMart-${Environment}-AuthorizerLambdaRoleArn
-
-
-  AuthorizerLambdaRoleName:
-
-    Description: Name of the CloudMart Authorizer Lambda execution role
-
-    Value:
-      !Ref AuthorizerLambdaRole
-
-    Export:
-      Name: !Sub CloudMart-${Environment}-AuthorizerLambdaRoleName
-
+      Name:
+        !Sub CloudMart-${Environment}-AuthorizerLambdaRoleArn
 
 
   # ============================================================
-  # PRODUCT ROLE OUTPUTS
+  # PRODUCT ROLE ARN
   # ============================================================
 
   ProductLambdaRoleArn:
-
-    Description: >
-      ARN of the CloudMart Product Lambda execution role.
-      This role is also used by Schema Lambda.
+    Description:
+      ARN of the Product Lambda execution role
 
     Value:
       !GetAtt ProductLambdaRole.Arn
 
     Export:
-      Name: !Sub CloudMart-${Environment}-ProductLambdaRoleArn
-
-
-  ProductLambdaRoleName:
-
-    Description: >
-      Name of the CloudMart Product Lambda execution role.
-      This role is also used by Schema Lambda.
-
-    Value:
-      !Ref ProductLambdaRole
-
-    Export:
-      Name: !Sub CloudMart-${Environment}-ProductLambdaRoleName
-
+      Name:
+        !Sub CloudMart-${Environment}-ProductLambdaRoleArn
 
 
   # ============================================================
-  # INVENTORY ALERT ROLE OUTPUTS
-  # ============================================================
-
-  InventoryAlertLambdaRoleArn:
-
-    Description: ARN of the CloudMart Inventory Alert Lambda execution role
-
-    Value:
-      !GetAtt InventoryAlertLambdaRole.Arn
-
-    Export:
-      Name: !Sub CloudMart-${Environment}-InventoryAlertLambdaRoleArn
-
-
-  InventoryAlertLambdaRoleName:
-
-    Description: Name of the CloudMart Inventory Alert Lambda execution role
-
-    Value:
-      !Ref InventoryAlertLambdaRole
-
-    Export:
-      Name: !Sub CloudMart-${Environment}-InventoryAlertLambdaRoleName
-
-
-
-  # ============================================================
-  # ORDER PROCESSOR ROLE OUTPUTS
+  # ORDER PROCESSOR ROLE ARN
   # ============================================================
 
   OrderProcessorLambdaRoleArn:
-
-    Description: >
-      ARN of the CloudMart single Order Processor Lambda
-      execution role.
+    Description:
+      ARN of the Order Processor Lambda execution role
 
     Value:
       !GetAtt OrderProcessorLambdaRole.Arn
 
     Export:
-      Name: !Sub CloudMart-${Environment}-OrderProcessorLambdaRoleArn
-
-
-  OrderProcessorLambdaRoleName:
-
-    Description: >
-      Name of the CloudMart single Order Processor Lambda
-      execution role.
-
-    Value:
-      !Ref OrderProcessorLambdaRole
-
-    Export:
-      Name: !Sub CloudMart-${Environment}-OrderProcessorLambdaRoleName
-
+      Name:
+        !Sub CloudMart-${Environment}-OrderProcessorLambdaRoleArn
