@@ -235,17 +235,15 @@ Resources:
           !Ref LambdaArtifactKey
 
 
-  # ============================================================
+   # ============================================================
   # LAMBDA PERMISSION FOR API GATEWAY
   # ============================================================
 
-  ApiGatewayInvokePermission:
+  AuthorizerLambdaPermission:
     Type: AWS::Lambda::Permission
 
     Properties:
-
-      Action:
-        lambda:InvokeFunction
+      Action: lambda:InvokeFunction
 
       FunctionName:
         !Ref LambdaAuthorizer
@@ -254,9 +252,7 @@ Resources:
         apigateway.amazonaws.com
 
       SourceArn:
-        !Sub >
-          arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:*/*/*
-
+        !Sub 'arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:*/*/*'
 
 # ==============================================================
 # OUTPUTS
