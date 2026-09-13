@@ -374,40 +374,32 @@ Resources:
 
 
         # --------------------------------------------------------
-        # READ DATABASE PARAMETERS FROM SSM
-        # --------------------------------------------------------
-
+  # READ DATABASE PARAMETERS FROM SSM
+  # --------------------------------------------------------
         - PolicyName: OrderProcessorReadSSM
 
-          PolicyDocument:
+    PolicyDocument:
 
-            Version: '2012-10-17'
+      Version: '2012-10-17'
 
-            Statement:
+      Statement:
 
-              - Effect: Allow
+        - Effect: Allow
 
-                Action:
-                  - ssm:GetParameter
+          Action:
+            - ssm:GetParameter
 
-                Resource:
+          Resource:
 
-                  - !Sub >
-                    arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/host
+            - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/host'
 
-                  - !Sub >
-                    arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/port
+            - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/port'
 
-                  - !Sub >
-                    arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/name
+            - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/name'
 
-                  - !Sub >
-                    arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/username
+            - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/username'
 
-                  - !Sub >
-                    arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/password
-
-
+            - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/password'
         # --------------------------------------------------------
         # VPC NETWORK INTERFACE PERMISSIONS
         # --------------------------------------------------------
