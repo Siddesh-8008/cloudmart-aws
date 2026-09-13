@@ -642,7 +642,7 @@ jobs:
 
           aws s3 cp \
             schema.zip \
-            "s3://${BUCKET}/schema/schema.zip"
+            "s3://${BUCKET}/schema/schema1.zip"
 
           aws s3 cp \
             order-processor.zip \
@@ -655,7 +655,7 @@ jobs:
 
           aws s3api head-object \
             --bucket "${BUCKET}" \
-            --key schema/schema.zip
+            --key schema/schema1.zip
 
           aws s3api head-object \
             --bucket "${BUCKET}" \
@@ -685,7 +685,7 @@ jobs:
               AuthorizerLambdaArn="${{ steps.auth.outputs.arn }}" \
               ProductLambdaCodeBucket="${{ steps.bucket.outputs.bucket }}" \
               ProductLambdaCodeKey="product/product.zip" \
-              SchemaLambdaCodeKey="schema/schema.zip" \
+              SchemaLambdaCodeKey="schema/schema1.zip" \
               OrderProcessorLambdaCodeKey="order-processor/order-processor.zip" \
               DBHostParameter="/cloudmart/${ENVIRONMENT}/db/host" \
               DBPortParameter="/cloudmart/${ENVIRONMENT}/db/port" \
