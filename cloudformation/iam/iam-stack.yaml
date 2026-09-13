@@ -83,8 +83,7 @@ Resources:
                   - logs:CreateLogGroup
 
                 Resource:
-                  - !Sub >
-                    arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/CloudMart-${Environment}-authorizer
+                  - !Sub 'arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/CloudMart-${Environment}-authorizer'
 
 
               - Effect: Allow
@@ -94,8 +93,7 @@ Resources:
                   - logs:PutLogEvents
 
                 Resource:
-                  - !Sub >
-                    arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/CloudMart-${Environment}-authorizer:*
+                  - !Sub 'arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/CloudMart-${Environment}-authorizer:*'
 
 
         # --------------------------------------------------------
@@ -108,7 +106,7 @@ Resources:
         # Customer tokens are validated using RDS.
         # --------------------------------------------------------
 
-              - PolicyName: AuthorizerReadAdminAuthToken
+        - PolicyName: AuthorizerReadAdminAuthToken
 
           PolicyDocument:
 
@@ -160,6 +158,8 @@ Resources:
 
                   # Database password
                   - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/password'
+
+
         # --------------------------------------------------------
         # VPC ACCESS
         #
@@ -246,12 +246,10 @@ Resources:
                   - logs:CreateLogStream
                   - logs:PutLogEvents
 
-
                 Resource:
-                  - !Sub >
-                    arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/CloudMart-${Environment}-product:*
-                  - !Sub >
-                    arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/CloudMart-${Environment}-schema:*
+                  - !Sub 'arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/CloudMart-${Environment}-product:*'
+
+                  - !Sub 'arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/CloudMart-${Environment}-schema:*'
 
 
         # --------------------------------------------------------
@@ -275,15 +273,15 @@ Resources:
 
                 Resource:
 
-                    - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/host'
+                  - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/host'
 
-                    - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/port'
+                  - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/port'
 
-                    - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/name'
+                  - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/name'
 
-                    - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/username'
+                  - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/username'
 
-                    - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/password'
+                  - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/password'
 
 
         # --------------------------------------------------------
@@ -369,37 +367,39 @@ Resources:
                   - logs:PutLogEvents
 
                 Resource:
-                  - !Sub >
-                    arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/CloudMart-${Environment}-order-processor:*
+                  - !Sub 'arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/CloudMart-${Environment}-order-processor:*'
 
 
         # --------------------------------------------------------
-  # READ DATABASE PARAMETERS FROM SSM
-  # --------------------------------------------------------
+        # READ DATABASE PARAMETERS FROM SSM
+        # --------------------------------------------------------
+
         - PolicyName: OrderProcessorReadSSM
 
-    PolicyDocument:
+          PolicyDocument:
 
-      Version: '2012-10-17'
+            Version: '2012-10-17'
 
-      Statement:
+            Statement:
 
-        - Effect: Allow
+              - Effect: Allow
 
-          Action:
-            - ssm:GetParameter
+                Action:
+                  - ssm:GetParameter
 
-          Resource:
+                Resource:
 
-            - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/host'
+                  - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/host'
 
-            - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/port'
+                  - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/port'
 
-            - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/name'
+                  - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/name'
 
-            - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/username'
+                  - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/username'
 
-            - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/password'
+                  - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/password'
+
+
         # --------------------------------------------------------
         # VPC NETWORK INTERFACE PERMISSIONS
         # --------------------------------------------------------
@@ -442,8 +442,7 @@ Resources:
                   - events:PutEvents
 
                 Resource:
-                  - !Sub >
-                    arn:${AWS::Partition}:events:${AWS::Region}:${AWS::AccountId}:event-bus/cloudmart-${Environment}-event-bus
+                  - !Sub 'arn:${AWS::Partition}:events:${AWS::Region}:${AWS::AccountId}:event-bus/cloudmart-${Environment}-event-bus'
 
 
 # ==============================================================
@@ -457,6 +456,7 @@ Outputs:
   # ============================================================
 
   AuthorizerLambdaRoleArn:
+
     Description:
       ARN of the Lambda Authorizer execution role
 
@@ -473,6 +473,7 @@ Outputs:
   # ============================================================
 
   ProductLambdaRoleArn:
+
     Description:
       ARN of the Product Lambda execution role
 
@@ -489,8 +490,10 @@ Outputs:
   # ============================================================
 
   OrderProcessorLambdaRoleArn:
+
     Description:
       ARN of the Order Processor Lambda execution role
+
     Value:
       !GetAtt OrderProcessorLambdaRole.Arn
 
