@@ -163,16 +163,16 @@ ON DUPLICATE KEY UPDATE
 VALUES
 (
     'CUST001',
-    SHA2('93fc41cabcd58e45ebcd915f48a4e6fb14536c43fefa00a4ab3c9a26ecf45270', 256),
+    SHA2('6A0JLpPl3uM7pb_Uv73FaxC2LuI_WhKbFNEXUddy_VM', 256),
     TRUE
 ),
 (
     'CUST002',
-    SHA2('134237e2f79d7d941a1ac8f05e253bbb606ade3e8a87a933ad01acd533aaade1', 256),
+    SHA2('txk-wMbwQziK1TDu4HB4R7Nu7lj8wF1kASxkgQtHWa0', 256),
     TRUE
 ),
 (
     'CUST003',
-    SHA2('84598a420591bfc253c79238aa1f5adf786e18b81478f46f8b07ae0154e9ad47', 256),
+    SHA2('bVIS4olBt9xVuvKS-Fxw1nOf1tXmgN7AhG59qYB2-9k', 256),
     TRUE
 );
