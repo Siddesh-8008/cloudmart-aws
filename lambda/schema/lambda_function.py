@@ -312,8 +312,20 @@ def lambda_handler(event, context):
             # =================================================
             # SEED CUSTOMER AUTH TOKENS
             # =================================================
-            # Only SHA-256 hashes are stored in the database.
-            # These are development/test credentials.
+            # Development/test credentials.
+            #
+            # The actual customer tokens are NOT stored in MySQL.
+            # SHA-256 is calculated from each token and only the
+            # resulting 64-character hash is stored.
+            #
+            # These three tokens are the credentials used by Postman:
+            #
+            # CUST001 -> 6A0JLpPl3uM7pb_Uv73FaxC2LuI_WhKbFNEXUddy_VM
+            # CUST002 -> txk-wMbwQziK1TDu4HB4R7Nu7lj8wF1kASxkgQtHWa0
+            # CUST003 -> bVIS4olBt9xVuvKS-Fxw1nOf1tXmgN7AhG59qYB2-9k
+            #
+            # SHA-256 is deterministic:
+            # the same token always produces the same hash.
 
             cursor.execute(
                 """
@@ -326,17 +338,26 @@ def lambda_handler(event, context):
                 VALUES
                 (
                     'CUST001',
-                    SHA2('Xc4SvD_R0MCE9P2vjRXGyWXQeZ_52_QOUhh_fXlK5Hk', 256),
+                    SHA2(
+                        '6A0JLpPl3uM7pb_Uv73FaxC2LuI_WhKbFNEXUddy_VM',
+                        256
+                    ),
                     TRUE
                 ),
                 (
                     'CUST002',
-                    SHA2('GgGigYvglp6sclYCnY7bNOrK1WaJc_q6QrlZrLSQZmc', 256),
+                    SHA2(
+                        'txk-wMbwQziK1TDu4HB4R7Nu7lj8wF1kASxkgQtHWa0',
+                        256
+                    ),
                     TRUE
                 ),
                 (
                     'CUST003',
-                    SHA2('xL_KsFGAs2p1toyPfZX0nXmm3Wy2HiAvntawIrqzemQ', 256),
+                    SHA2(
+                        'bVIS4olBt9xVuvKS-Fxw1nOf1tXmgN7AhG59qYB2-9k',
+                        256
+                    ),
                     TRUE
                 )
                 ON DUPLICATE KEY UPDATE
