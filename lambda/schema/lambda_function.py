@@ -281,6 +281,72 @@ def lambda_handler(event, context):
 
 
             # =================================================
+            # CUSTOMER AUTH TOKEN INDEX
+            # =================================================
+            # Customer authentication searches by customer_id + token_hash.
+            # The information_schema check makes this safe for an existing table.
+
+            cursor.execute(
+                """
+                SELECT COUNT(*) AS index_count
+                FROM information_schema.statistics
+                WHERE table_schema = DATABASE()
+                  AND table_name = 'customer_auth_tokens'
+                  AND index_name = 'idx_customer_auth_customer_token'
+                """
+            )
+
+            token_index = cursor.fetchone()
+
+            if not token_index or token_index["index_count"] == 0:
+
+                cursor.execute(
+                    """
+                    ALTER TABLE customer_auth_tokens
+                    ADD INDEX idx_customer_auth_customer_token
+                    (customer_id, token_hash)
+                    """
+                )
+
+
+            # =================================================
+            # SEED CUSTOMER AUTH TOKENS
+            # =================================================
+            # Only SHA-256 hashes are stored in the database.
+            # These are development/test credentials.
+
+            cursor.execute(
+                """
+                INSERT INTO customer_auth_tokens
+                (
+                    customer_id,
+                    token_hash,
+                    is_active
+                )
+                VALUES
+                (
+                    'CUST001',
+                    SHA2('Xc4SvD_R0MCE9P2vjRXGyWXQeZ_52_QOUhh_fXlK5Hk', 256),
+                    TRUE
+                ),
+                (
+                    'CUST002',
+                    SHA2('GgGigYvglp6sclYCnY7bNOrK1WaJc_q6QrlZrLSQZmc', 256),
+                    TRUE
+                ),
+                (
+                    'CUST003',
+                    SHA2('xL_KsFGAs2p1toyPfZX0nXmm3Wy2HiAvntawIrqzemQ', 256),
+                    TRUE
+                )
+                ON DUPLICATE KEY UPDATE
+                    customer_id = VALUES(customer_id),
+                    is_active = TRUE
+                """
+            )
+
+
+            # =================================================
             # ORDER STATUS TABLE
             # =================================================
 
@@ -317,9 +383,6 @@ def lambda_handler(event, context):
                 ),
                 (
                     'FAILED'
-                )
-                (
-                    'CANCELLED'              
                 )
                 """
             )

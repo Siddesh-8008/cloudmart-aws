@@ -407,72 +407,99 @@ def create_order(event):
             event
         )
 
-        if "customerId" not in body:
-
-            return response(
-                400,
-                {
-                    "message":
-                        "customerId is required"
-                }
-            )
-
-        requested_customer_id = str(
-            body["customerId"]
-        ).strip()
-
-        if not requested_customer_id:
-
-            return response(
-                400,
-                {
-                    "message":
-                        "customerId cannot be empty"
-                }
-            )
-
         # ----------------------------------------------------
-        # CUSTOMER OWNERSHIP CHECK
+        # CUSTOMER ID
         # ----------------------------------------------------
+        # For customers, customerId is already authenticated by
+        # the Lambda Authorizer from the URL query parameter:
+        # /orders?customerId=CUST001
+        # The request body no longer needs customerId.
+        #
+        # For admins, customerId remains required in the body
+        # because an admin can place an order for any customer.
 
         if role == "customer":
 
-            if (
-                requested_customer_id
-                != authenticated_customer_id
-            ):
+            customer_id = authenticated_customer_id
 
-                logger.warning(
-                    "Customer ownership violation. "
-                    "Token customer=%s, requested customer=%s",
-                    authenticated_customer_id,
-                    requested_customer_id
-                )
+            if not customer_id:
 
                 return response(
                     403,
                     {
                         "message":
-                            "You can only place orders "
-                            "for your own customerId",
-
-                        "authenticatedCustomerId":
-                            authenticated_customer_id,
-
-                        "requestedCustomerId":
-                            requested_customer_id
+                            "Customer identity not found "
+                            "in authorization context"
                     }
                 )
 
-            customer_id = (
-                authenticated_customer_id
-            )
+            # If a customerId is also supplied in the body,
+            # require it to match the authenticated identity.
+            body_customer_id = body.get("customerId")
+
+            if body_customer_id is not None:
+
+                body_customer_id = str(
+                    body_customer_id
+                ).strip()
+
+                if not body_customer_id:
+
+                    return response(
+                        400,
+                        {
+                            "message":
+                                "customerId cannot be empty"
+                        }
+                    )
+
+                if body_customer_id != customer_id:
+
+                    logger.warning(
+                        "Customer ownership violation. "
+                        "Authenticated customer=%s, body customer=%s",
+                        customer_id,
+                        body_customer_id
+                    )
+
+                    return response(
+                        403,
+                        {
+                            "message":
+                                "You can only place orders "
+                                "for your own customerId",
+                            "authenticatedCustomerId":
+                                customer_id,
+                            "requestedCustomerId":
+                                body_customer_id
+                        }
+                    )
 
         else:
 
-            customer_id = (
-                requested_customer_id
-            )
+            if "customerId" not in body:
+
+                return response(
+                    400,
+                    {
+                        "message":
+                            "customerId is required for admin orders"
+                    }
+                )
+
+            customer_id = str(
+                body["customerId"]
+            ).strip()
+
+            if not customer_id:
+
+                return response(
+                    400,
+                    {
+                        "message":
+                            "customerId cannot be empty"
+                    }
+                )
 
         # ----------------------------------------------------
         # ITEMS

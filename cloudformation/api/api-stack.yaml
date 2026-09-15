@@ -137,7 +137,7 @@ Parameters:
   AuthorizerCacheTTL:
     Type: Number
     Default: 0
-    Description: API Gateway authorizer cache TTL in seconds
+    Description: API Gateway authorizer cache TTL in seconds. Keep this at 0 because customerId is part of the authentication input.
 
 
   # ============================================================
@@ -459,9 +459,15 @@ Resources:
       RestApiId:
         !Ref ProductApi
 
+      # REQUEST authorizer is required because the customerId
+      # comes from the query string while the token comes from
+      # the Authorization header.
       Type:
-        TOKEN
+        REQUEST
 
+      # Keep only Authorization as the identity source. This lets
+      # the Lambda Authorizer handle the customerId-required case
+      # and return Unauthorized when it is missing.
       IdentitySource:
         method.request.header.Authorization
 

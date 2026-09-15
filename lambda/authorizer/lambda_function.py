@@ -255,10 +255,11 @@ def get_customer_resources(method_arn):
 
 
 # ============================================================
-# FIND CUSTOMER BY TOKEN
+# FIND CUSTOMER BY CUSTOMER ID + TOKEN
 # ============================================================
 
-def find_customer_by_token(
+def find_customer_by_credentials(
+    customer_id,
     supplied_token
 ):
 
@@ -287,12 +288,14 @@ def find_customer_by_token(
                 FROM customer_auth_tokens t
                 INNER JOIN customers c
                     ON c.customer_id = t.customer_id
-                WHERE t.is_active = TRUE
+                WHERE t.customer_id = %s
+                  AND t.is_active = TRUE
                   AND c.status = 'ACTIVE'
                   AND t.token_hash = %s
                 LIMIT 1
                 """,
                 (
+                    customer_id,
                     token_hash,
                 )
             )
@@ -337,9 +340,11 @@ def find_customer_by_token(
                 """
                 UPDATE customer_auth_tokens
                 SET last_used_at = CURRENT_TIMESTAMP
-                WHERE token_hash = %s
+                WHERE customer_id = %s
+                  AND token_hash = %s
                 """,
                 (
+                    customer_id,
                     token_hash,
                 )
             )
@@ -384,12 +389,20 @@ def handler(event, context):
 
 
     # ========================================================
-    # AUTHORIZATION TOKEN
+    # AUTHORIZATION HEADER
+    # REQUEST AUTHORISER RECEIVES THE HTTP HEADERS
     # ========================================================
 
-    authorization_token = event.get(
-        "authorizationToken"
-    )
+    headers = event.get("headers") or {}
+
+    authorization_token = None
+
+    for header_name, header_value in headers.items():
+
+        if str(header_name).lower() == "authorization":
+
+            authorization_token = header_value
+            break
 
 
     # ========================================================
@@ -400,27 +413,19 @@ def handler(event, context):
 
         print(
             json.dumps({
-
-                "event":
-                    "token_validation",
-
-                "result":
-                    "missing"
+                "event": "token_validation",
+                "result": "missing_authorization_header"
             })
         )
 
-        raise Exception(
-            "Unauthorized"
-        )
+        raise Exception("Unauthorized")
 
 
     # ========================================================
     # BEARER FORMAT
     # ========================================================
 
-    if not authorization_token.startswith(
-        "Bearer "
-    ):
+    if not str(authorization_token).startswith("Bearer "):
 
         print(
             json.dumps({
@@ -438,7 +443,7 @@ def handler(event, context):
         )
 
 
-    supplied_token = authorization_token[
+    supplied_token = str(authorization_token)[
         7:
     ].strip()
 
@@ -453,6 +458,25 @@ def handler(event, context):
             "Unauthorized"
         )
 
+
+    # ========================================================
+    # CUSTOMER ID FROM QUERY STRING
+    # ========================================================
+
+    query_parameters = event.get(
+        "queryStringParameters"
+    ) or {}
+
+    customer_id = query_parameters.get(
+        "customerId"
+    )
+
+    if customer_id is not None:
+
+        customer_id = str(customer_id).strip()
+
+    # Admin authentication is checked first, so admin requests
+    # do not need a customerId query parameter.
 
     # ========================================================
     # ADMIN TOKEN
@@ -523,12 +547,31 @@ def handler(event, context):
 
 
     # ========================================================
+    # CUSTOMER ID IS MANDATORY FOR CUSTOMER AUTHENTICATION
+    # ========================================================
+
+    if not customer_id:
+
+        print(
+            json.dumps({
+                "event": "token_validation",
+                "result": "customerId_required"
+            })
+        )
+
+        raise Exception(
+            "customerId is required"
+        )
+
+
+    # ========================================================
     # CUSTOMER TOKEN -> RDS
     # ========================================================
 
     try:
 
-        customer = find_customer_by_token(
+        customer = find_customer_by_credentials(
+            customer_id,
             supplied_token
         )
 
@@ -566,7 +609,7 @@ def handler(event, context):
                     "token_validation",
 
                 "result":
-                    "invalid_customer_token"
+                    "invalid_customer_credentials"
             })
         )
 
