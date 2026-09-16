@@ -19,10 +19,8 @@ Parameters:
 
   Environment:
     Type: String
-    Default: dev
-    AllowedValues:
-      - dev
-      - prod
+    AllowedPattern: '^[a-zA-Z0-9-]+$'
+    Description: Deployment environment name used in resource and parameter names
 
 
   # ============================================================
@@ -97,37 +95,32 @@ Parameters:
 
   DBHostParameter:
     Type: String
-    Default: /cloudmart/dev/db/host
     Description: >
       SSM parameter containing database host
 
 
   DBPortParameter:
     Type: String
-    Default: /cloudmart/dev/db/port
     Description: >
       SSM parameter containing database port
 
 
   DBNameParameter:
     Type: String
-    Default: /cloudmart/dev/db/name
     Description: >
       SSM parameter containing database name
 
 
   DBUsernameParameter:
     Type: String
-    Default: /cloudmart/dev/db/username
     Description: >
-      SSM SecureString parameter containing database username
+      SSM String parameter containing database username
 
 
   DBPasswordParameter:
     Type: String
-    Default: /cloudmart/dev/db/password
     Description: >
-      SSM SecureString parameter containing database password
+      SSM String parameter containing database password
 
 
   # ============================================================
@@ -146,7 +139,6 @@ Parameters:
 
   EventBusName:
     Type: String
-    Default: cloudmart-dev-event-bus
     Description: CloudMart EventBridge event bus name
 
 
@@ -156,7 +148,8 @@ Parameters:
 
   LowStockEmail:
     Type: String
-    Description: Email address for low-stock notifications
+    Default: your-siddeshravula8008@gmail.com
+    Description: Email address for low-stock notifications. Replace the default with the real notification email.
 
 
 # ==============================================================

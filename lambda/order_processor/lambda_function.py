@@ -26,9 +26,11 @@ events = boto3.client("events")
 # ENVIRONMENT VARIABLES
 # ============================================================
 
+ENVIRONMENT = os.environ["ENVIRONMENT"]
+
 EVENT_BUS_NAME = os.environ.get(
     "EVENT_BUS_NAME",
-    "cloudmart-dev-event-bus"
+    f"cloudmart-{ENVIRONMENT}-event-bus"
 )
 
 DB_HOST_PARAMETER = os.environ["DB_HOST_PARAMETER"]
@@ -98,12 +100,12 @@ def get_db_connection():
 
     username = get_parameter(
         DB_USERNAME_PARAMETER,
-        with_decryption=True
+        with_decryption=False
     )
 
     password = get_parameter(
         DB_PASSWORD_PARAMETER,
-        with_decryption=True
+        with_decryption=False
     )
 
     return pymysql.connect(

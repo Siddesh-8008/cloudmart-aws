@@ -8,10 +8,8 @@ Parameters:
 
   Environment:
     Type: String
-    Default: dev
-    AllowedValues:
-      - dev
-      - prod
+    AllowedPattern: '^[a-zA-Z0-9-]+$'
+    Description: Deployment environment name used in resource and parameter names
 
   DBName:
     Type: String
@@ -27,8 +25,10 @@ Parameters:
   DBPassword:
     Type: String
     NoEcho: true
+    Default: CloudMartDb2026!
     MinLength: 8
     MaxLength: 41
+    Description: RDS master password. Stored in SSM Parameter Store as a String by this stack.
 
   DBInstanceClass:
     Type: String
@@ -138,7 +138,7 @@ Resources:
   # Used by GitHub Actions to store Lambda ZIP files.
   #
   # Example:
-  # s3://cloudmart-dev-lambda-artifacts-ACCOUNT_ID/
+  # s3://cloudmart-${Environment}-lambda-artifacts-ACCOUNT_ID/
   #     product/product.zip
   # ============================================================
 

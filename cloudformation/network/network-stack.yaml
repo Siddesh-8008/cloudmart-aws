@@ -6,14 +6,12 @@ Parameters:
 
   Environment:
     Type: String
-    AllowedValues:
-      - dev
-      - prod
-    Default: dev
+    AllowedPattern: '^[a-zA-Z0-9-]+$'
+    Description: Deployment environment name used in resource and parameter names
 
-  OperationsCidr:
-    Type: String
-    Description: CIDR allowed to access the public dashboard on TCP 443
+  LatestAmiId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-minimal-kernel-default-x86_64
 
 Resources:
 
@@ -293,7 +291,7 @@ Resources:
       FromPort: 3306
       ToPort: 3306
       DestinationSecurityGroupId: !Ref RDSSecurityGroup
-      Description: Dashboard to RDS MySQL
+      Description: RDS client to RDS MySQL
 
 
   EC2ToEndpoints:
@@ -307,15 +305,15 @@ Resources:
       Description: Dashboard to VPC endpoints
 
 
-  EC2FromOperationsIngress:
-    Type: AWS::EC2::SecurityGroupIngress
+  EC2ToInternet:
+    Type: AWS::EC2::SecurityGroupEgress
     Properties:
       GroupId: !Ref EC2SecurityGroup
       IpProtocol: tcp
       FromPort: 443
       ToPort: 443
-      CidrIp: !Ref OperationsCidr
-      Description: Operations team HTTPS access
+      CidrIp: 0.0.0.0/0
+      Description: HTTPS outbound access for Systems Manager and package installation
 
 
   # ============================================================
@@ -341,7 +339,7 @@ Resources:
       FromPort: 3306
       ToPort: 3306
       SourceSecurityGroupId: !Ref EC2SecurityGroup
-      Description: MySQL from dashboard
+      Description: MySQL from RDS client EC2
 
 
   RDSEgress:
@@ -440,26 +438,6 @@ Resources:
 
 
   # ============================================================
-  # KMS INTERFACE ENDPOINT
-  # Required for private Lambda access to KMS
-  # when decrypting SecureString SSM parameters.
-  # ============================================================
-
-  KMSEndpoint:
-    Type: AWS::EC2::VPCEndpoint
-    Properties:
-      VpcId: !Ref VPC
-      VpcEndpointType: Interface
-      ServiceName: !Sub com.amazonaws.${AWS::Region}.kms
-      PrivateDnsEnabled: true
-      SubnetIds:
-        - !Ref PrivateSubnetA
-        - !Ref PrivateSubnetB
-      SecurityGroupIds:
-        - !Ref EndpointSecurityGroup
-
-
-  # ============================================================
   # EVENTBRIDGE INTERFACE ENDPOINT
   # ============================================================
 
@@ -475,6 +453,76 @@ Resources:
         - !Ref PrivateSubnetB
       SecurityGroupIds:
         - !Ref EndpointSecurityGroup
+
+
+# ============================================================
+# EC2 INSTANCE PROFILE FOR SYSTEMS MANAGER
+#
+# The instance is managed through SSM Session Manager.
+# No inbound SSH/HTTP rules are required.
+# ============================================================
+
+  EC2InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Policies:
+        - PolicyName: ReadCloudMartDbParameters
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ssm:GetParameter
+                Resource:
+                  - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/*'
+      Tags:
+        - Key: Project
+          Value: CloudMart
+        - Key: Environment
+          Value: !Ref Environment
+
+  EC2InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref EC2InstanceRole
+
+  RDSClientEC2:
+    Type: AWS::EC2::Instance
+    DependsOn:
+      - PublicDefaultRoute
+    Properties:
+      ImageId: !Ref LatestAmiId
+      InstanceType: t3.micro
+      SubnetId: !Ref PublicSubnetA
+      SecurityGroupIds:
+        - !Ref EC2SecurityGroup
+      IamInstanceProfile: !Ref EC2InstanceProfile
+      Tags:
+        - Key: Name
+          Value: !Sub CloudMart-${Environment}-rds-client
+        - Key: Project
+          Value: CloudMart
+        - Key: Environment
+          Value: !Ref Environment
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          set -e
+          dnf install -y mariadb105 || true
+          systemctl enable amazon-ssm-agent || true
+          systemctl start amazon-ssm-agent || true
 
 
 # ==============================================================
@@ -539,3 +587,12 @@ Outputs:
       Name: !Sub CloudMart-${Environment}-EndpointSecurityGroupId
 
 
+  RDSClientInstanceId:
+    Description: EC2 instance used to connect to the private RDS instance through Session Manager
+    Value: !Ref RDSClientEC2
+    Export:
+      Name: !Sub CloudMart-${Environment}-RDSClientInstanceId
+
+  RDSClientPublicIp:
+    Description: Public IPv4 address of the RDS client EC2 instance
+    Value: !GetAtt RDSClientEC2.PublicIp

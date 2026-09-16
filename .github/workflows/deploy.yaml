@@ -7,11 +7,6 @@ on:
       - orders
 
   workflow_dispatch:
-    inputs:
-      operations_cidr:
-        description: Public IP/CIDR allowed to access the CloudMart dashboard
-        required: true
-        type: string
 
 
 # ============================================================
@@ -30,12 +25,7 @@ permissions:
 env:
   AWS_REGION: ap-south-1
   ENVIRONMENT: dev
-  NETWORK_STACK_NAME: cloudmart-dev-network
-  DATA_STACK_NAME: cloudmart-dev-data
-  IAM_STACK_NAME: cloudmart-dev-iam
-  AUTH_STACK_NAME: cloudmart-dev-auth
-  API_STACK_NAME: cloudmart-dev-api
-  EVENTBRIDGE_STACK_NAME: CloudMart-dev-eventbridge
+  # Stack names are constructed from ENVIRONMENT inside each shell command.
 
 
 # ============================================================
@@ -77,48 +67,14 @@ jobs:
             --region "${AWS_REGION}"
 
 
-      # ----------------------------------------------------------
-      # Determine Operations CIDR
-      #
-      # For automatic push:
-      #   use GitHub repository variable OPERATIONS_CIDR
-      #
-      # For manual workflow:
-      #   use workflow_dispatch input operations_cidr
-      # ----------------------------------------------------------
-
-      - name: Determine Operations CIDR
-        id: cidr
-        shell: bash
-        run: |
-          set -e
-
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            OPERATIONS_CIDR="${{ inputs.operations_cidr }}"
-          else
-            OPERATIONS_CIDR="${{ vars.OPERATIONS_CIDR }}"
-          fi
-
-          if [ -z "${OPERATIONS_CIDR}" ]; then
-            echo "ERROR: Operations CIDR is not configured."
-            echo "For push deployments, create repository variable OPERATIONS_CIDR."
-            echo "For manual deployments, provide operations_cidr input."
-            exit 1
-          fi
-
-          echo "Using Operations CIDR: ${OPERATIONS_CIDR}"
-
-          echo "operations_cidr=${OPERATIONS_CIDR}" >> "$GITHUB_OUTPUT"
-
-
       - name: Deploy Network Stack
         run: |
           aws cloudformation deploy \
             --template-file cloudformation/network/network-stack.yaml \
-            --stack-name "${NETWORK_STACK_NAME}" \
+            --stack-name "cloudmart-${ENVIRONMENT}-network" \
             --parameter-overrides \
               Environment="${ENVIRONMENT}" \
-              OperationsCidr="${{ steps.cidr.outputs.operations_cidr }}" \
+            --capabilities CAPABILITY_NAMED_IAM \
             --region "${AWS_REGION}" \
             --no-fail-on-empty-changeset
 
@@ -126,7 +82,7 @@ jobs:
       - name: Check Network Stack
         run: |
           aws cloudformation describe-stacks \
-            --stack-name "${NETWORK_STACK_NAME}" \
+            --stack-name "cloudmart-${ENVIRONMENT}-network" \
             --region "${AWS_REGION}" \
             --query "Stacks[0].StackStatus" \
             --output text
@@ -153,35 +109,21 @@ jobs:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
-
-      - name: Verify required RDS password secret
-        shell: bash
-        run: |
-          if [ -z "${{ secrets.RDS_MASTER_PASSWORD }}" ]; then
-            echo "ERROR: RDS_MASTER_PASSWORD GitHub secret is not configured."
-            exit 1
-          fi
-
-
       - name: Validate Data CloudFormation template
         run: |
           aws cloudformation validate-template \
             --template-body file://cloudformation/data/data-stack.yaml \
             --region "${AWS_REGION}"
 
-
       - name: Deploy Data Stack
-        env:
-          DB_PASSWORD: ${{ secrets.RDS_MASTER_PASSWORD }}
         run: |
           aws cloudformation deploy \
             --template-file cloudformation/data/data-stack.yaml \
-            --stack-name "${DATA_STACK_NAME}" \
+            --stack-name "cloudmart-${ENVIRONMENT}-data" \
             --parameter-overrides \
               Environment="${ENVIRONMENT}" \
               DBName="cloudmart" \
               DBUsername="cloudmartadmin" \
-              DBPassword="${DB_PASSWORD}" \
               DBInstanceClass="db.t3.micro" \
               AllocatedStorage="20" \
             --region "${AWS_REGION}" \
@@ -212,7 +154,7 @@ jobs:
       - name: Check Data Stack
         run: |
           aws cloudformation describe-stacks \
-            --stack-name "${DATA_STACK_NAME}" \
+            --stack-name "cloudmart-${ENVIRONMENT}-data" \
             --region "${AWS_REGION}" \
             --query "Stacks[0].StackStatus" \
             --output text
@@ -251,7 +193,7 @@ jobs:
         run: |
           aws cloudformation deploy \
             --template-file cloudformation/iam/iam-stack.yaml \
-            --stack-name "${IAM_STACK_NAME}" \
+            --stack-name "cloudmart-${ENVIRONMENT}-iam" \
             --parameter-overrides \
               Environment="${ENVIRONMENT}" \
             --capabilities CAPABILITY_NAMED_IAM \
@@ -270,7 +212,7 @@ jobs:
             "OrderProcessorLambdaRoleArn"; do
 
             VALUE=$(aws cloudformation describe-stacks \
-              --stack-name "${IAM_STACK_NAME}" \
+              --stack-name "cloudmart-${ENVIRONMENT}-iam" \
               --region "${AWS_REGION}" \
               --query "Stacks[0].Outputs[?OutputKey=='${OUTPUT}'].OutputValue | [0]" \
               --output text)
@@ -315,16 +257,6 @@ jobs:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
-
-      - name: Verify required authentication secret
-        shell: bash
-        run: |
-          if [ -z "${{ secrets.AUTH_TOKEN }}" ]; then
-            echo "ERROR: AUTH_TOKEN GitHub secret is not configured."
-            exit 1
-          fi
-
-
       - name: Get Lambda artifact bucket
         id: bucket
         shell: bash
@@ -332,7 +264,7 @@ jobs:
           set -e
 
           BUCKET=$(aws cloudformation describe-stacks \
-            --stack-name "${DATA_STACK_NAME}" \
+            --stack-name "cloudmart-${ENVIRONMENT}-data" \
             --region "${AWS_REGION}" \
             --query "Stacks[0].Outputs[?OutputKey=='LambdaArtifactBucketName'].OutputValue | [0]" \
             --output text)
@@ -366,39 +298,6 @@ jobs:
             --region "${AWS_REGION}"
 
 
-      # ----------------------------------------------------------
-      # ADMIN TOKEN
-      #
-      # Stored as normal SSM String.
-      # NOT SecureString.
-      # ----------------------------------------------------------
-
-      - name: Create or update admin authentication token
-        run: |
-          aws ssm put-parameter \
-            --name "/cloudmart/${ENVIRONMENT}/auth/admin-token" \
-            --type "String" \
-            --value "${{ secrets.AUTH_TOKEN }}" \
-            --overwrite \
-            --region "${AWS_REGION}"
-
-
-      - name: Verify admin authentication parameter is String
-        run: |
-          TYPE=$(aws ssm get-parameter \
-            --name "/cloudmart/${ENVIRONMENT}/auth/admin-token" \
-            --region "${AWS_REGION}" \
-            --query "Parameter.Type" \
-            --output text)
-
-          echo "Admin authentication parameter type: ${TYPE}"
-
-          if [ "${TYPE}" != "String" ]; then
-            echo "ERROR: Admin authentication parameter is not an SSM String."
-            exit 1
-          fi
-
-
       - name: Verify database SSM parameters
         run: |
           for PARAMETER in \
@@ -428,7 +327,7 @@ jobs:
         shell: bash
         run: |
           SG=$(aws cloudformation describe-stacks \
-            --stack-name "${NETWORK_STACK_NAME}" \
+            --stack-name "cloudmart-${ENVIRONMENT}-network" \
             --region "${AWS_REGION}" \
             --query "Stacks[0].Outputs[?OutputKey=='LambdaSecurityGroupId'].OutputValue | [0]" \
             --output text)
@@ -442,11 +341,10 @@ jobs:
         run: |
           aws cloudformation deploy \
             --template-file cloudformation/auth/auth-stack.yaml \
-            --stack-name "${AUTH_STACK_NAME}" \
+            --stack-name "cloudmart-${ENVIRONMENT}-auth" \
             --parameter-overrides \
               Environment="${ENVIRONMENT}" \
               LambdaSecurityGroupId="${{ steps.network.outputs.security_group }}" \
-              AdminAuthTokenParameterName="/cloudmart/${ENVIRONMENT}/auth/admin-token" \
               DBHostParameter="/cloudmart/${ENVIRONMENT}/db/host" \
               DBPortParameter="/cloudmart/${ENVIRONMENT}/db/port" \
               DBNameParameter="/cloudmart/${ENVIRONMENT}/db/name" \
@@ -462,7 +360,7 @@ jobs:
       - name: Check Auth Stack
         run: |
           aws cloudformation describe-stacks \
-            --stack-name "${AUTH_STACK_NAME}" \
+            --stack-name "cloudmart-${ENVIRONMENT}-auth" \
             --region "${AWS_REGION}" \
             --query "Stacks[0].StackStatus" \
             --output text
@@ -506,19 +404,19 @@ jobs:
         shell: bash
         run: |
           SUBNET_A=$(aws cloudformation describe-stacks \
-            --stack-name "${NETWORK_STACK_NAME}" \
+            --stack-name "cloudmart-${ENVIRONMENT}-network" \
             --region "${AWS_REGION}" \
             --query "Stacks[0].Outputs[?OutputKey=='PrivateSubnetAId'].OutputValue | [0]" \
             --output text)
 
           SUBNET_B=$(aws cloudformation describe-stacks \
-            --stack-name "${NETWORK_STACK_NAME}" \
+            --stack-name "cloudmart-${ENVIRONMENT}-network" \
             --region "${AWS_REGION}" \
             --query "Stacks[0].Outputs[?OutputKey=='PrivateSubnetBId'].OutputValue | [0]" \
             --output text)
 
           SG=$(aws cloudformation describe-stacks \
-            --stack-name "${NETWORK_STACK_NAME}" \
+            --stack-name "cloudmart-${ENVIRONMENT}-network" \
             --region "${AWS_REGION}" \
             --query "Stacks[0].Outputs[?OutputKey=='LambdaSecurityGroupId'].OutputValue | [0]" \
             --output text)
@@ -536,7 +434,7 @@ jobs:
         shell: bash
         run: |
           BUCKET=$(aws cloudformation describe-stacks \
-            --stack-name "${DATA_STACK_NAME}" \
+            --stack-name "cloudmart-${ENVIRONMENT}-data" \
             --region "${AWS_REGION}" \
             --query "Stacks[0].Outputs[?OutputKey=='LambdaArtifactBucketName'].OutputValue | [0]" \
             --output text)
@@ -551,7 +449,7 @@ jobs:
         shell: bash
         run: |
           ARN=$(aws cloudformation describe-stacks \
-            --stack-name "${AUTH_STACK_NAME}" \
+            --stack-name "cloudmart-${ENVIRONMENT}-auth" \
             --region "${AWS_REGION}" \
             --query "Stacks[0].Outputs[?OutputKey=='AuthorizerLambdaArn'].OutputValue | [0]" \
             --output text)
@@ -566,13 +464,13 @@ jobs:
         shell: bash
         run: |
           PRODUCT=$(aws cloudformation describe-stacks \
-            --stack-name "${IAM_STACK_NAME}" \
+            --stack-name "cloudmart-${ENVIRONMENT}-iam" \
             --region "${AWS_REGION}" \
             --query "Stacks[0].Outputs[?OutputKey=='ProductLambdaRoleArn'].OutputValue | [0]" \
             --output text)
 
           PROCESSOR=$(aws cloudformation describe-stacks \
-            --stack-name "${IAM_STACK_NAME}" \
+            --stack-name "cloudmart-${ENVIRONMENT}-iam" \
             --region "${AWS_REGION}" \
             --query "Stacks[0].Outputs[?OutputKey=='OrderProcessorLambdaRoleArn'].OutputValue | [0]" \
             --output text)
@@ -673,7 +571,7 @@ jobs:
         run: |
           aws cloudformation deploy \
             --template-file cloudformation/api/api-stack.yaml \
-            --stack-name "${API_STACK_NAME}" \
+            --stack-name "cloudmart-${ENVIRONMENT}-api" \
             --region "${AWS_REGION}" \
             --capabilities CAPABILITY_NAMED_IAM \
             --parameter-overrides \
@@ -692,9 +590,8 @@ jobs:
               DBNameParameter="/cloudmart/${ENVIRONMENT}/db/name" \
               DBUsernameParameter="/cloudmart/${ENVIRONMENT}/db/username" \
               DBPasswordParameter="/cloudmart/${ENVIRONMENT}/db/password" \
-              AuthorizerCacheTTL="300" \
+              AuthorizerCacheTTL="0" \
               EventBusName="cloudmart-${ENVIRONMENT}-event-bus" \
-              LowStockEmail="${{ secrets.LOW_STOCK_EMAIL }}" \
             --no-fail-on-empty-changeset
 
 
@@ -751,7 +648,7 @@ jobs:
       - name: Verify API stack exists
         run: |
           aws cloudformation describe-stacks \
-            --stack-name "${API_STACK_NAME}" \
+            --stack-name "cloudmart-${ENVIRONMENT}-api" \
             --region "${AWS_REGION}" \
             --query "Stacks[0].StackStatus" \
             --output text
@@ -761,11 +658,9 @@ jobs:
         run: |
           aws cloudformation deploy \
             --template-file cloudformation/eventbridge/eventbridge-stack.yaml \
-            --stack-name "${EVENTBRIDGE_STACK_NAME}" \
+            --stack-name "CloudMart-${ENVIRONMENT}-eventbridge" \
             --parameter-overrides \
               Environment="${ENVIRONMENT}" \
-              LowStockEmail="${{ secrets.LOW_STOCK_EMAIL }}" \
-              OrderNotificationEmail="${{ secrets.ORDER_NOTIFICATION_EMAIL }}" \
             --region "${AWS_REGION}" \
             --no-fail-on-empty-changeset
 
@@ -775,7 +670,7 @@ jobs:
           echo "================ API OUTPUTS ================"
 
           aws cloudformation describe-stacks \
-            --stack-name "${API_STACK_NAME}" \
+            --stack-name "cloudmart-${ENVIRONMENT}-api" \
             --region "${AWS_REGION}" \
             --query "Stacks[0].Outputs" \
             --output table
@@ -784,7 +679,7 @@ jobs:
           echo "=========== EVENTBRIDGE OUTPUTS ============="
 
           aws cloudformation describe-stacks \
-            --stack-name "${EVENTBRIDGE_STACK_NAME}" \
+            --stack-name "CloudMart-${ENVIRONMENT}-eventbridge" \
             --region "${AWS_REGION}" \
             --query "Stacks[0].Outputs" \
             --output table

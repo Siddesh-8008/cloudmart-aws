@@ -1,7 +1,6 @@
 import json
 import os
 import hashlib
-import hmac
 import boto3
 import pymysql
 
@@ -17,10 +16,7 @@ ssm = boto3.client("ssm")
 # ENVIRONMENT
 # ============================================================
 
-ENVIRONMENT = os.environ.get(
-    "ENVIRONMENT",
-    "dev"
-)
+ENVIRONMENT = os.environ["ENVIRONMENT"]
 
 
 # ============================================================
@@ -100,25 +96,15 @@ def get_db_connection():
     )
 
     return pymysql.connect(
-
         host=host,
-
         port=port,
-
         user=username,
-
         password=password,
-
         database=database,
-
         connect_timeout=5,
-
         read_timeout=5,
-
         write_timeout=5,
-
         cursorclass=pymysql.cursors.DictCursor,
-
         autocommit=True
     )
 
@@ -181,14 +167,19 @@ def generate_policy(
 
                     "Resource":
                         resources
+
                 }
+
             ]
+
         },
 
         "context": {
 
             "role": role
+
         }
+
     }
 
     if customer_id:
@@ -232,9 +223,7 @@ def get_customer_resources(method_arn):
         # ====================================================
 
         api_stage_arn + "/GET/products",
-
         api_stage_arn + "/GET/products/*",
-
 
         # ====================================================
         # ORDERS
@@ -255,12 +244,13 @@ def get_customer_resources(method_arn):
 
 
 # ============================================================
-# FIND CUSTOMER BY CUSTOMER ID + TOKEN
+# FIND TOKEN CREDENTIALS IN RDS
 # ============================================================
 
-def find_customer_by_credentials(
+def find_token_credentials(
     customer_id,
-    supplied_token
+    supplied_token,
+    role
 ):
 
     token_hash = hash_token(
@@ -275,49 +265,72 @@ def find_customer_by_credentials(
 
         with connection.cursor() as cursor:
 
-            cursor.execute(
-                """
-                SELECT
-                    c.customer_id,
-                    c.name,
-                    c.email,
-                    c.status,
-                    t.token_hash,
-                    t.is_active,
-                    t.expires_at
-                FROM customer_auth_tokens t
-                INNER JOIN customers c
-                    ON c.customer_id = t.customer_id
-                WHERE t.customer_id = %s
-                  AND t.is_active = TRUE
-                  AND c.status = 'ACTIVE'
-                  AND t.token_hash = %s
-                LIMIT 1
-                """,
-                (
-                    customer_id,
-                    token_hash,
+            if role == "admin":
+
+                cursor.execute(
+                    """
+                    SELECT
+                        token_id,
+                        customer_id,
+                        token_hash,
+                        role,
+                        is_active,
+                        expires_at
+                    FROM customer_auth_tokens
+                    WHERE token_hash = %s
+                      AND role = 'admin'
+                      AND customer_id IS NULL
+                      AND is_active = TRUE
+                    ORDER BY token_id DESC
+                    LIMIT 1
+                    """,
+                    (
+                        token_hash,
+                    )
                 )
-            )
 
-            customer = cursor.fetchone()
+            else:
 
-        if not customer:
+                cursor.execute(
+                    """
+                    SELECT
+                        t.token_id,
+                        t.customer_id,
+                        t.token_hash,
+                        t.role,
+                        t.is_active,
+                        t.expires_at
+                    FROM customer_auth_tokens t
+                    INNER JOIN customers c
+                        ON c.customer_id = t.customer_id
+                    WHERE t.customer_id = %s
+                      AND t.token_hash = %s
+                      AND t.role = 'customer'
+                      AND t.is_active = TRUE
+                      AND c.status = 'ACTIVE'
+                    ORDER BY t.token_id DESC
+                    LIMIT 1
+                    """,
+                    (
+                        customer_id,
+                        token_hash,
+                    )
+                )
 
+            credential = cursor.fetchone()
+
+        if not credential:
             return None
 
-
-        # ====================================================
+        # --------------------------------------------------------
         # OPTIONAL EXPIRATION CHECK
-        # ====================================================
+        # --------------------------------------------------------
 
-        if customer["expires_at"]:
+        if credential["expires_at"]:
 
             from datetime import datetime, timezone
 
-            expires_at = customer[
-                "expires_at"
-            ]
+            expires_at = credential["expires_at"]
 
             now = datetime.now(
                 timezone.utc
@@ -326,13 +339,11 @@ def find_customer_by_credentials(
             )
 
             if expires_at <= now:
-
                 return None
 
-
-        # ====================================================
-        # UPDATE LAST USED
-        # ====================================================
+        # --------------------------------------------------------
+        # UPDATE LAST USED FOR ONLY THE MATCHED ROW
+        # --------------------------------------------------------
 
         with connection.cursor() as cursor:
 
@@ -340,21 +351,18 @@ def find_customer_by_credentials(
                 """
                 UPDATE customer_auth_tokens
                 SET last_used_at = CURRENT_TIMESTAMP
-                WHERE customer_id = %s
-                  AND token_hash = %s
+                WHERE token_id = %s
                 """,
                 (
-                    customer_id,
-                    token_hash,
+                    credential["token_id"],
                 )
             )
 
-        return customer
+        return credential
 
     finally:
 
         if connection:
-
             connection.close()
 
 
@@ -374,6 +382,7 @@ def handler(event, context):
 
             "request_id":
                 context.aws_request_id
+
         })
     )
 
@@ -402,6 +411,7 @@ def handler(event, context):
         if str(header_name).lower() == "authorization":
 
             authorization_token = header_value
+
             break
 
 
@@ -413,19 +423,52 @@ def handler(event, context):
 
         print(
             json.dumps({
-                "event": "token_validation",
-                "result": "missing_authorization_header"
+
+                "event":
+                    "token_validation",
+
+                "result":
+                    "missing_authorization_header"
+
             })
         )
 
-        raise Exception("Unauthorized")
+        raise Exception(
+            "Unauthorized"
+        )
 
 
     # ========================================================
     # BEARER FORMAT
     # ========================================================
+    #
+    # Expected format:
+    #
+    # Bearer <token>
+    #
+    # We use split() to separate:
+    #
+    # [0] = Bearer
+    # [1] = actual token
+    #
+    # Example:
+    #
+    # "Bearer ABC123"
+    #
+    # becomes:
+    #
+    # ["Bearer", "ABC123"]
+    #
+    # ========================================================
 
-    if not str(authorization_token).startswith("Bearer "):
+    token_parts = str(
+        authorization_token
+    ).split()
+
+    if (
+        len(token_parts) != 2
+        or token_parts[0] != "Bearer"
+    ):
 
         print(
             json.dumps({
@@ -435,6 +478,7 @@ def handler(event, context):
 
                 "result":
                     "invalid_format"
+
             })
         )
 
@@ -443,9 +487,22 @@ def handler(event, context):
         )
 
 
-    supplied_token = str(authorization_token)[
-        7:
-    ].strip()
+    # ========================================================
+    # EXTRACT ACTUAL TOKEN
+    # ========================================================
+    #
+    # token_parts[0] = "Bearer"
+    # token_parts[1] = actual token
+    #
+    # Example:
+    #
+    # ["Bearer", "ABC123"]
+    #
+    # token_parts[1] = "ABC123"
+    #
+    # ========================================================
+
+    supplied_token = token_parts[1].strip()
 
 
     # ========================================================
@@ -473,78 +530,59 @@ def handler(event, context):
 
     if customer_id is not None:
 
-        customer_id = str(customer_id).strip()
+        customer_id = str(
+            customer_id
+        ).strip()
+
 
     # Admin authentication is checked first, so admin requests
     # do not need a customerId query parameter.
 
+
     # ========================================================
-    # ADMIN TOKEN
-    #
-    # Admin token is stored in SSM as a normal String.
-    # No SecureString.
-    # No KMS decryption.
+    # ADMIN TOKEN -> RDS
     # ========================================================
 
-    admin_parameter = os.environ.get(
-        "ADMIN_AUTH_TOKEN_PARAMETER"
-    )
+    try:
 
-    if admin_parameter:
+        admin_credential = find_token_credentials(
+            None,
+            supplied_token,
+            "admin"
+        )
 
-        try:
+    except Exception as error:
 
-            admin_token = get_parameter(
-                admin_parameter
-            )
+        print(
+            json.dumps({
+                "level": "ERROR",
+                "event": "admin_token_database_error",
+                "error": str(error)
+            })
+        )
 
-            if hmac.compare_digest(
-                supplied_token,
-                admin_token
-            ):
+        raise Exception(
+            "Unauthorized"
+        )
 
-                print(
-                    json.dumps({
+    if admin_credential:
 
-                        "event":
-                            "token_validation",
+        print(
+            json.dumps({
+                "event": "token_validation",
+                "result": "success",
+                "role": "admin"
+            })
+        )
 
-                        "result":
-                            "success",
-
-                        "role":
-                            "admin"
-                    })
-                )
-
-                return generate_policy(
-
-                    effect="Allow",
-
-                    principal_id=
-                        "cloudmart-admin",
-
-                    resources=
-                        get_admin_resources(
-                            method_arn
-                        ),
-
-                    role="admin"
-                )
-
-        except Exception as error:
-
-            print(
-                json.dumps({
-
-                    "event":
-                        "admin_validation_error",
-
-                    "error":
-                        str(error)
-                })
-            )
-
+        return generate_policy(
+            effect="Allow",
+            principal_id="cloudmart-admin",
+            resources=get_admin_resources(
+                method_arn
+            ),
+            role="admin"
+        )
 
     # ========================================================
     # CUSTOMER ID IS MANDATORY FOR CUSTOMER AUTHENTICATION
@@ -563,31 +601,25 @@ def handler(event, context):
             "customerId is required"
         )
 
-
     # ========================================================
     # CUSTOMER TOKEN -> RDS
     # ========================================================
 
     try:
 
-        customer = find_customer_by_credentials(
+        customer = find_token_credentials(
             customer_id,
-            supplied_token
+            supplied_token,
+            "customer"
         )
 
     except Exception as error:
 
         print(
             json.dumps({
-
-                "level":
-                    "ERROR",
-
-                "event":
-                    "customer_token_database_error",
-
-                "error":
-                    str(error)
+                "level": "ERROR",
+                "event": "customer_token_database_error",
+                "error": str(error)
             })
         )
 
@@ -595,8 +627,7 @@ def handler(event, context):
             "Unauthorized"
         )
 
-
-    # ========================================================
+# ========================================================
     # CUSTOMER NOT FOUND
     # ========================================================
 
@@ -610,6 +641,7 @@ def handler(event, context):
 
                 "result":
                     "invalid_customer_credentials"
+
             })
         )
 
@@ -640,6 +672,7 @@ def handler(event, context):
 
             "customerId":
                 customer_id
+
         })
     )
 
@@ -673,4 +706,5 @@ def handler(event, context):
 
         customer_id=
             customer_id
+
     )

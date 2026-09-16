@@ -14,10 +14,8 @@ Parameters:
 
   Environment:
     Type: String
-    Default: dev
-    AllowedValues:
-      - dev
-      - prod
+    AllowedPattern: '^[a-zA-Z0-9-]+$'
+    Description: Deployment environment name used in resource and parameter names
 
 
   # ============================================================
@@ -26,7 +24,8 @@ Parameters:
 
   LowStockEmail:
     Type: String
-    Description: Email address for low-stock notifications
+    Default: your-siddeshravula8008@gmail.com
+    Description: Email address for low-stock notifications. Replace the default with the real notification email.
 
 
   # ============================================================
@@ -35,7 +34,8 @@ Parameters:
 
   OrderNotificationEmail:
     Type: String
-    Description: Email address for order confirmation notifications
+    Default: your-siddeshravula8008@gmail.com
+    Description: Email address for order notifications. Replace the default with the real notification email.
 
 
 # ==============================================================
@@ -90,6 +90,18 @@ Resources:
           Arn:
             Fn::ImportValue:
               !Sub CloudMart-${Environment}-LowStockTopicArn
+
+          InputTransformer:
+            InputPathsMap:
+              productId: $.detail.productId
+              productName: $.detail.productName
+              stock: $.detail.stock
+              lowStockThreshold: $.detail.lowStockThreshold
+            InputTemplate: >-
+              "CloudMart Low Stock Alert: Product <productName>
+              (ID <productId>) currently has stock <stock>,
+              which is at or below the low-stock threshold
+              <lowStockThreshold>."
 
 
   # ============================================================
@@ -244,6 +256,16 @@ Resources:
           Arn:
             !Ref OrderNotificationTopic
 
+          InputTransformer:
+            InputPathsMap:
+              orderId: $.detail.orderId
+              customerId: $.detail.customerId
+              totalAmount: $.detail.totalAmount
+              status: $.detail.status
+            InputTemplate: >-
+              "CloudMart Order Confirmed: Order <orderId> for customer
+              <customerId> is <status>. Total amount: <totalAmount>."
+
 
   # ============================================================
   # ORDER FAILED EVENT RULE
@@ -278,6 +300,14 @@ Resources:
 
           Arn:
             !Ref OrderNotificationTopic
+
+          InputTransformer:
+            InputPathsMap:
+              orderId: $.detail.orderId
+              reason: $.detail.reason
+            InputTemplate: >-
+              "CloudMart Order Failed: Order <orderId> could not be
+              completed. Reason: <reason>."
 
 
   # ============================================================
@@ -391,6 +421,17 @@ Resources:
 
           Arn:
             !Ref OrderCancellationTopic
+
+          InputTransformer:
+            InputPathsMap:
+              orderId: $.detail.orderId
+              customerId: $.detail.customerId
+              totalAmount: $.detail.totalAmount
+              cancelledBy: $.detail.cancelledBy
+            InputTemplate: >-
+              "CloudMart Order Cancelled: Order <orderId> for customer
+              <customerId> was cancelled by <cancelledBy>.
+              Total amount: <totalAmount>."
 
 
 # ==============================================================

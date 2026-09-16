@@ -22,14 +22,11 @@ ssm = boto3.client("ssm")
 events = boto3.client("events")
 
 
-ENVIRONMENT = os.environ.get(
-    "ENVIRONMENT",
-    "dev"
-)
+ENVIRONMENT = os.environ["ENVIRONMENT"]
 
 EVENT_BUS_NAME = os.environ.get(
     "EVENT_BUS_NAME",
-    "cloudmart-dev-event-bus"
+    f"cloudmart-{ENVIRONMENT}-event-bus"
 )
 
 

@@ -3,205 +3,84 @@ AWSTemplateFormatVersion: '2010-09-09'
 Description: >
   CloudMart Authentication Stack.
   Creates the Lambda Authorizer used by API Gateway.
-  Admin authentication is handled using SSM.
-  Customer authentication is handled using RDS MySQL.
-
+  Customer and admin authentication tokens are stored as SHA-256
+  hashes in the RDS MySQL customer_auth_tokens table.
 
 Parameters:
 
-  # ============================================================
-  # ENVIRONMENT
-  # ============================================================
-
   Environment:
     Type: String
-    Default: dev
-
-    AllowedValues:
-      - dev
-      - prod
-
-
-  # ============================================================
-  # LAMBDA SECURITY GROUP
-  # ============================================================
+    AllowedPattern: '^[a-zA-Z0-9-]+$'
+    Description: Deployment environment name used in resource and parameter names
 
   LambdaSecurityGroupId:
     Type: AWS::EC2::SecurityGroup::Id
     Description: Security group for the Lambda Authorizer
 
-
-  # ============================================================
-  # ADMIN TOKEN
-  # ============================================================
-
-  AdminAuthTokenParameterName:
-    Type: String
-    Default: /cloudmart/dev/auth/admin-token
-
-    Description: >
-      SSM String containing the CloudMart
-      admin authentication token
-
-
-  # ============================================================
-  # DATABASE PARAMETERS
-  # ============================================================
-
   DBHostParameter:
     Type: String
-    Default: /cloudmart/dev/db/host
-
-    Description: >
-      SSM parameter containing the RDS database host
-
+    Description: SSM parameter containing the RDS database host
 
   DBPortParameter:
     Type: String
-    Default: /cloudmart/dev/db/port
-
-    Description: >
-      SSM parameter containing the RDS database port
-
+    Description: SSM parameter containing the RDS database port
 
   DBNameParameter:
     Type: String
-    Default: /cloudmart/dev/db/name
-
-    Description: >
-      SSM parameter containing the RDS database name
-
+    Description: SSM parameter containing the RDS database name
 
   DBUsernameParameter:
     Type: String
-    Default: /cloudmart/dev/db/username
-
-    Description: >
-      SSM parameter containing the RDS database username
-
+    Description: SSM parameter containing the RDS database username
 
   DBPasswordParameter:
     Type: String
-    Default: /cloudmart/dev/db/password
-
-    Description: >
-      SSM parameter containing the RDS database password
-
-
-  # ============================================================
-  # LAMBDA ARTIFACT BUCKET
-  # ============================================================
+    Description: SSM parameter containing the RDS database password
 
   LambdaArtifactBucketName:
     Type: String
-
-    Description: >
-      S3 bucket containing the packaged Authorizer Lambda ZIP
-
-
-  # ============================================================
-  # LAMBDA ARTIFACT KEY
-  # ============================================================
+    Description: S3 bucket containing the packaged Authorizer Lambda ZIP
 
   LambdaArtifactKey:
     Type: String
     Default: authorizer/authorizer.zip
-
-    Description: >
-      S3 object key containing the Authorizer Lambda ZIP
-
+    Description: S3 object key containing the Authorizer Lambda ZIP
 
 Resources:
 
-  # ============================================================
-  # LAMBDA AUTHORIZER
-  # ============================================================
-
   LambdaAuthorizer:
     Type: AWS::Lambda::Function
-
     Properties:
-
       FunctionName:
         !Sub CloudMart-${Environment}-authorizer
 
       Description: >
         CloudMart Lambda Authorizer.
-        Admin tokens are validated using SSM.
-        Customer tokens are validated against RDS MySQL.
+        Customer and admin token hashes are validated against RDS MySQL.
 
       Runtime: python3.13
-
       Handler: index.handler
-
-
-      # ========================================================
-      # IAM ROLE
-      # ========================================================
 
       Role:
         Fn::ImportValue:
           !Sub CloudMart-${Environment}-AuthorizerLambdaRoleArn
 
-
-      # ========================================================
-      # LAMBDA CONFIGURATION
-      # ========================================================
-
       Timeout: 10
-
       MemorySize: 128
 
-
-      # ========================================================
-      # VPC CONFIGURATION
-      #
-      # Private subnets are imported directly from the
-      # Network Stack.
-      # ========================================================
-
       VpcConfig:
-
         SubnetIds:
-
           - Fn::ImportValue:
               !Sub CloudMart-${Environment}-PrivateSubnetAId
-
           - Fn::ImportValue:
               !Sub CloudMart-${Environment}-PrivateSubnetBId
-
         SecurityGroupIds:
-
           - !Ref LambdaSecurityGroupId
 
-
-      # ========================================================
-      # ENVIRONMENT VARIABLES
-      # ========================================================
-
       Environment:
-
         Variables:
-
-          # ----------------------------------------------------
-          # ENVIRONMENT
-          # ----------------------------------------------------
-
           ENVIRONMENT:
             !Ref Environment
-
-
-          # ----------------------------------------------------
-          # ADMIN TOKEN
-          # ----------------------------------------------------
-
-          ADMIN_AUTH_TOKEN_PARAMETER:
-            !Ref AdminAuthTokenParameterName
-
-
-          # ----------------------------------------------------
-          # RDS DATABASE PARAMETERS
-          # ----------------------------------------------------
 
           DB_HOST_PARAMETER:
             !Ref DBHostParameter
@@ -218,73 +97,37 @@ Resources:
           DB_PASSWORD_PARAMETER:
             !Ref DBPasswordParameter
 
-
-      # ========================================================
-      # LAMBDA CODE
-      #
-      # PyMySQL is packaged inside the ZIP artifact.
-      # No Lambda Layer is required.
-      # ========================================================
-
       Code:
-
         S3Bucket:
           !Ref LambdaArtifactBucketName
-
         S3Key:
           !Ref LambdaArtifactKey
 
-
-   # ============================================================
-  # LAMBDA PERMISSION FOR API GATEWAY
-  # ============================================================
-
   AuthorizerLambdaPermission:
     Type: AWS::Lambda::Permission
-
     Properties:
       Action: lambda:InvokeFunction
-
       FunctionName:
         !Ref LambdaAuthorizer
-
       Principal:
         apigateway.amazonaws.com
-
       SourceArn:
         !Sub 'arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:*/*/*'
 
-# ==============================================================
-# OUTPUTS
-# ==============================================================
-
 Outputs:
-
-  # ============================================================
-  # AUTHORIZE LAMBDA ARN
-  # ============================================================
 
   AuthorizerLambdaArn:
     Description: Lambda Authorizer ARN
-
     Value:
       !GetAtt LambdaAuthorizer.Arn
-
     Export:
       Name:
         !Sub CloudMart-${Environment}-AuthorizerLambdaArn
 
-
-  # ============================================================
-  # AUTHORIZE LAMBDA NAME
-  # ============================================================
-
   AuthorizerLambdaName:
     Description: Lambda Authorizer function name
-
     Value:
       !Ref LambdaAuthorizer
-
     Export:
       Name:
         !Sub CloudMart-${Environment}-AuthorizerLambdaName
