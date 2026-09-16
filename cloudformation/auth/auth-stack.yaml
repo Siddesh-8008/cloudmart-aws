@@ -58,7 +58,7 @@ Resources:
         CloudMart Lambda Authorizer.
         Customer and admin token hashes are validated against RDS MySQL.
 
-      Runtime: python3.13
+      Runtime: python3.12
       Handler: index.handler
 
       Role:

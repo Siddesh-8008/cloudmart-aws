@@ -511,7 +511,7 @@ Resources:
       IamInstanceProfile: !Ref EC2InstanceProfile
       Tags:
         - Key: Name
-          Value: !Sub CloudMart-${Environment}-rds-client
+          Value: !Sub CloudMart-${Environment}-rds-cloudmart-dev-data
         - Key: Project
           Value: CloudMart
         - Key: Environment
