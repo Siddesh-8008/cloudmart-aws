@@ -15,6 +15,15 @@ on:
   workflow_dispatch:
     inputs:
 
+      environment:
+        description: 'Deployment environment'
+        required: true
+        default: dev
+        type: choice
+        options:
+          - dev
+          - prod
+
       ssh_cidr:
         description: 'Your public IPv4 address in /32 format, for example 49.36.100.25/32'
         required: false
@@ -77,6 +86,12 @@ jobs:
 
       # --------------------------------------------------------
       # DETERMINE DEPLOYMENT ENVIRONMENT
+      #
+      # PUSH TO MAIN / ORDERS:
+      #     dev
+      #
+      # MANUAL WORKFLOW:
+      #     dev or prod
       # --------------------------------------------------------
 
       - name: Determine deployment environment
@@ -89,37 +104,42 @@ jobs:
 
           set -e
 
-          if [ ! -f ".cloudmart/environment" ]; then
 
-            echo "ERROR: .cloudmart/environment file does not exist."
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
 
-            exit 1
+            ENVIRONMENT="${{ inputs.environment }}"
+
+          else
+
+            ENVIRONMENT="dev"
 
           fi
 
-          ENVIRONMENT=$(tr -d '[:space:]' < .cloudmart/environment)
 
           if [ -z "${ENVIRONMENT}" ]; then
 
-            echo "ERROR: .cloudmart/environment is empty."
+            echo "ERROR: Deployment environment is empty."
 
             exit 1
 
           fi
 
-          if [[ ! "${ENVIRONMENT}" =~ ^[a-zA-Z0-9-]+$ ]]; then
 
-            echo "ERROR: Invalid environment name: ${ENVIRONMENT}"
+          if [[ ! "${ENVIRONMENT}" =~ ^(dev|prod)$ ]]; then
+
+            echo "ERROR: Invalid deployment environment: ${ENVIRONMENT}"
+
+            echo "Allowed values: dev or prod"
 
             exit 1
 
           fi
+
 
           echo "Deployment environment: ${ENVIRONMENT}"
 
-          echo "environment=${ENVIRONMENT}" >> "$GITHUB_OUTPUT"
 
-          echo "ENVIRONMENT=${ENVIRONMENT}" >> "$GITHUB_ENV"
+          echo "environment=${ENVIRONMENT}" >> "$GITHUB_OUTPUT"
 
 
       # --------------------------------------------------------
@@ -142,6 +162,9 @@ jobs:
             exit 1
 
           fi
+
+
+          ENVIRONMENT="${{ steps.environment.outputs.environment }}"
 
 
           if [ -z "${ENVIRONMENT}" ]; then
@@ -292,6 +315,9 @@ jobs:
 
       - name: Deploy Network Stack
 
+        env:
+          ENVIRONMENT: ${{ steps.environment.outputs.environment }}
+
         run: |
 
           aws cloudformation deploy \
@@ -311,6 +337,9 @@ jobs:
 
       - name: Check Network Stack
 
+        env:
+          ENVIRONMENT: ${{ steps.environment.outputs.environment }}
+
         run: |
 
           aws cloudformation describe-stacks \
@@ -325,6 +354,9 @@ jobs:
       # --------------------------------------------------------
 
       - name: Show EC2 network information
+
+        env:
+          ENVIRONMENT: ${{ steps.environment.outputs.environment }}
 
         shell: bash
 
@@ -350,11 +382,11 @@ jobs:
 
     runs-on: ubuntu-latest
 
-    env:
-      ENVIRONMENT: ${{ needs.deploy-network.outputs.environment }}
-
     needs:
       - deploy-network
+
+    env:
+      ENVIRONMENT: ${{ needs.deploy-network.outputs.environment }}
 
     steps:
 
@@ -592,12 +624,12 @@ jobs:
 
     runs-on: ubuntu-latest
 
-    env:
-      ENVIRONMENT: ${{ needs.deploy-network.outputs.environment }}
-
     needs:
       - deploy-network
       - deploy-data
+
+    env:
+      ENVIRONMENT: ${{ needs.deploy-network.outputs.environment }}
 
     steps:
 
@@ -687,13 +719,13 @@ jobs:
 
     runs-on: ubuntu-latest
 
-    env:
-      ENVIRONMENT: ${{ needs.deploy-network.outputs.environment }}
-
     needs:
       - deploy-network
       - deploy-data
       - deploy-iam
+
+    env:
+      ENVIRONMENT: ${{ needs.deploy-network.outputs.environment }}
 
     steps:
 
@@ -916,14 +948,14 @@ jobs:
 
     runs-on: ubuntu-latest
 
-    env:
-      ENVIRONMENT: ${{ needs.deploy-network.outputs.environment }}
-
     needs:
       - deploy-network
       - deploy-data
       - deploy-iam
       - deploy-auth
+
+    env:
+      ENVIRONMENT: ${{ needs.deploy-network.outputs.environment }}
 
     steps:
 
@@ -1466,12 +1498,12 @@ jobs:
 
     runs-on: ubuntu-latest
 
-    env:
-      ENVIRONMENT: ${{ needs.deploy-network.outputs.environment }}
-
     needs:
       - deploy-network
       - deploy-api
+
+    env:
+      ENVIRONMENT: ${{ needs.deploy-network.outputs.environment }}
 
     steps:
 
