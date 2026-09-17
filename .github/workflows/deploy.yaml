@@ -322,7 +322,7 @@ jobs:
 
           aws cloudformation deploy \
             --template-file cloudformation/network/network-stack.yaml \
-            --stack-name "cloudmart-${ENVIRONMENT}-network" \
+            --stack-name "cloudmart-${ENVIRONMENT}-network-new" \
             --parameter-overrides \
               Environment="${ENVIRONMENT}" \
               SSHCidr="${{ steps.ssh.outputs.cidr }}" \
@@ -343,7 +343,7 @@ jobs:
         run: |
 
           aws cloudformation describe-stacks \
-            --stack-name "cloudmart-${ENVIRONMENT}-network" \
+            --stack-name "cloudmart-${ENVIRONMENT}-network-new" \
             --region "${AWS_REGION}" \
             --query "Stacks[0].StackStatus" \
             --output text
@@ -366,7 +366,7 @@ jobs:
 
 
           aws cloudformation describe-stacks \
-            --stack-name "cloudmart-${ENVIRONMENT}-network" \
+            --stack-name "cloudmart-${ENVIRONMENT}-network-new" \
             --region "${AWS_REGION}" \
             --query "Stacks[0].Outputs[?OutputKey=='RDSClientPublicIp' || OutputKey=='RDSClientInstanceId' || OutputKey=='EC2SecurityGroupId'].{Key:OutputKey,Value:OutputValue}" \
             --output table
@@ -887,7 +887,7 @@ jobs:
 
 
           SG=$(aws cloudformation describe-stacks \
-            --stack-name "cloudmart-${ENVIRONMENT}-network" \
+            --stack-name "cloudmart-${ENVIRONMENT}-network-new" \
             --region "${AWS_REGION}" \
             --query "Stacks[0].Outputs[?OutputKey=='LambdaSecurityGroupId'].OutputValue | [0]" \
             --output text)
@@ -1001,21 +1001,21 @@ jobs:
 
 
           SUBNET_A=$(aws cloudformation describe-stacks \
-            --stack-name "cloudmart-${ENVIRONMENT}-network" \
+            --stack-name "cloudmart-${ENVIRONMENT}-network-new" \
             --region "${AWS_REGION}" \
             --query "Stacks[0].Outputs[?OutputKey=='PrivateSubnetAId'].OutputValue | [0]" \
             --output text)
 
 
           SUBNET_B=$(aws cloudformation describe-stacks \
-            --stack-name "cloudmart-${ENVIRONMENT}-network" \
+            --stack-name "cloudmart-${ENVIRONMENT}-network-new" \
             --region "${AWS_REGION}" \
             --query "Stacks[0].Outputs[?OutputKey=='PrivateSubnetBId'].OutputValue | [0]" \
             --output text)
 
 
           SG=$(aws cloudformation describe-stacks \
-            --stack-name "cloudmart-${ENVIRONMENT}-network" \
+            --stack-name "cloudmart-${ENVIRONMENT}-network-new" \
             --region "${AWS_REGION}" \
             --query "Stacks[0].Outputs[?OutputKey=='LambdaSecurityGroupId'].OutputValue | [0]" \
             --output text)
@@ -1574,7 +1574,7 @@ jobs:
 
 
           aws cloudformation describe-stacks \
-            --stack-name "cloudmart-${ENVIRONMENT}-network" \
+            --stack-name "cloudmart-${ENVIRONMENT}-network-new" \
             --region "${AWS_REGION}" \
             --query "Stacks[0].Outputs" \
             --output table
