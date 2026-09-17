@@ -15,9 +15,9 @@ on:
   workflow_dispatch:
     inputs:
 
-      operations_cidr:
+      ssh_cidr:
         description: 'Your public IPv4 address in /32 format, for example 49.36.100.25/32'
-        required: true
+        required: false
         type: string
 
 
@@ -26,7 +26,9 @@ on:
 # ============================================================
 
 permissions:
+
   id-token: write
+
   contents: read
 
 
@@ -36,14 +38,22 @@ permissions:
 
 env:
 
-  # AWS region comes from GitHub Repository Variable.
-  #
-  # Example:
-  # AWS_REGION = ap-south-1
-  #
+  # AWS region from GitHub Repository Variable.
   AWS_REGION: ${{ vars.AWS_REGION }}
 
-  ENVIRONMENT: dev
+  # Environment from GitHub Repository Variable.
+  ENVIRONMENT: ${{ vars.ENVIRONMENT }}
+
+  # Existing GitHub Repository Variable.
+  #
+  # Example:
+  # OPERATIONS_CIDR = 49.36.100.25/32
+  #
+  # This value is used for EC2 SSH TCP port 22.
+  OPERATIONS_CIDR: ${{ vars.OPERATIONS_CIDR }}
+
+  # Existing EC2 key pair name from GitHub Repository Variable.
+  EC2_KEY_PAIR_NAME: ${{ vars.EC2_KEY_PAIR_NAME }}
 
 
 # ============================================================
@@ -60,118 +70,260 @@ jobs:
   deploy-network:
 
     name: Deploy Network Stack
+
     runs-on: ubuntu-latest
 
     steps:
 
+
+      # --------------------------------------------------------
+      # CHECKOUT
+      # --------------------------------------------------------
+
       - name: Checkout repository
+
         uses: actions/checkout@v4
 
 
+      # --------------------------------------------------------
+      # VALIDATE DEPLOYMENT CONFIGURATION
+      # --------------------------------------------------------
+
       - name: Validate deployment configuration
+
         shell: bash
+
         run: |
+
           set -e
 
+
           test -n "${AWS_REGION}" || {
+
             echo "ERROR: GitHub Repository Variable AWS_REGION is not set."
+
             exit 1
+
           }
+
 
           test -n "${ENVIRONMENT}" || {
-            echo "ERROR: ENVIRONMENT is not configured."
+
+            echo "ERROR: GitHub Repository Variable ENVIRONMENT is not set."
+
             exit 1
+
           }
 
+
+          test -n "${EC2_KEY_PAIR_NAME}" || {
+
+            echo "ERROR: GitHub Repository Variable EC2_KEY_PAIR_NAME is not set."
+
+            exit 1
+
+          }
+
+
           echo "Deployment region: ${AWS_REGION}"
+
           echo "Deployment environment: ${ENVIRONMENT}"
 
+          echo "EC2 key pair: ${EC2_KEY_PAIR_NAME}"
+
+
+      # --------------------------------------------------------
+      # AWS CREDENTIALS
+      # --------------------------------------------------------
 
       - name: Configure AWS credentials
+
         uses: aws-actions/configure-aws-credentials@v4
+
         with:
+
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+
           aws-region: ${{ env.AWS_REGION }}
 
 
+      # --------------------------------------------------------
+      # VERIFY AWS ACCESS
+      # --------------------------------------------------------
+
       - name: Verify AWS access
+
         run: |
+
           aws sts get-caller-identity
 
 
       # --------------------------------------------------------
-      # Determine Operations CIDR
+      # DETERMINE SSH CIDR
       # --------------------------------------------------------
 
-      - name: Determine Operations CIDR
-        id: operations
+      - name: Determine SSH CIDR
+
+        id: ssh
+
         shell: bash
+
         run: |
+
           set -e
 
-          if [ -n "${{ vars.OPERATIONS_CIDR }}" ]; then
 
-            CIDR="${{ vars.OPERATIONS_CIDR }}"
+          # ----------------------------------------------------
+          # USE WORKFLOW INPUT IF MANUALLY PROVIDED
+          # ----------------------------------------------------
+
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && \
+             [ -n "${{ inputs.ssh_cidr }}" ]; then
+
+            CIDR="${{ inputs.ssh_cidr }}"
+
+            echo "Using SSH CIDR supplied through workflow_dispatch."
+
+
+          # ----------------------------------------------------
+          # OTHERWISE USE EXISTING OPERATIONS_CIDR VARIABLE
+          # ----------------------------------------------------
+
+          elif [ -n "${OPERATIONS_CIDR}" ]; then
+
+            CIDR="${OPERATIONS_CIDR}"
+
             echo "Using GitHub Repository Variable OPERATIONS_CIDR."
 
-          elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-
-            CIDR="${{ inputs.operations_cidr }}"
-            echo "Using workflow_dispatch operations CIDR."
 
           else
 
-            echo "No OPERATIONS_CIDR repository variable is set."
-            echo "Using the GitHub Actions runner public IP for this deployment."
+            echo "ERROR: OPERATIONS_CIDR is not configured."
 
-            PUBLIC_IP=$(curl -fsS https://checkip.amazonaws.com)
-            CIDR="${PUBLIC_IP}/32"
+            echo ""
+
+            echo "Set GitHub Repository Variable:"
+
+            echo "OPERATIONS_CIDR"
+
+            echo ""
+
+            echo "Example:"
+
+            echo "49.36.100.25/32"
+
+            exit 1
 
           fi
 
-          echo "Using Operations CIDR: ${CIDR}"
+
+          echo "Using SSH CIDR: ${CIDR}"
 
           echo "cidr=${CIDR}" >> "$GITHUB_OUTPUT"
 
 
-      - name: Validate Operations CIDR
+      # --------------------------------------------------------
+      # VALIDATE SSH CIDR
+      # --------------------------------------------------------
+
+      - name: Validate SSH CIDR
+
         shell: bash
+
         run: |
+
           set -e
 
-          CIDR="${{ steps.operations.outputs.cidr }}"
+
+          CIDR="${{ steps.ssh.outputs.cidr }}"
+
 
           if [[ ! "${CIDR}" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}/32$ ]]; then
-            echo "ERROR: Operations CIDR must be an IPv4 address ending in /32."
+
+            echo "ERROR: OPERATIONS_CIDR must be an IPv4 address ending in /32."
+
             echo "Example: 49.36.100.25/32"
+
             exit 1
+
           fi
 
-          echo "Operations CIDR format is valid."
 
+          echo "SSH CIDR format is valid."
+
+
+      # --------------------------------------------------------
+      # VERIFY EC2 KEY PAIR
+      # --------------------------------------------------------
+
+      - name: Verify EC2 key pair
+
+        shell: bash
+
+        run: |
+
+          set -e
+
+
+          KEY_PAIR=$(aws ec2 describe-key-pairs \
+            --key-names "${EC2_KEY_PAIR_NAME}" \
+            --region "${AWS_REGION}" \
+            --query "KeyPairs[0].KeyName" \
+            --output text)
+
+
+          if [ -z "${KEY_PAIR}" ] || [ "${KEY_PAIR}" = "None" ]; then
+
+            echo "ERROR: EC2 key pair '${EC2_KEY_PAIR_NAME}' was not found in ${AWS_REGION}."
+
+            exit 1
+
+          fi
+
+
+          echo "EC2 key pair exists: ${KEY_PAIR}"
+
+
+      # --------------------------------------------------------
+      # VALIDATE NETWORK TEMPLATE
+      # --------------------------------------------------------
 
       - name: Validate Network CloudFormation template
+
         run: |
+
           aws cloudformation validate-template \
             --template-body file://cloudformation/network/network-stack.yaml \
             --region "${AWS_REGION}"
 
 
+      # --------------------------------------------------------
+      # DEPLOY NETWORK STACK
+      # --------------------------------------------------------
+
       - name: Deploy Network Stack
+
         run: |
+
           aws cloudformation deploy \
             --template-file cloudformation/network/network-stack.yaml \
             --stack-name "cloudmart-${ENVIRONMENT}-network" \
             --parameter-overrides \
               Environment="${ENVIRONMENT}" \
-              OperationsCidr="${{ steps.operations.outputs.cidr }}" \
-            --capabilities CAPABILITY_NAMED_IAM \
+              SSHCidr="${{ steps.ssh.outputs.cidr }}" \
+              KeyName="${EC2_KEY_PAIR_NAME}" \
             --region "${AWS_REGION}" \
             --no-fail-on-empty-changeset
 
 
+      # --------------------------------------------------------
+      # CHECK NETWORK STACK
+      # --------------------------------------------------------
+
       - name: Check Network Stack
+
         run: |
+
           aws cloudformation describe-stacks \
             --stack-name "cloudmart-${ENVIRONMENT}-network" \
             --region "${AWS_REGION}" \
@@ -179,15 +331,23 @@ jobs:
             --output text
 
 
+      # --------------------------------------------------------
+      # SHOW EC2 INFORMATION
+      # --------------------------------------------------------
+
       - name: Show EC2 network information
+
         shell: bash
+
         run: |
+
           echo "================ EC2 INFORMATION ================"
+
 
           aws cloudformation describe-stacks \
             --stack-name "cloudmart-${ENVIRONMENT}-network" \
             --region "${AWS_REGION}" \
-            --query "Stacks[0].Outputs[?OutputKey=='RDSClientPublicIp' || OutputKey=='RDSClientInstanceId' || OutputKey=='EC2SecurityGroupId'].{Key:OutputKey,Value:OutputValue}" \
+            --query "Stacks[0].Outputs[?OutputKey=='RDSClientPublicIp' || OutputKey=='RDSClientInstanceId' || OutputKey=='EC2SecurityGroupId' || OutputKey=='EC2KeyPairName' || OutputKey=='SSHCidr'].{Key:OutputKey,Value:OutputValue}" \
             --output table
 
 
@@ -198,6 +358,7 @@ jobs:
   deploy-data:
 
     name: Deploy Data Stack
+
     runs-on: ubuntu-latest
 
     needs:
@@ -205,19 +366,39 @@ jobs:
 
     steps:
 
+
+      # --------------------------------------------------------
+      # CHECKOUT
+      # --------------------------------------------------------
+
       - name: Checkout repository
+
         uses: actions/checkout@v4
 
 
+      # --------------------------------------------------------
+      # AWS CREDENTIALS
+      # --------------------------------------------------------
+
       - name: Configure AWS credentials
+
         uses: aws-actions/configure-aws-credentials@v4
+
         with:
+
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+
           aws-region: ${{ env.AWS_REGION }}
 
 
+      # --------------------------------------------------------
+      # VALIDATE DATA TEMPLATE
+      # --------------------------------------------------------
+
       - name: Validate Data CloudFormation template
+
         run: |
+
           aws cloudformation validate-template \
             --template-body file://cloudformation/data/data-stack.yaml \
             --region "${AWS_REGION}"
@@ -226,43 +407,76 @@ jobs:
       # ========================================================
       # VERIFY DB PASSWORD SSM PARAMETER
       #
-      # IMPORTANT:
-      # We do NOT create a fake password.
+      # Password is stored as:
       #
-      # The real parameter must be created manually in SSM
-      # Parameter Store before the Data Stack is deployed.
+      # /cloudmart/dev/db/password
+      #
+      # Type:
+      #
+      # String
+      #
+      # The actual password value is never printed.
       # ========================================================
 
       - name: Verify DB password SSM parameter
+
+        id: dbpassword
+
         shell: bash
+
         run: |
+
           set -e
+
 
           PARAMETER="/cloudmart/${ENVIRONMENT}/db/password"
 
+
           echo "Checking SSM parameter: ${PARAMETER}"
+
+
+          # ----------------------------------------------------
+          # CHECK PARAMETER EXISTS
+          # ----------------------------------------------------
 
           if ! aws ssm get-parameter \
               --name "${PARAMETER}" \
               --region "${AWS_REGION}" >/dev/null 2>&1; then
 
             echo "ERROR: ${PARAMETER} does not exist."
+
             echo ""
-            echo "Create this parameter manually in AWS Systems Manager Parameter Store."
+
+            echo "Create this parameter in AWS Systems Manager Parameter Store."
+
             echo ""
+
             echo "Name:"
+
             echo "  ${PARAMETER}"
+
             echo ""
+
             echo "Type:"
+
             echo "  String"
+
             echo ""
+
             echo "Value:"
+
             echo "  Your actual RDS master password"
+
             echo ""
 
             exit 1
+
           fi
 
+
+          # ----------------------------------------------------
+          # CHECK PARAMETER TYPE
+          # ----------------------------------------------------
 
           TYPE=$(aws ssm get-parameter \
             --name "${PARAMETER}" \
@@ -276,8 +490,15 @@ jobs:
             echo "ERROR: ${PARAMETER} must be an SSM String parameter."
 
             exit 1
+
           fi
 
+
+          # ----------------------------------------------------
+          # CHECK VALUE EXISTS
+          #
+          # The password itself is not displayed.
+          # ----------------------------------------------------
 
           VALUE=$(aws ssm get-parameter \
             --name "${PARAMETER}" \
@@ -289,15 +510,42 @@ jobs:
           if [ -z "${VALUE}" ]; then
 
             echo "ERROR: ${PARAMETER} has an empty value."
-            echo "Enter the actual RDS master password in SSM Parameter Store."
 
             exit 1
+
+          fi
+
+
+          # ----------------------------------------------------
+          # GET SSM PARAMETER VERSION
+          # ----------------------------------------------------
+
+          VERSION=$(aws ssm get-parameter \
+            --name "${PARAMETER}" \
+            --region "${AWS_REGION}" \
+            --query "Parameter.Version" \
+            --output text)
+
+
+          if [ -z "${VERSION}" ] || [ "${VERSION}" = "None" ]; then
+
+            echo "ERROR: Could not determine the SSM parameter version."
+
+            exit 1
+
           fi
 
 
           echo "DB password SSM parameter exists."
+
           echo "Parameter type: ${TYPE}"
+
+          echo "Parameter version: ${VERSION}"
+
           echo "Password value is not displayed."
+
+
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
 
 
       # ========================================================
@@ -305,7 +553,9 @@ jobs:
       # ========================================================
 
       - name: Deploy Data Stack
+
         run: |
+
           aws cloudformation deploy \
             --template-file cloudformation/data/data-stack.yaml \
             --stack-name "cloudmart-${ENVIRONMENT}-data" \
@@ -314,6 +564,7 @@ jobs:
               DBName="cloudmart" \
               DBUsername="cloudmartadmin" \
               DBPasswordParameterName="/cloudmart/${ENVIRONMENT}/db/password" \
+              DBPasswordParameterVersion="${{ steps.dbpassword.outputs.version }}" \
               DBInstanceClass="db.t3.micro" \
               AllocatedStorage="20" \
             --region "${AWS_REGION}" \
@@ -325,8 +576,13 @@ jobs:
       # ========================================================
 
       - name: Verify database SSM parameters are String
+
         shell: bash
+
         run: |
+
+          set -e
+
 
           for PARAMETER in \
             "/cloudmart/${ENVIRONMENT}/db/host" \
@@ -335,26 +591,36 @@ jobs:
             "/cloudmart/${ENVIRONMENT}/db/username" \
             "/cloudmart/${ENVIRONMENT}/db/password"; do
 
+
             TYPE=$(aws ssm get-parameter \
               --name "${PARAMETER}" \
               --region "${AWS_REGION}" \
               --query "Parameter.Type" \
               --output text)
 
+
             echo "${PARAMETER}: ${TYPE}"
+
 
             if [ "${TYPE}" != "String" ]; then
 
               echo "ERROR: ${PARAMETER} is not an SSM String parameter."
 
               exit 1
+
             fi
 
           done
 
 
+      # --------------------------------------------------------
+      # CHECK DATA STACK
+      # --------------------------------------------------------
+
       - name: Check Data Stack
+
         run: |
+
           aws cloudformation describe-stacks \
             --stack-name "cloudmart-${ENVIRONMENT}-data" \
             --region "${AWS_REGION}" \
@@ -369,6 +635,7 @@ jobs:
   deploy-iam:
 
     name: Deploy IAM Stack
+
     runs-on: ubuntu-latest
 
     needs:
@@ -376,26 +643,36 @@ jobs:
 
     steps:
 
+
       - name: Checkout repository
+
         uses: actions/checkout@v4
 
 
       - name: Configure AWS credentials
+
         uses: aws-actions/configure-aws-credentials@v4
+
         with:
+
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+
           aws-region: ${{ env.AWS_REGION }}
 
 
       - name: Validate IAM CloudFormation template
+
         run: |
+
           aws cloudformation validate-template \
             --template-body file://cloudformation/iam/iam-stack.yaml \
             --region "${AWS_REGION}"
 
 
       - name: Deploy IAM Stack
+
         run: |
+
           aws cloudformation deploy \
             --template-file cloudformation/iam/iam-stack.yaml \
             --stack-name "cloudmart-${ENVIRONMENT}-iam" \
@@ -407,14 +684,19 @@ jobs:
 
 
       - name: Verify IAM outputs
+
         shell: bash
+
         run: |
+
           set -e
+
 
           for OUTPUT in \
             "AuthorizerLambdaRoleArn" \
             "ProductLambdaRoleArn" \
             "OrderProcessorLambdaRoleArn"; do
+
 
             VALUE=$(aws cloudformation describe-stacks \
               --stack-name "cloudmart-${ENVIRONMENT}-iam" \
@@ -422,12 +704,18 @@ jobs:
               --query "Stacks[0].Outputs[?OutputKey=='${OUTPUT}'].OutputValue | [0]" \
               --output text)
 
+
             if [ -z "${VALUE}" ] || [ "${VALUE}" = "None" ]; then
+
               echo "ERROR: Missing IAM output ${OUTPUT}"
+
               exit 1
+
             fi
 
+
             echo "${OUTPUT}: ${VALUE}"
+
           done
 
 
@@ -438,6 +726,7 @@ jobs:
   deploy-auth:
 
     name: Deploy Authentication Stack
+
     runs-on: ubuntu-latest
 
     needs:
@@ -447,28 +736,46 @@ jobs:
 
     steps:
 
+
       - name: Checkout repository
+
         uses: actions/checkout@v4
 
 
       - name: Setup Python
+
         uses: actions/setup-python@v5
+
         with:
+
           python-version: '3.12'
 
 
       - name: Configure AWS credentials
+
         uses: aws-actions/configure-aws-credentials@v4
+
         with:
+
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+
           aws-region: ${{ env.AWS_REGION }}
 
 
+      # --------------------------------------------------------
+      # GET LAMBDA ARTIFACT BUCKET
+      # --------------------------------------------------------
+
       - name: Get Lambda artifact bucket
+
         id: bucket
+
         shell: bash
+
         run: |
+
           set -e
+
 
           BUCKET=$(aws cloudformation describe-stacks \
             --stack-name "cloudmart-${ENVIRONMENT}-data" \
@@ -476,44 +783,75 @@ jobs:
             --query "Stacks[0].Outputs[?OutputKey=='LambdaArtifactBucketName'].OutputValue | [0]" \
             --output text)
 
+
           test -n "${BUCKET}"
+
           test "${BUCKET}" != "None"
+
 
           echo "bucket=${BUCKET}" >> "$GITHUB_OUTPUT"
 
 
+      # --------------------------------------------------------
+      # PACKAGE AUTHORIZER LAMBDA
+      # --------------------------------------------------------
+
       - name: Package Authorizer Lambda
+
         run: |
+
           rm -rf authorizer-package authorizer.zip
+
           mkdir -p authorizer-package
 
-          cp lambda/authorizer/lambda_function.py authorizer-package/index.py
+
+          cp lambda/authorizer/lambda_function.py \
+             authorizer-package/index.py
+
 
           pip install \
             -r lambda/authorizer/requirements.txt \
             -t authorizer-package
 
+
           (cd authorizer-package && zip -qr ../authorizer.zip .)
+
 
           ls -lh authorizer.zip
 
 
+      # --------------------------------------------------------
+      # UPLOAD AUTHORIZER PACKAGE
+      # --------------------------------------------------------
+
       - name: Upload Authorizer package
+
         run: |
+
           aws s3 cp \
             authorizer.zip \
             "s3://${{ steps.bucket.outputs.bucket }}/authorizer/authorizer.zip" \
             --region "${AWS_REGION}"
 
 
+      # --------------------------------------------------------
+      # VERIFY DATABASE SSM PARAMETERS
+      # --------------------------------------------------------
+
       - name: Verify database SSM parameters
+
         run: |
+
+          set -e
+
+
           for PARAMETER in \
             "/cloudmart/${ENVIRONMENT}/db/host" \
             "/cloudmart/${ENVIRONMENT}/db/port" \
             "/cloudmart/${ENVIRONMENT}/db/name" \
             "/cloudmart/${ENVIRONMENT}/db/username" \
             "/cloudmart/${ENVIRONMENT}/db/password"; do
+
 
             aws ssm get-parameter \
               --name "${PARAMETER}" \
@@ -524,31 +862,57 @@ jobs:
           done
 
 
+      # --------------------------------------------------------
+      # VALIDATE AUTH TEMPLATE
+      # --------------------------------------------------------
+
       - name: Validate Auth CloudFormation template
+
         run: |
+
           aws cloudformation validate-template \
             --template-body file://cloudformation/auth/auth-stack.yaml \
             --region "${AWS_REGION}"
 
 
+      # --------------------------------------------------------
+      # GET LAMBDA SECURITY GROUP
+      # --------------------------------------------------------
+
       - name: Get Lambda Security Group
+
         id: network
+
         shell: bash
+
         run: |
+
+          set -e
+
+
           SG=$(aws cloudformation describe-stacks \
             --stack-name "cloudmart-${ENVIRONMENT}-network" \
             --region "${AWS_REGION}" \
             --query "Stacks[0].Outputs[?OutputKey=='LambdaSecurityGroupId'].OutputValue | [0]" \
             --output text)
 
+
           test -n "${SG}"
+
           test "${SG}" != "None"
+
 
           echo "security_group=${SG}" >> "$GITHUB_OUTPUT"
 
 
+      # --------------------------------------------------------
+      # DEPLOY AUTH STACK
+      # --------------------------------------------------------
+
       - name: Deploy Auth Stack
+
         run: |
+
           aws cloudformation deploy \
             --template-file cloudformation/auth/auth-stack.yaml \
             --stack-name "cloudmart-${ENVIRONMENT}-auth" \
@@ -568,7 +932,9 @@ jobs:
 
 
       - name: Check Auth Stack
+
         run: |
+
           aws cloudformation describe-stacks \
             --stack-name "cloudmart-${ENVIRONMENT}-auth" \
             --region "${AWS_REGION}" \
@@ -577,12 +943,13 @@ jobs:
 
 
   # ============================================================
-  # JOB 5 - API / ORDER LAMBDAS
+  # JOB 5 - API + ORDER PROCESSING
   # ============================================================
 
   deploy-api:
 
     name: Deploy API and Order Processing
+
     runs-on: ubuntu-latest
 
     needs:
@@ -593,28 +960,46 @@ jobs:
 
     steps:
 
+
       - name: Checkout repository
+
         uses: actions/checkout@v4
 
 
       - name: Setup Python
+
         uses: actions/setup-python@v5
+
         with:
+
           python-version: '3.12'
 
 
       - name: Configure AWS credentials
+
         uses: aws-actions/configure-aws-credentials@v4
+
         with:
+
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+
           aws-region: ${{ env.AWS_REGION }}
 
 
+      # --------------------------------------------------------
+      # GET NETWORK OUTPUTS
+      # --------------------------------------------------------
+
       - name: Get network outputs
+
         id: network
+
         shell: bash
+
         run: |
+
           set -e
+
 
           SUBNET_A=$(aws cloudformation describe-stacks \
             --stack-name "cloudmart-${ENVIRONMENT}-network" \
@@ -622,11 +1007,13 @@ jobs:
             --query "Stacks[0].Outputs[?OutputKey=='PrivateSubnetAId'].OutputValue | [0]" \
             --output text)
 
+
           SUBNET_B=$(aws cloudformation describe-stacks \
             --stack-name "cloudmart-${ENVIRONMENT}-network" \
             --region "${AWS_REGION}" \
             --query "Stacks[0].Outputs[?OutputKey=='PrivateSubnetBId'].OutputValue | [0]" \
             --output text)
+
 
           SG=$(aws cloudformation describe-stacks \
             --stack-name "cloudmart-${ENVIRONMENT}-network" \
@@ -634,24 +1021,39 @@ jobs:
             --query "Stacks[0].Outputs[?OutputKey=='LambdaSecurityGroupId'].OutputValue | [0]" \
             --output text)
 
+
           test -n "${SUBNET_A}"
+
           test "${SUBNET_A}" != "None"
 
           test -n "${SUBNET_B}"
+
           test "${SUBNET_B}" != "None"
 
           test -n "${SG}"
+
           test "${SG}" != "None"
 
+
           echo "subnets=${SUBNET_A},${SUBNET_B}" >> "$GITHUB_OUTPUT"
+
           echo "security_group=${SG}" >> "$GITHUB_OUTPUT"
 
 
+      # --------------------------------------------------------
+      # GET ARTIFACT BUCKET
+      # --------------------------------------------------------
+
       - name: Get Lambda artifact bucket
+
         id: bucket
+
         shell: bash
+
         run: |
+
           set -e
+
 
           BUCKET=$(aws cloudformation describe-stacks \
             --stack-name "cloudmart-${ENVIRONMENT}-data" \
@@ -659,17 +1061,29 @@ jobs:
             --query "Stacks[0].Outputs[?OutputKey=='LambdaArtifactBucketName'].OutputValue | [0]" \
             --output text)
 
+
           test -n "${BUCKET}"
+
           test "${BUCKET}" != "None"
+
 
           echo "bucket=${BUCKET}" >> "$GITHUB_OUTPUT"
 
 
+      # --------------------------------------------------------
+      # GET AUTHORIZER ARN
+      # --------------------------------------------------------
+
       - name: Get authorizer Lambda ARN
+
         id: auth
+
         shell: bash
+
         run: |
+
           set -e
+
 
           ARN=$(aws cloudformation describe-stacks \
             --stack-name "cloudmart-${ENVIRONMENT}-auth" \
@@ -677,17 +1091,29 @@ jobs:
             --query "Stacks[0].Outputs[?OutputKey=='AuthorizerLambdaArn'].OutputValue | [0]" \
             --output text)
 
+
           test -n "${ARN}"
+
           test "${ARN}" != "None"
+
 
           echo "arn=${ARN}" >> "$GITHUB_OUTPUT"
 
 
+      # --------------------------------------------------------
+      # GET IAM ROLE ARNS
+      # --------------------------------------------------------
+
       - name: Get IAM role ARNs
+
         id: roles
+
         shell: bash
+
         run: |
+
           set -e
+
 
           PRODUCT=$(aws cloudformation describe-stacks \
             --stack-name "cloudmart-${ENVIRONMENT}-iam" \
@@ -695,24 +1121,36 @@ jobs:
             --query "Stacks[0].Outputs[?OutputKey=='ProductLambdaRoleArn'].OutputValue | [0]" \
             --output text)
 
+
           PROCESSOR=$(aws cloudformation describe-stacks \
             --stack-name "cloudmart-${ENVIRONMENT}-iam" \
             --region "${AWS_REGION}" \
             --query "Stacks[0].Outputs[?OutputKey=='OrderProcessorLambdaRoleArn'].OutputValue | [0]" \
             --output text)
 
+
           test -n "${PRODUCT}"
+
           test "${PRODUCT}" != "None"
 
           test -n "${PROCESSOR}"
+
           test "${PROCESSOR}" != "None"
 
+
           echo "product=${PRODUCT}" >> "$GITHUB_OUTPUT"
+
           echo "processor=${PROCESSOR}" >> "$GITHUB_OUTPUT"
 
 
+      # --------------------------------------------------------
+      # PREPARE BUILD DIRECTORIES
+      # --------------------------------------------------------
+
       - name: Prepare Lambda build directories
+
         run: |
+
           rm -rf build
 
           mkdir -p \
@@ -721,61 +1159,101 @@ jobs:
             build/order-processor
 
 
+      # --------------------------------------------------------
+      # PACKAGE PRODUCT
+      # --------------------------------------------------------
+
       - name: Package Product Lambda
+
         run: |
+
           cp lambda/product/lambda_function.py build/product/
+
           cp lambda/product/requirements.txt build/product/
+
 
           pip install \
             -r build/product/requirements.txt \
             -t build/product
 
+
           rm build/product/requirements.txt
+
 
           (cd build/product && zip -qr ../../product.zip .)
 
 
+      # --------------------------------------------------------
+      # PACKAGE SCHEMA
+      # --------------------------------------------------------
+
       - name: Package Schema Lambda
+
         run: |
+
           cp lambda/schema/lambda_function.py build/schema/
+
           cp lambda/schema/requirements.txt build/schema/
+
 
           pip install \
             -r build/schema/requirements.txt \
             -t build/schema
 
+
           rm build/schema/requirements.txt
+
 
           (cd build/schema && zip -qr ../../schema.zip .)
 
 
+      # --------------------------------------------------------
+      # PACKAGE ORDER PROCESSOR
+      # --------------------------------------------------------
+
       - name: Package Order Processor Lambda
+
         run: |
+
           cp lambda/order_processor/lambda_function.py build/order-processor/
+
           cp lambda/order_processor/requirements.txt build/order-processor/
+
 
           pip install \
             -r build/order-processor/requirements.txt \
             -t build/order-processor
 
+
           rm build/order-processor/requirements.txt
+
 
           (cd build/order-processor && zip -qr ../../order-processor.zip .)
 
 
+      # --------------------------------------------------------
+      # UPLOAD LAMBDA PACKAGES
+      # --------------------------------------------------------
+
       - name: Upload Lambda packages to S3
+
         run: |
+
           set -e
 
+
           BUCKET="${{ steps.bucket.outputs.bucket }}"
+
 
           aws s3 cp \
             product.zip \
             "s3://${BUCKET}/product/product.zip"
 
+
           aws s3 cp \
             schema.zip \
             "s3://${BUCKET}/schema/schema.zip"
+
 
           aws s3 cp \
             order-processor.zip \
@@ -786,61 +1264,83 @@ jobs:
             --bucket "${BUCKET}" \
             --key product/product.zip
 
+
           aws s3api head-object \
             --bucket "${BUCKET}" \
             --key schema/schema.zip
+
 
           aws s3api head-object \
             --bucket "${BUCKET}" \
             --key order-processor/order-processor.zip
 
 
-      # ========================================================
-      # API CLOUDFORMATION
-      # ========================================================
+      # --------------------------------------------------------
+      # VALIDATE API TEMPLATE
+      # --------------------------------------------------------
 
       - name: Validate API CloudFormation template
+
         run: |
+
           aws cloudformation validate-template \
             --template-body file://cloudformation/api/api-stack.yaml \
             --region "${AWS_REGION}"
 
 
       # ========================================================
-      # ONE EMAIL SSM PARAMETER
-      #
-      # All SNS topics use the same email parameter.
+      # VERIFY NOTIFICATION EMAIL
       # ========================================================
 
       - name: Verify notification email SSM parameter
+
         shell: bash
+
         run: |
+
           set -e
+
 
           PARAMETER="/cloudmart/${ENVIRONMENT}/notifications/email"
 
+
           echo "Checking notification email parameter:"
+
           echo "${PARAMETER}"
+
 
           if ! aws ssm get-parameter \
               --name "${PARAMETER}" \
               --region "${AWS_REGION}" >/dev/null 2>&1; then
 
             echo "ERROR: ${PARAMETER} does not exist."
+
             echo ""
-            echo "Create it manually in SSM Parameter Store."
+
+            echo "Create it in SSM Parameter Store."
+
             echo ""
+
             echo "Name:"
+
             echo "  ${PARAMETER}"
+
             echo ""
+
             echo "Type:"
+
             echo "  String"
+
             echo ""
+
             echo "Value:"
+
             echo "  Your notification email address"
+
             echo ""
 
             exit 1
+
           fi
 
 
@@ -856,6 +1356,7 @@ jobs:
             echo "ERROR: ${PARAMETER} must be an SSM String parameter."
 
             exit 1
+
           fi
 
 
@@ -871,19 +1372,23 @@ jobs:
             echo "ERROR: Notification email parameter is empty."
 
             exit 1
+
           fi
 
 
           echo "Notification email SSM parameter verified."
+
           echo "Email value is not displayed."
 
 
-      # ========================================================
+      # --------------------------------------------------------
       # DEPLOY API STACK
-      # ========================================================
+      # --------------------------------------------------------
 
       - name: Deploy API Stack
+
         run: |
+
           aws cloudformation deploy \
             --template-file cloudformation/api/api-stack.yaml \
             --stack-name "cloudmart-${ENVIRONMENT}-api" \
@@ -911,14 +1416,18 @@ jobs:
             --no-fail-on-empty-changeset
 
 
-      # ========================================================
+      # --------------------------------------------------------
       # FORCE SCHEMA LAMBDA UPDATE
-      # ========================================================
+      # --------------------------------------------------------
 
       - name: Force update Schema Lambda code
+
         shell: bash
+
         run: |
+
           set -e
+
 
           aws lambda update-function-code \
             --function-name "CloudMart-${ENVIRONMENT}-schema" \
@@ -941,11 +1450,16 @@ jobs:
       # ========================================================
 
       - name: Initialize or migrate database schema
+
         shell: bash
+
         run: |
+
           set -e
 
+
           rm -f schema-response.json
+
 
           FUNCTION_ERROR=$(aws lambda invoke \
             --function-name "CloudMart-${ENVIRONMENT}-schema" \
@@ -975,6 +1489,7 @@ jobs:
   deploy-eventbridge:
 
     name: Deploy EventBridge and SNS
+
     runs-on: ubuntu-latest
 
     needs:
@@ -982,26 +1497,36 @@ jobs:
 
     steps:
 
+
       - name: Checkout repository
+
         uses: actions/checkout@v4
 
 
       - name: Configure AWS credentials
+
         uses: aws-actions/configure-aws-credentials@v4
+
         with:
+
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+
           aws-region: ${{ env.AWS_REGION }}
 
 
       - name: Validate EventBridge CloudFormation template
+
         run: |
+
           aws cloudformation validate-template \
             --template-body file://cloudformation/eventbridge/eventbridge-stack.yaml \
             --region "${AWS_REGION}"
 
 
       - name: Verify API stack exists
+
         run: |
+
           aws cloudformation describe-stacks \
             --stack-name "cloudmart-${ENVIRONMENT}-api" \
             --region "${AWS_REGION}" \
@@ -1010,13 +1535,13 @@ jobs:
 
 
       # ========================================================
-      # DEPLOY EVENTBRIDGE + FOUR SNS TOPICS
-      #
-      # All four topics receive the SAME email parameter.
+      # DEPLOY EVENTBRIDGE + SNS
       # ========================================================
 
       - name: Deploy EventBridge and SNS stack
+
         run: |
+
           aws cloudformation deploy \
             --template-file cloudformation/eventbridge/eventbridge-stack.yaml \
             --stack-name "CloudMart-${ENVIRONMENT}-eventbridge" \
@@ -1027,10 +1552,16 @@ jobs:
             --no-fail-on-empty-changeset
 
 
+      # ========================================================
+      # FINAL OUTPUTS
+      # ========================================================
+
       - name: Show final stack outputs
+
         run: |
 
           echo "================ NETWORK OUTPUTS ================"
+
 
           aws cloudformation describe-stacks \
             --stack-name "cloudmart-${ENVIRONMENT}-network" \
@@ -1041,6 +1572,7 @@ jobs:
 
           echo "================ DATA OUTPUTS ===================="
 
+
           aws cloudformation describe-stacks \
             --stack-name "cloudmart-${ENVIRONMENT}-data" \
             --region "${AWS_REGION}" \
@@ -1050,6 +1582,7 @@ jobs:
 
           echo "================ API OUTPUTS ===================="
 
+
           aws cloudformation describe-stacks \
             --stack-name "cloudmart-${ENVIRONMENT}-api" \
             --region "${AWS_REGION}" \
@@ -1058,6 +1591,7 @@ jobs:
 
 
           echo "=========== EVENTBRIDGE OUTPUTS ================"
+
 
           aws cloudformation describe-stacks \
             --stack-name "CloudMart-${ENVIRONMENT}-eventbridge" \

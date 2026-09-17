@@ -40,13 +40,34 @@ Parameters:
   # ============================================================
   # DATABASE PASSWORD SSM PARAMETER
   #
-  # The actual password is stored manually in SSM Parameter Store.
-  # This stack only receives the parameter name.
+  # The actual password is stored in SSM Parameter Store.
+  # The parameter must be Type: String.
   # ============================================================
 
   DBPasswordParameterName:
     Type: AWS::SSM::Parameter::Name
     Description: Existing SSM String parameter containing the RDS master password.
+
+
+  # ============================================================
+  # DATABASE PASSWORD SSM VERSION
+  #
+  # This makes CloudFormation detect a changed SSM password.
+  #
+  # Example:
+  #
+  # SSM version 1 -> old password
+  # SSM version 2 -> new password
+  #
+  # When the workflow passes version 2, CloudFormation updates
+  # the RDS master password to the value stored in version 2.
+  # ============================================================
+
+  DBPasswordParameterVersion:
+    Type: Number
+    MinValue: 1
+    Default: 1
+    Description: SSM parameter version used as the RDS master password.
 
 
   # ============================================================
@@ -153,12 +174,16 @@ Resources:
       #
       # IMPORTANT:
       # ManageMasterUserPassword is NOT enabled.
-      # Therefore RDS does not generate/manage a
+      #
+      # Therefore RDS does not create or manage a
       # Secrets Manager password.
+      #
+      # The SSM VERSION is included so that CloudFormation
+      # detects when the SSM password has changed.
       # --------------------------------------------------------
 
       MasterUserPassword:
-        !Sub '{{resolve:ssm:${DBPasswordParameterName}}}'
+        !Sub '{{resolve:ssm:${DBPasswordParameterName}:${DBPasswordParameterVersion}}}'
 
 
       # --------------------------------------------------------
@@ -460,7 +485,7 @@ Outputs:
 
 
   LambdaArtifactBucketArn:
-    Description: ARN of the Lambda artifact S3 bucket
+    Description: ARN of the S3 bucket used for Lambda artifacts
     Value:
       !GetAtt LambdaArtifactBucket.Arn
 

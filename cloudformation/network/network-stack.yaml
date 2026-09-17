@@ -9,10 +9,14 @@ Parameters:
     AllowedPattern: '^[a-zA-Z0-9-]+$'
     Description: Deployment environment name used in resource and parameter names
 
-  OperationsCidr:
+  SSHCidr:
     Type: String
     AllowedPattern: '^([0-9]{1,3}\.){3}[0-9]{1,3}/32$'
-    Description: Public IPv4 address allowed to access the CloudMart EC2 instance on SSH port 22 and HTTPS port 443. Use /32.
+    Description: Public IPv4 address allowed to access the CloudMart EC2 instance through SSH port 22. Use /32.
+
+  KeyName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: EC2 key pair used for SSH access
 
   LatestAmiId:
     Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
@@ -287,6 +291,9 @@ Resources:
 
   # ============================================================
   # EC2 SECURITY GROUP RULES
+  #
+  # INBOUND ACCESS:
+  # ONLY TCP 22 / SSH
   # ============================================================
 
   EC2FromOperationsSSHIngress:
@@ -296,19 +303,8 @@ Resources:
       IpProtocol: tcp
       FromPort: 22
       ToPort: 22
-      CidrIp: !Ref OperationsCidr
+      CidrIp: !Ref SSHCidr
       Description: SSH access from operations public IP
-
-
-  EC2FromOperationsHTTPSIngress:
-    Type: AWS::EC2::SecurityGroupIngress
-    Properties:
-      GroupId: !Ref EC2SecurityGroup
-      IpProtocol: tcp
-      FromPort: 443
-      ToPort: 443
-      CidrIp: !Ref OperationsCidr
-      Description: HTTPS access from operations public IP
 
 
   EC2ToRDS:
@@ -485,6 +481,8 @@ Resources:
 
   # ============================================================
   # EC2 INSTANCE PROFILE FOR SYSTEMS MANAGER
+  #
+  # KEPT AS-IS
   # ============================================================
 
   EC2InstanceRole:
@@ -543,6 +541,8 @@ Resources:
       InstanceType: t3.micro
       SubnetId: !Ref PublicSubnetA
 
+      KeyName: !Ref KeyName
+
       SecurityGroupIds:
         - !Ref EC2SecurityGroup
 
@@ -570,7 +570,7 @@ Resources:
           systemctl start amazon-ssm-agent || true
 
 
-# ==============================================================
+# ============================================================== 
 # OUTPUTS
 # ==============================================================
 
