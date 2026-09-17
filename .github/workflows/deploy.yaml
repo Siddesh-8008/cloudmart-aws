@@ -763,10 +763,7 @@ jobs:
           set -e
 
           PARAMETERS=(
-            "/cloudmart/${ENVIRONMENT}/notifications/low-stock-email"
-            "/cloudmart/${ENVIRONMENT}/notifications/order-confirmed-email"
-            "/cloudmart/${ENVIRONMENT}/notifications/order-failed-email"
-            "/cloudmart/${ENVIRONMENT}/notifications/order-cancelled-email"
+            "/cloudmart/${ENVIRONMENT}/notifications/email"
           )
 
           CREATED_PLACEHOLDER=false
@@ -783,7 +780,7 @@ jobs:
                 --name "${PARAMETER}" \
                 --type String \
                 --value "CHANGE_ME@example.com" \
-                --description "CloudMart SNS notification email. Replace this placeholder manually before deploying notification stacks." \
+                --description "CloudMart SNS notification email used by all notification topics. Replace this placeholder manually before deploying notification stacks." \
                 --region "${AWS_REGION}"
 
               CREATED_PLACEHOLDER=true
@@ -847,7 +844,7 @@ jobs:
               DBPasswordParameter="/cloudmart/${ENVIRONMENT}/db/password" \
               AuthorizerCacheTTL="0" \
               EventBusName="cloudmart-${ENVIRONMENT}-event-bus" \
-              LowStockEmailParameter="/cloudmart/${ENVIRONMENT}/notifications/low-stock-email" \
+              NotificationEmailParameter="/cloudmart/${ENVIRONMENT}/notifications/email" \
             --no-fail-on-empty-changeset
 
 
@@ -949,9 +946,7 @@ jobs:
             --stack-name "CloudMart-${ENVIRONMENT}-eventbridge" \
             --parameter-overrides \
               Environment="${ENVIRONMENT}" \
-              OrderConfirmedEmailParameter="/cloudmart/${ENVIRONMENT}/notifications/order-confirmed-email" \
-              OrderFailedEmailParameter="/cloudmart/${ENVIRONMENT}/notifications/order-failed-email" \
-              OrderCancelledEmailParameter="/cloudmart/${ENVIRONMENT}/notifications/order-cancelled-email" \
+              NotificationEmailParameter="/cloudmart/${ENVIRONMENT}/notifications/email" \
             --region "${AWS_REGION}" \
             --no-fail-on-empty-changeset
 

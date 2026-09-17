@@ -146,9 +146,9 @@ Parameters:
   # SNS
   # ============================================================
 
-  LowStockEmailParameter:
+  NotificationEmailParameter:
     Type: AWS::SSM::Parameter::Value<String>
-    Description: SSM String parameter containing the email for low-stock notifications.
+    Description: SSM String parameter containing the email used for all CloudMart SNS notifications.
 
 
 # ==============================================================
@@ -195,7 +195,7 @@ Resources:
         email
 
       Endpoint:
-        !Ref LowStockEmailParameter
+        !Ref NotificationEmailParameter
 
 
   # ============================================================

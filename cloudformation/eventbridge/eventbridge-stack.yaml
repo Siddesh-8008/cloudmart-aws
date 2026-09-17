@@ -22,17 +22,9 @@ Parameters:
   # LOW STOCK EMAIL
   # ============================================================
 
-  OrderConfirmedEmailParameter:
+  NotificationEmailParameter:
     Type: AWS::SSM::Parameter::Value<String>
-    Description: SSM String parameter containing the email for order-confirmed notifications.
-
-  OrderFailedEmailParameter:
-    Type: AWS::SSM::Parameter::Value<String>
-    Description: SSM String parameter containing the email for order-failed notifications.
-
-  OrderCancelledEmailParameter:
-    Type: AWS::SSM::Parameter::Value<String>
-    Description: SSM String parameter containing the email for order-cancelled notifications.
+    Description: SSM String parameter containing the single email used for all CloudMart SNS notifications.
 
 
 # ==============================================================
@@ -166,7 +158,7 @@ Resources:
         !Ref OrderConfirmedTopic
       Protocol: email
       Endpoint:
-        !Ref OrderConfirmedEmailParameter
+        !Ref NotificationEmailParameter
 
 
   OrderConfirmedSNSTopicPolicy:
@@ -214,7 +206,7 @@ Resources:
         !Ref OrderFailedTopic
       Protocol: email
       Endpoint:
-        !Ref OrderFailedEmailParameter
+        !Ref NotificationEmailParameter
 
 
   OrderFailedSNSTopicPolicy:
@@ -362,7 +354,7 @@ Resources:
         email
 
       Endpoint:
-        !Ref OrderCancelledEmailParameter
+        !Ref NotificationEmailParameter
 
 
   # ============================================================
