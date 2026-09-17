@@ -38,15 +38,8 @@ permissions:
 
 env:
 
-  # AWS region from existing GitHub Repository Variable.
   AWS_REGION: ${{ vars.AWS_REGION }}
 
-  # Existing GitHub Repository Variable.
-  #
-  # Example:
-  # OPERATIONS_CIDR = 49.36.100.25/32
-  #
-  # Used for EC2 TCP port 22.
   OPERATIONS_CIDR: ${{ vars.OPERATIONS_CIDR }}
 
 
@@ -242,6 +235,9 @@ jobs:
 
       # --------------------------------------------------------
       # DEPLOY NETWORK STACK
+      #
+      # CAPABILITY_IAM REQUIRED BECAUSE NETWORK STACK
+      # CREATES EC2InstanceRole.
       # --------------------------------------------------------
 
       - name: Deploy Network Stack
@@ -254,6 +250,7 @@ jobs:
             --parameter-overrides \
               Environment="${GITHUB_REF_NAME}" \
               SSHCidr="${{ steps.ssh.outputs.cidr }}" \
+            --capabilities CAPABILITY_IAM \
             --region "${AWS_REGION}" \
             --no-fail-on-empty-changeset
 
@@ -309,18 +306,10 @@ jobs:
     steps:
 
 
-      # --------------------------------------------------------
-      # CHECKOUT
-      # --------------------------------------------------------
-
       - name: Checkout repository
 
         uses: actions/checkout@v4
 
-
-      # --------------------------------------------------------
-      # AWS CREDENTIALS
-      # --------------------------------------------------------
 
       - name: Configure AWS credentials
 
@@ -332,10 +321,6 @@ jobs:
 
           aws-region: ${{ env.AWS_REGION }}
 
-
-      # --------------------------------------------------------
-      # VALIDATE DATA TEMPLATE
-      # --------------------------------------------------------
 
       - name: Validate Data CloudFormation template
 
@@ -349,11 +334,11 @@ jobs:
       # ========================================================
       # VERIFY DB PASSWORD SSM PARAMETER
       #
-      # Stored in:
+      # STORED IN:
       #
       # /cloudmart/<branch>/db/password
       #
-      # Type:
+      # TYPE:
       #
       # String
       # ========================================================
@@ -532,10 +517,6 @@ jobs:
 
           done
 
-
-      # --------------------------------------------------------
-      # CHECK DATA STACK
-      # --------------------------------------------------------
 
       - name: Check Data Stack
 
@@ -1164,7 +1145,7 @@ jobs:
 
 
       # --------------------------------------------------------
-      # UPLOAD LAMBDA PACKAGES
+      # UPLOAD LAMBDA PACKAGES TO S3
       # --------------------------------------------------------
 
       - name: Upload Lambda packages to S3
