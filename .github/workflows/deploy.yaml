@@ -38,22 +38,16 @@ permissions:
 
 env:
 
-  # AWS region from GitHub Repository Variable.
+  # AWS region from existing GitHub Repository Variable.
   AWS_REGION: ${{ vars.AWS_REGION }}
-
-  # Environment from GitHub Repository Variable.
-  ENVIRONMENT: ${{ vars.ENVIRONMENT }}
 
   # Existing GitHub Repository Variable.
   #
   # Example:
   # OPERATIONS_CIDR = 49.36.100.25/32
   #
-  # This value is used for EC2 SSH TCP port 22.
+  # Used for EC2 TCP port 22.
   OPERATIONS_CIDR: ${{ vars.OPERATIONS_CIDR }}
-
-  # Existing EC2 key pair name from GitHub Repository Variable.
-  EC2_KEY_PAIR_NAME: ${{ vars.EC2_KEY_PAIR_NAME }}
 
 
 # ============================================================
@@ -98,38 +92,27 @@ jobs:
           set -e
 
 
-          test -n "${AWS_REGION}" || {
+          if [ -z "${AWS_REGION}" ]; then
 
             echo "ERROR: GitHub Repository Variable AWS_REGION is not set."
 
             exit 1
 
-          }
+          fi
 
 
-          test -n "${ENVIRONMENT}" || {
+          if [ -z "${GITHUB_REF_NAME}" ]; then
 
-            echo "ERROR: GitHub Repository Variable ENVIRONMENT is not set."
-
-            exit 1
-
-          }
-
-
-          test -n "${EC2_KEY_PAIR_NAME}" || {
-
-            echo "ERROR: GitHub Repository Variable EC2_KEY_PAIR_NAME is not set."
+            echo "ERROR: GitHub branch name could not be determined."
 
             exit 1
 
-          }
+          fi
 
 
           echo "Deployment region: ${AWS_REGION}"
 
-          echo "Deployment environment: ${ENVIRONMENT}"
-
-          echo "EC2 key pair: ${EC2_KEY_PAIR_NAME}"
+          echo "Deployment environment: ${GITHUB_REF_NAME}"
 
 
       # --------------------------------------------------------
@@ -173,10 +156,6 @@ jobs:
           set -e
 
 
-          # ----------------------------------------------------
-          # USE WORKFLOW INPUT IF MANUALLY PROVIDED
-          # ----------------------------------------------------
-
           if [ "${{ github.event_name }}" = "workflow_dispatch" ] && \
              [ -n "${{ inputs.ssh_cidr }}" ]; then
 
@@ -184,10 +163,6 @@ jobs:
 
             echo "Using SSH CIDR supplied through workflow_dispatch."
 
-
-          # ----------------------------------------------------
-          # OTHERWISE USE EXISTING OPERATIONS_CIDR VARIABLE
-          # ----------------------------------------------------
 
           elif [ -n "${OPERATIONS_CIDR}" ]; then
 
@@ -253,38 +228,6 @@ jobs:
 
 
       # --------------------------------------------------------
-      # VERIFY EC2 KEY PAIR
-      # --------------------------------------------------------
-
-      - name: Verify EC2 key pair
-
-        shell: bash
-
-        run: |
-
-          set -e
-
-
-          KEY_PAIR=$(aws ec2 describe-key-pairs \
-            --key-names "${EC2_KEY_PAIR_NAME}" \
-            --region "${AWS_REGION}" \
-            --query "KeyPairs[0].KeyName" \
-            --output text)
-
-
-          if [ -z "${KEY_PAIR}" ] || [ "${KEY_PAIR}" = "None" ]; then
-
-            echo "ERROR: EC2 key pair '${EC2_KEY_PAIR_NAME}' was not found in ${AWS_REGION}."
-
-            exit 1
-
-          fi
-
-
-          echo "EC2 key pair exists: ${KEY_PAIR}"
-
-
-      # --------------------------------------------------------
       # VALIDATE NETWORK TEMPLATE
       # --------------------------------------------------------
 
@@ -307,11 +250,10 @@ jobs:
 
           aws cloudformation deploy \
             --template-file cloudformation/network/network-stack.yaml \
-            --stack-name "cloudmart-${ENVIRONMENT}-network" \
+            --stack-name "cloudmart-${GITHUB_REF_NAME}-network" \
             --parameter-overrides \
-              Environment="${ENVIRONMENT}" \
+              Environment="${GITHUB_REF_NAME}" \
               SSHCidr="${{ steps.ssh.outputs.cidr }}" \
-              KeyName="${EC2_KEY_PAIR_NAME}" \
             --region "${AWS_REGION}" \
             --no-fail-on-empty-changeset
 
@@ -325,7 +267,7 @@ jobs:
         run: |
 
           aws cloudformation describe-stacks \
-            --stack-name "cloudmart-${ENVIRONMENT}-network" \
+            --stack-name "cloudmart-${GITHUB_REF_NAME}-network" \
             --region "${AWS_REGION}" \
             --query "Stacks[0].StackStatus" \
             --output text
@@ -345,9 +287,9 @@ jobs:
 
 
           aws cloudformation describe-stacks \
-            --stack-name "cloudmart-${ENVIRONMENT}-network" \
+            --stack-name "cloudmart-${GITHUB_REF_NAME}-network" \
             --region "${AWS_REGION}" \
-            --query "Stacks[0].Outputs[?OutputKey=='RDSClientPublicIp' || OutputKey=='RDSClientInstanceId' || OutputKey=='EC2SecurityGroupId' || OutputKey=='EC2KeyPairName' || OutputKey=='SSHCidr'].{Key:OutputKey,Value:OutputValue}" \
+            --query "Stacks[0].Outputs[?OutputKey=='RDSClientPublicIp' || OutputKey=='RDSClientInstanceId' || OutputKey=='EC2SecurityGroupId'].{Key:OutputKey,Value:OutputValue}" \
             --output table
 
 
@@ -407,15 +349,13 @@ jobs:
       # ========================================================
       # VERIFY DB PASSWORD SSM PARAMETER
       #
-      # Password is stored as:
+      # Stored in:
       #
-      # /cloudmart/dev/db/password
+      # /cloudmart/<branch>/db/password
       #
       # Type:
       #
       # String
-      #
-      # The actual password value is never printed.
       # ========================================================
 
       - name: Verify DB password SSM parameter
@@ -429,15 +369,11 @@ jobs:
           set -e
 
 
-          PARAMETER="/cloudmart/${ENVIRONMENT}/db/password"
+          PARAMETER="/cloudmart/${GITHUB_REF_NAME}/db/password"
 
 
           echo "Checking SSM parameter: ${PARAMETER}"
 
-
-          # ----------------------------------------------------
-          # CHECK PARAMETER EXISTS
-          # ----------------------------------------------------
 
           if ! aws ssm get-parameter \
               --name "${PARAMETER}" \
@@ -467,16 +403,10 @@ jobs:
 
             echo "  Your actual RDS master password"
 
-            echo ""
-
             exit 1
 
           fi
 
-
-          # ----------------------------------------------------
-          # CHECK PARAMETER TYPE
-          # ----------------------------------------------------
 
           TYPE=$(aws ssm get-parameter \
             --name "${PARAMETER}" \
@@ -494,12 +424,6 @@ jobs:
           fi
 
 
-          # ----------------------------------------------------
-          # CHECK VALUE EXISTS
-          #
-          # The password itself is not displayed.
-          # ----------------------------------------------------
-
           VALUE=$(aws ssm get-parameter \
             --name "${PARAMETER}" \
             --region "${AWS_REGION}" \
@@ -515,10 +439,6 @@ jobs:
 
           fi
 
-
-          # ----------------------------------------------------
-          # GET SSM PARAMETER VERSION
-          # ----------------------------------------------------
 
           VERSION=$(aws ssm get-parameter \
             --name "${PARAMETER}" \
@@ -558,12 +478,12 @@ jobs:
 
           aws cloudformation deploy \
             --template-file cloudformation/data/data-stack.yaml \
-            --stack-name "cloudmart-${ENVIRONMENT}-data" \
+            --stack-name "cloudmart-${GITHUB_REF_NAME}-data" \
             --parameter-overrides \
-              Environment="${ENVIRONMENT}" \
+              Environment="${GITHUB_REF_NAME}" \
               DBName="cloudmart" \
               DBUsername="cloudmartadmin" \
-              DBPasswordParameterName="/cloudmart/${ENVIRONMENT}/db/password" \
+              DBPasswordParameterName="/cloudmart/${GITHUB_REF_NAME}/db/password" \
               DBPasswordParameterVersion="${{ steps.dbpassword.outputs.version }}" \
               DBInstanceClass="db.t3.micro" \
               AllocatedStorage="20" \
@@ -585,11 +505,11 @@ jobs:
 
 
           for PARAMETER in \
-            "/cloudmart/${ENVIRONMENT}/db/host" \
-            "/cloudmart/${ENVIRONMENT}/db/port" \
-            "/cloudmart/${ENVIRONMENT}/db/name" \
-            "/cloudmart/${ENVIRONMENT}/db/username" \
-            "/cloudmart/${ENVIRONMENT}/db/password"; do
+            "/cloudmart/${GITHUB_REF_NAME}/db/host" \
+            "/cloudmart/${GITHUB_REF_NAME}/db/port" \
+            "/cloudmart/${GITHUB_REF_NAME}/db/name" \
+            "/cloudmart/${GITHUB_REF_NAME}/db/username" \
+            "/cloudmart/${GITHUB_REF_NAME}/db/password"; do
 
 
             TYPE=$(aws ssm get-parameter \
@@ -622,7 +542,7 @@ jobs:
         run: |
 
           aws cloudformation describe-stacks \
-            --stack-name "cloudmart-${ENVIRONMENT}-data" \
+            --stack-name "cloudmart-${GITHUB_REF_NAME}-data" \
             --region "${AWS_REGION}" \
             --query "Stacks[0].StackStatus" \
             --output text
@@ -675,9 +595,9 @@ jobs:
 
           aws cloudformation deploy \
             --template-file cloudformation/iam/iam-stack.yaml \
-            --stack-name "cloudmart-${ENVIRONMENT}-iam" \
+            --stack-name "cloudmart-${GITHUB_REF_NAME}-iam" \
             --parameter-overrides \
-              Environment="${ENVIRONMENT}" \
+              Environment="${GITHUB_REF_NAME}" \
             --capabilities CAPABILITY_NAMED_IAM \
             --region "${AWS_REGION}" \
             --no-fail-on-empty-changeset
@@ -699,7 +619,7 @@ jobs:
 
 
             VALUE=$(aws cloudformation describe-stacks \
-              --stack-name "cloudmart-${ENVIRONMENT}-iam" \
+              --stack-name "cloudmart-${GITHUB_REF_NAME}-iam" \
               --region "${AWS_REGION}" \
               --query "Stacks[0].Outputs[?OutputKey=='${OUTPUT}'].OutputValue | [0]" \
               --output text)
@@ -778,7 +698,7 @@ jobs:
 
 
           BUCKET=$(aws cloudformation describe-stacks \
-            --stack-name "cloudmart-${ENVIRONMENT}-data" \
+            --stack-name "cloudmart-${GITHUB_REF_NAME}-data" \
             --region "${AWS_REGION}" \
             --query "Stacks[0].Outputs[?OutputKey=='LambdaArtifactBucketName'].OutputValue | [0]" \
             --output text)
@@ -814,7 +734,10 @@ jobs:
             -t authorizer-package
 
 
-          (cd authorizer-package && zip -qr ../authorizer.zip .)
+          (
+            cd authorizer-package &&
+            zip -qr ../authorizer.zip .
+          )
 
 
           ls -lh authorizer.zip
@@ -846,11 +769,11 @@ jobs:
 
 
           for PARAMETER in \
-            "/cloudmart/${ENVIRONMENT}/db/host" \
-            "/cloudmart/${ENVIRONMENT}/db/port" \
-            "/cloudmart/${ENVIRONMENT}/db/name" \
-            "/cloudmart/${ENVIRONMENT}/db/username" \
-            "/cloudmart/${ENVIRONMENT}/db/password"; do
+            "/cloudmart/${GITHUB_REF_NAME}/db/host" \
+            "/cloudmart/${GITHUB_REF_NAME}/db/port" \
+            "/cloudmart/${GITHUB_REF_NAME}/db/name" \
+            "/cloudmart/${GITHUB_REF_NAME}/db/username" \
+            "/cloudmart/${GITHUB_REF_NAME}/db/password"; do
 
 
             aws ssm get-parameter \
@@ -891,7 +814,7 @@ jobs:
 
 
           SG=$(aws cloudformation describe-stacks \
-            --stack-name "cloudmart-${ENVIRONMENT}-network" \
+            --stack-name "cloudmart-${GITHUB_REF_NAME}-network" \
             --region "${AWS_REGION}" \
             --query "Stacks[0].Outputs[?OutputKey=='LambdaSecurityGroupId'].OutputValue | [0]" \
             --output text)
@@ -915,15 +838,15 @@ jobs:
 
           aws cloudformation deploy \
             --template-file cloudformation/auth/auth-stack.yaml \
-            --stack-name "cloudmart-${ENVIRONMENT}-auth" \
+            --stack-name "cloudmart-${GITHUB_REF_NAME}-auth" \
             --parameter-overrides \
-              Environment="${ENVIRONMENT}" \
+              Environment="${GITHUB_REF_NAME}" \
               LambdaSecurityGroupId="${{ steps.network.outputs.security_group }}" \
-              DBHostParameter="/cloudmart/${ENVIRONMENT}/db/host" \
-              DBPortParameter="/cloudmart/${ENVIRONMENT}/db/port" \
-              DBNameParameter="/cloudmart/${ENVIRONMENT}/db/name" \
-              DBUsernameParameter="/cloudmart/${ENVIRONMENT}/db/username" \
-              DBPasswordParameter="/cloudmart/${ENVIRONMENT}/db/password" \
+              DBHostParameter="/cloudmart/${GITHUB_REF_NAME}/db/host" \
+              DBPortParameter="/cloudmart/${GITHUB_REF_NAME}/db/port" \
+              DBNameParameter="/cloudmart/${GITHUB_REF_NAME}/db/name" \
+              DBUsernameParameter="/cloudmart/${GITHUB_REF_NAME}/db/username" \
+              DBPasswordParameter="/cloudmart/${GITHUB_REF_NAME}/db/password" \
               LambdaArtifactBucketName="${{ steps.bucket.outputs.bucket }}" \
               LambdaArtifactKey="authorizer/authorizer.zip" \
             --capabilities CAPABILITY_NAMED_IAM \
@@ -936,7 +859,7 @@ jobs:
         run: |
 
           aws cloudformation describe-stacks \
-            --stack-name "cloudmart-${ENVIRONMENT}-auth" \
+            --stack-name "cloudmart-${GITHUB_REF_NAME}-auth" \
             --region "${AWS_REGION}" \
             --query "Stacks[0].StackStatus" \
             --output text
@@ -1002,21 +925,21 @@ jobs:
 
 
           SUBNET_A=$(aws cloudformation describe-stacks \
-            --stack-name "cloudmart-${ENVIRONMENT}-network" \
+            --stack-name "cloudmart-${GITHUB_REF_NAME}-network" \
             --region "${AWS_REGION}" \
             --query "Stacks[0].Outputs[?OutputKey=='PrivateSubnetAId'].OutputValue | [0]" \
             --output text)
 
 
           SUBNET_B=$(aws cloudformation describe-stacks \
-            --stack-name "cloudmart-${ENVIRONMENT}-network" \
+            --stack-name "cloudmart-${GITHUB_REF_NAME}-network" \
             --region "${AWS_REGION}" \
             --query "Stacks[0].Outputs[?OutputKey=='PrivateSubnetBId'].OutputValue | [0]" \
             --output text)
 
 
           SG=$(aws cloudformation describe-stacks \
-            --stack-name "cloudmart-${ENVIRONMENT}-network" \
+            --stack-name "cloudmart-${GITHUB_REF_NAME}-network" \
             --region "${AWS_REGION}" \
             --query "Stacks[0].Outputs[?OutputKey=='LambdaSecurityGroupId'].OutputValue | [0]" \
             --output text)
@@ -1056,7 +979,7 @@ jobs:
 
 
           BUCKET=$(aws cloudformation describe-stacks \
-            --stack-name "cloudmart-${ENVIRONMENT}-data" \
+            --stack-name "cloudmart-${GITHUB_REF_NAME}-data" \
             --region "${AWS_REGION}" \
             --query "Stacks[0].Outputs[?OutputKey=='LambdaArtifactBucketName'].OutputValue | [0]" \
             --output text)
@@ -1086,7 +1009,7 @@ jobs:
 
 
           ARN=$(aws cloudformation describe-stacks \
-            --stack-name "cloudmart-${ENVIRONMENT}-auth" \
+            --stack-name "cloudmart-${GITHUB_REF_NAME}-auth" \
             --region "${AWS_REGION}" \
             --query "Stacks[0].Outputs[?OutputKey=='AuthorizerLambdaArn'].OutputValue | [0]" \
             --output text)
@@ -1116,14 +1039,14 @@ jobs:
 
 
           PRODUCT=$(aws cloudformation describe-stacks \
-            --stack-name "cloudmart-${ENVIRONMENT}-iam" \
+            --stack-name "cloudmart-${GITHUB_REF_NAME}-iam" \
             --region "${AWS_REGION}" \
             --query "Stacks[0].Outputs[?OutputKey=='ProductLambdaRoleArn'].OutputValue | [0]" \
             --output text)
 
 
           PROCESSOR=$(aws cloudformation describe-stacks \
-            --stack-name "cloudmart-${ENVIRONMENT}-iam" \
+            --stack-name "cloudmart-${GITHUB_REF_NAME}-iam" \
             --region "${AWS_REGION}" \
             --query "Stacks[0].Outputs[?OutputKey=='OrderProcessorLambdaRoleArn'].OutputValue | [0]" \
             --output text)
@@ -1180,7 +1103,10 @@ jobs:
           rm build/product/requirements.txt
 
 
-          (cd build/product && zip -qr ../../product.zip .)
+          (
+            cd build/product &&
+            zip -qr ../../product.zip .
+          )
 
 
       # --------------------------------------------------------
@@ -1204,7 +1130,10 @@ jobs:
           rm build/schema/requirements.txt
 
 
-          (cd build/schema && zip -qr ../../schema.zip .)
+          (
+            cd build/schema &&
+            zip -qr ../../schema.zip .
+          )
 
 
       # --------------------------------------------------------
@@ -1228,7 +1157,10 @@ jobs:
           rm build/order-processor/requirements.txt
 
 
-          (cd build/order-processor && zip -qr ../../order-processor.zip .)
+          (
+            cd build/order-processor &&
+            zip -qr ../../order-processor.zip .
+          )
 
 
       # --------------------------------------------------------
@@ -1301,7 +1233,7 @@ jobs:
           set -e
 
 
-          PARAMETER="/cloudmart/${ENVIRONMENT}/notifications/email"
+          PARAMETER="/cloudmart/${GITHUB_REF_NAME}/notifications/email"
 
 
           echo "Checking notification email parameter:"
@@ -1336,8 +1268,6 @@ jobs:
             echo "Value:"
 
             echo "  Your notification email address"
-
-            echo ""
 
             exit 1
 
@@ -1391,11 +1321,11 @@ jobs:
 
           aws cloudformation deploy \
             --template-file cloudformation/api/api-stack.yaml \
-            --stack-name "cloudmart-${ENVIRONMENT}-api" \
+            --stack-name "cloudmart-${GITHUB_REF_NAME}-api" \
             --region "${AWS_REGION}" \
             --capabilities CAPABILITY_NAMED_IAM \
             --parameter-overrides \
-              Environment="${ENVIRONMENT}" \
+              Environment="${GITHUB_REF_NAME}" \
               PrivateSubnetIds="${{ steps.network.outputs.subnets }}" \
               LambdaSecurityGroupId="${{ steps.network.outputs.security_group }}" \
               ProductLambdaExecutionRoleArn="${{ steps.roles.outputs.product }}" \
@@ -1405,14 +1335,14 @@ jobs:
               ProductLambdaCodeKey="product/product.zip" \
               SchemaLambdaCodeKey="schema/schema.zip" \
               OrderProcessorLambdaCodeKey="order-processor/order-processor.zip" \
-              DBHostParameter="/cloudmart/${ENVIRONMENT}/db/host" \
-              DBPortParameter="/cloudmart/${ENVIRONMENT}/db/port" \
-              DBNameParameter="/cloudmart/${ENVIRONMENT}/db/name" \
-              DBUsernameParameter="/cloudmart/${ENVIRONMENT}/db/username" \
-              DBPasswordParameter="/cloudmart/${ENVIRONMENT}/db/password" \
+              DBHostParameter="/cloudmart/${GITHUB_REF_NAME}/db/host" \
+              DBPortParameter="/cloudmart/${GITHUB_REF_NAME}/db/port" \
+              DBNameParameter="/cloudmart/${GITHUB_REF_NAME}/db/name" \
+              DBUsernameParameter="/cloudmart/${GITHUB_REF_NAME}/db/username" \
+              DBPasswordParameter="/cloudmart/${GITHUB_REF_NAME}/db/password" \
               AuthorizerCacheTTL="0" \
-              EventBusName="cloudmart-${ENVIRONMENT}-event-bus" \
-              NotificationEmailParameter="/cloudmart/${ENVIRONMENT}/notifications/email" \
+              EventBusName="cloudmart-${GITHUB_REF_NAME}-event-bus" \
+              NotificationEmailParameter="/cloudmart/${GITHUB_REF_NAME}/notifications/email" \
             --no-fail-on-empty-changeset
 
 
@@ -1430,7 +1360,7 @@ jobs:
 
 
           aws lambda update-function-code \
-            --function-name "CloudMart-${ENVIRONMENT}-schema" \
+            --function-name "CloudMart-${GITHUB_REF_NAME}-schema" \
             --s3-bucket "${{ steps.bucket.outputs.bucket }}" \
             --s3-key "schema/schema.zip" \
             --publish \
@@ -1438,7 +1368,7 @@ jobs:
 
 
           aws lambda wait function-updated \
-            --function-name "CloudMart-${ENVIRONMENT}-schema" \
+            --function-name "CloudMart-${GITHUB_REF_NAME}-schema" \
             --region "${AWS_REGION}"
 
 
@@ -1462,7 +1392,7 @@ jobs:
 
 
           FUNCTION_ERROR=$(aws lambda invoke \
-            --function-name "CloudMart-${ENVIRONMENT}-schema" \
+            --function-name "CloudMart-${GITHUB_REF_NAME}-schema" \
             --region "${AWS_REGION}" \
             --cli-binary-format raw-in-base64-out \
             --query 'FunctionError' \
@@ -1528,7 +1458,7 @@ jobs:
         run: |
 
           aws cloudformation describe-stacks \
-            --stack-name "cloudmart-${ENVIRONMENT}-api" \
+            --stack-name "cloudmart-${GITHUB_REF_NAME}-api" \
             --region "${AWS_REGION}" \
             --query "Stacks[0].StackStatus" \
             --output text
@@ -1544,10 +1474,10 @@ jobs:
 
           aws cloudformation deploy \
             --template-file cloudformation/eventbridge/eventbridge-stack.yaml \
-            --stack-name "CloudMart-${ENVIRONMENT}-eventbridge" \
+            --stack-name "CloudMart-${GITHUB_REF_NAME}-eventbridge" \
             --parameter-overrides \
-              Environment="${ENVIRONMENT}" \
-              NotificationEmailParameter="/cloudmart/${ENVIRONMENT}/notifications/email" \
+              Environment="${GITHUB_REF_NAME}" \
+              NotificationEmailParameter="/cloudmart/${GITHUB_REF_NAME}/notifications/email" \
             --region "${AWS_REGION}" \
             --no-fail-on-empty-changeset
 
@@ -1564,7 +1494,7 @@ jobs:
 
 
           aws cloudformation describe-stacks \
-            --stack-name "cloudmart-${ENVIRONMENT}-network" \
+            --stack-name "cloudmart-${GITHUB_REF_NAME}-network" \
             --region "${AWS_REGION}" \
             --query "Stacks[0].Outputs" \
             --output table
@@ -1574,7 +1504,7 @@ jobs:
 
 
           aws cloudformation describe-stacks \
-            --stack-name "cloudmart-${ENVIRONMENT}-data" \
+            --stack-name "cloudmart-${GITHUB_REF_NAME}-data" \
             --region "${AWS_REGION}" \
             --query "Stacks[0].Outputs" \
             --output table
@@ -1584,7 +1514,7 @@ jobs:
 
 
           aws cloudformation describe-stacks \
-            --stack-name "cloudmart-${ENVIRONMENT}-api" \
+            --stack-name "cloudmart-${GITHUB_REF_NAME}-api" \
             --region "${AWS_REGION}" \
             --query "Stacks[0].Outputs" \
             --output table
@@ -1594,7 +1524,7 @@ jobs:
 
 
           aws cloudformation describe-stacks \
-            --stack-name "CloudMart-${ENVIRONMENT}-eventbridge" \
+            --stack-name "CloudMart-${GITHUB_REF_NAME}-eventbridge" \
             --region "${AWS_REGION}" \
             --query "Stacks[0].Outputs" \
             --output table
