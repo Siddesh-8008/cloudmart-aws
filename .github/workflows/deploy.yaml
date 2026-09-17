@@ -1,12 +1,24 @@
 name: CloudMart Infrastructure
 
+
+# ============================================================
+# WORKFLOW TRIGGERS
+# ============================================================
+
 on:
+
   push:
     branches:
       - main
       - orders
 
   workflow_dispatch:
+    inputs:
+
+      operations_cidr:
+        description: 'Your public IPv4 address in /32 format, for example 49.36.100.25/32'
+        required: true
+        type: string
 
 
 # ============================================================
@@ -25,7 +37,6 @@ permissions:
 env:
   AWS_REGION: ap-south-1
   ENVIRONMENT: dev
-  # Stack names are constructed from ENVIRONMENT inside each shell command.
 
 
 # ============================================================
@@ -34,11 +45,13 @@ env:
 
 jobs:
 
+
   # ============================================================
   # JOB 1 - NETWORK
   # ============================================================
 
   deploy-network:
+
     name: Deploy Network Stack
     runs-on: ubuntu-latest
 
@@ -60,6 +73,54 @@ jobs:
           aws sts get-caller-identity
 
 
+      # --------------------------------------------------------
+      # Determine Operations CIDR
+      # --------------------------------------------------------
+
+      - name: Determine Operations CIDR
+        id: operations
+        shell: bash
+        run: |
+          set -e
+
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+
+            CIDR="${{ inputs.operations_cidr }}"
+
+          else
+
+            echo "Push deployment detected."
+
+            echo "For automatic push deployments, the current GitHub Actions"
+            echo "runner public IP will be used."
+
+            PUBLIC_IP=$(curl -fsS https://checkip.amazonaws.com)
+
+            CIDR="${PUBLIC_IP}/32"
+
+          fi
+
+          echo "Using Operations CIDR: ${CIDR}"
+
+          echo "cidr=${CIDR}" >> "$GITHUB_OUTPUT"
+
+
+      - name: Validate Operations CIDR
+        shell: bash
+        run: |
+          set -e
+
+          CIDR="${{ steps.operations.outputs.cidr }}"
+
+          if [[ ! "${CIDR}" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}/32$ ]]; then
+            echo "ERROR: Operations CIDR must be an IPv4 address ending in /32."
+            echo "Example: 49.36.100.25/32"
+            exit 1
+          fi
+
+          echo "Operations CIDR format is valid."
+
+
       - name: Validate Network CloudFormation template
         run: |
           aws cloudformation validate-template \
@@ -74,6 +135,7 @@ jobs:
             --stack-name "cloudmart-${ENVIRONMENT}-network" \
             --parameter-overrides \
               Environment="${ENVIRONMENT}" \
+              OperationsCidr="${{ steps.operations.outputs.cidr }}" \
             --capabilities CAPABILITY_NAMED_IAM \
             --region "${AWS_REGION}" \
             --no-fail-on-empty-changeset
@@ -88,14 +150,29 @@ jobs:
             --output text
 
 
+      - name: Show EC2 network information
+        shell: bash
+        run: |
+          echo "================ EC2 INFORMATION ================"
+
+          aws cloudformation describe-stacks \
+            --stack-name "cloudmart-${ENVIRONMENT}-network" \
+            --region "${AWS_REGION}" \
+            --query "Stacks[0].Outputs[?OutputKey=='RDSClientPublicIp' || OutputKey=='RDSClientInstanceId' || OutputKey=='EC2SecurityGroupId'].{Key:OutputKey,Value:OutputValue}" \
+            --output table
+
+
   # ============================================================
   # JOB 2 - DATA / RDS
   # ============================================================
 
   deploy-data:
+
     name: Deploy Data Stack
     runs-on: ubuntu-latest
-    needs: deploy-network
+
+    needs:
+      - deploy-network
 
     steps:
 
@@ -109,11 +186,13 @@ jobs:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
+
       - name: Validate Data CloudFormation template
         run: |
           aws cloudformation validate-template \
             --template-body file://cloudformation/data/data-stack.yaml \
             --region "${AWS_REGION}"
+
 
       - name: Deploy Data Stack
         run: |
@@ -165,9 +244,12 @@ jobs:
   # ============================================================
 
   deploy-iam:
+
     name: Deploy IAM Stack
     runs-on: ubuntu-latest
-    needs: deploy-data
+
+    needs:
+      - deploy-data
 
     steps:
 
@@ -231,6 +313,7 @@ jobs:
   # ============================================================
 
   deploy-auth:
+
     name: Deploy Authentication Stack
     runs-on: ubuntu-latest
 
@@ -257,6 +340,7 @@ jobs:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
+
       - name: Get Lambda artifact bucket
         id: bucket
         shell: bash
@@ -269,7 +353,8 @@ jobs:
             --query "Stacks[0].Outputs[?OutputKey=='LambdaArtifactBucketName'].OutputValue | [0]" \
             --output text)
 
-          test -n "${BUCKET}" && test "${BUCKET}" != "None"
+          test -n "${BUCKET}"
+          test "${BUCKET}" != "None"
 
           echo "bucket=${BUCKET}" >> "$GITHUB_OUTPUT"
 
@@ -332,7 +417,8 @@ jobs:
             --query "Stacks[0].Outputs[?OutputKey=='LambdaSecurityGroupId'].OutputValue | [0]" \
             --output text)
 
-          test -n "${SG}" && test "${SG}" != "None"
+          test -n "${SG}"
+          test "${SG}" != "None"
 
           echo "security_group=${SG}" >> "$GITHUB_OUTPUT"
 
@@ -371,6 +457,7 @@ jobs:
   # ============================================================
 
   deploy-api:
+
     name: Deploy API and Order Processing
     runs-on: ubuntu-latest
 
@@ -403,6 +490,8 @@ jobs:
         id: network
         shell: bash
         run: |
+          set -e
+
           SUBNET_A=$(aws cloudformation describe-stacks \
             --stack-name "cloudmart-${ENVIRONMENT}-network" \
             --region "${AWS_REGION}" \
@@ -421,9 +510,14 @@ jobs:
             --query "Stacks[0].Outputs[?OutputKey=='LambdaSecurityGroupId'].OutputValue | [0]" \
             --output text)
 
-          test -n "${SUBNET_A}" && test "${SUBNET_A}" != "None"
-          test -n "${SUBNET_B}" && test "${SUBNET_B}" != "None"
-          test -n "${SG}" && test "${SG}" != "None"
+          test -n "${SUBNET_A}"
+          test "${SUBNET_A}" != "None"
+
+          test -n "${SUBNET_B}"
+          test "${SUBNET_B}" != "None"
+
+          test -n "${SG}"
+          test "${SG}" != "None"
 
           echo "subnets=${SUBNET_A},${SUBNET_B}" >> "$GITHUB_OUTPUT"
           echo "security_group=${SG}" >> "$GITHUB_OUTPUT"
@@ -433,13 +527,16 @@ jobs:
         id: bucket
         shell: bash
         run: |
+          set -e
+
           BUCKET=$(aws cloudformation describe-stacks \
             --stack-name "cloudmart-${ENVIRONMENT}-data" \
             --region "${AWS_REGION}" \
             --query "Stacks[0].Outputs[?OutputKey=='LambdaArtifactBucketName'].OutputValue | [0]" \
             --output text)
 
-          test -n "${BUCKET}" && test "${BUCKET}" != "None"
+          test -n "${BUCKET}"
+          test "${BUCKET}" != "None"
 
           echo "bucket=${BUCKET}" >> "$GITHUB_OUTPUT"
 
@@ -448,13 +545,16 @@ jobs:
         id: auth
         shell: bash
         run: |
+          set -e
+
           ARN=$(aws cloudformation describe-stacks \
             --stack-name "cloudmart-${ENVIRONMENT}-auth" \
             --region "${AWS_REGION}" \
             --query "Stacks[0].Outputs[?OutputKey=='AuthorizerLambdaArn'].OutputValue | [0]" \
             --output text)
 
-          test -n "${ARN}" && test "${ARN}" != "None"
+          test -n "${ARN}"
+          test "${ARN}" != "None"
 
           echo "arn=${ARN}" >> "$GITHUB_OUTPUT"
 
@@ -463,6 +563,8 @@ jobs:
         id: roles
         shell: bash
         run: |
+          set -e
+
           PRODUCT=$(aws cloudformation describe-stacks \
             --stack-name "cloudmart-${ENVIRONMENT}-iam" \
             --region "${AWS_REGION}" \
@@ -475,8 +577,11 @@ jobs:
             --query "Stacks[0].Outputs[?OutputKey=='OrderProcessorLambdaRoleArn'].OutputValue | [0]" \
             --output text)
 
-          test -n "${PRODUCT}" && test "${PRODUCT}" != "None"
-          test -n "${PROCESSOR}" && test "${PROCESSOR}" != "None"
+          test -n "${PRODUCT}"
+          test "${PRODUCT}" != "None"
+
+          test -n "${PROCESSOR}"
+          test "${PROCESSOR}" != "None"
 
           echo "product=${PRODUCT}" >> "$GITHUB_OUTPUT"
           echo "processor=${PROCESSOR}" >> "$GITHUB_OUTPUT"
@@ -485,7 +590,11 @@ jobs:
       - name: Prepare Lambda build directories
         run: |
           rm -rf build
-          mkdir -p build/product build/schema build/order-processor
+
+          mkdir -p \
+            build/product \
+            build/schema \
+            build/order-processor
 
 
       - name: Package Product Lambda
@@ -532,6 +641,8 @@ jobs:
 
       - name: Upload Lambda packages to S3
         run: |
+          set -e
+
           BUCKET="${{ steps.bucket.outputs.bucket }}"
 
           aws s3 cp \
@@ -560,24 +671,9 @@ jobs:
             --key order-processor/order-processor.zip
 
 
-      - name: Force update Schema Lambda code
-        shell: bash
-        run: |
-          set -e
-
-          aws lambda update-function-code \
-            --function-name "CloudMart-${ENVIRONMENT}-schema" \
-            --s3-bucket "${{ steps.bucket.outputs.bucket }}" \
-            --s3-key "schema/schema.zip" \
-            --publish \
-            --region "${AWS_REGION}"
-
-          aws lambda wait function-updated \
-            --function-name "CloudMart-${ENVIRONMENT}-schema" \
-            --region "${AWS_REGION}"
-
-          echo "Schema Lambda code updated successfully."
-
+      # ========================================================
+      # API CLOUDFORMATION
+      # ========================================================
 
       - name: Validate API CloudFormation template
         run: |
@@ -614,9 +710,38 @@ jobs:
             --no-fail-on-empty-changeset
 
 
+      # ========================================================
+      # FORCE SCHEMA LAMBDA UPDATE
+      # ========================================================
+
+      - name: Force update Schema Lambda code
+        shell: bash
+        run: |
+          set -e
+
+          aws lambda update-function-code \
+            --function-name "CloudMart-${ENVIRONMENT}-schema" \
+            --s3-bucket "${{ steps.bucket.outputs.bucket }}" \
+            --s3-key "schema/schema.zip" \
+            --publish \
+            --region "${AWS_REGION}"
+
+          aws lambda wait function-updated \
+            --function-name "CloudMart-${ENVIRONMENT}-schema" \
+            --region "${AWS_REGION}"
+
+          echo "Schema Lambda code updated successfully."
+
+
+      # ========================================================
+      # DATABASE INITIALIZATION / MIGRATION
+      # ========================================================
+
       - name: Initialize or migrate database schema
         shell: bash
         run: |
+          set -e
+
           rm -f schema-response.json
 
           FUNCTION_ERROR=$(aws lambda invoke \
@@ -640,9 +765,12 @@ jobs:
   # ============================================================
 
   deploy-eventbridge:
+
     name: Deploy EventBridge and SNS
     runs-on: ubuntu-latest
-    needs: deploy-api
+
+    needs:
+      - deploy-api
 
     steps:
 
@@ -686,7 +814,17 @@ jobs:
 
       - name: Show final stack outputs
         run: |
-          echo "================ API OUTPUTS ================"
+
+          echo "================ NETWORK OUTPUTS ================"
+
+          aws cloudformation describe-stacks \
+            --stack-name "cloudmart-${ENVIRONMENT}-network" \
+            --region "${AWS_REGION}" \
+            --query "Stacks[0].Outputs" \
+            --output table
+
+
+          echo "================ API OUTPUTS ===================="
 
           aws cloudformation describe-stacks \
             --stack-name "cloudmart-${ENVIRONMENT}-api" \
@@ -695,7 +833,7 @@ jobs:
             --output table
 
 
-          echo "=========== EVENTBRIDGE OUTPUTS ============="
+          echo "=========== EVENTBRIDGE OUTPUTS ================"
 
           aws cloudformation describe-stacks \
             --stack-name "CloudMart-${ENVIRONMENT}-eventbridge" \

@@ -9,9 +9,15 @@ Parameters:
     AllowedPattern: '^[a-zA-Z0-9-]+$'
     Description: Deployment environment name used in resource and parameter names
 
+  OperationsCidr:
+    Type: String
+    AllowedPattern: '^([0-9]{1,3}\.){3}[0-9]{1,3}/32$'
+    Description: Public IPv4 address allowed to access the CloudMart EC2 instance on SSH port 22 and HTTPS port 443. Use /32.
+
   LatestAmiId:
     Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
     Default: /aws/service/ami-amazon-linux-latest/al2023-ami-minimal-kernel-default-x86_64
+
 
 Resources:
 
@@ -197,7 +203,7 @@ Resources:
   EC2SecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: Public security group for CloudMart Flask dashboard
+      GroupDescription: Public security group for CloudMart RDS client EC2
       VpcId: !Ref VPC
       Tags:
         - Key: Name
@@ -283,6 +289,28 @@ Resources:
   # EC2 SECURITY GROUP RULES
   # ============================================================
 
+  EC2FromOperationsSSHIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref EC2SecurityGroup
+      IpProtocol: tcp
+      FromPort: 22
+      ToPort: 22
+      CidrIp: !Ref OperationsCidr
+      Description: SSH access from operations public IP
+
+
+  EC2FromOperationsHTTPSIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref EC2SecurityGroup
+      IpProtocol: tcp
+      FromPort: 443
+      ToPort: 443
+      CidrIp: !Ref OperationsCidr
+      Description: HTTPS access from operations public IP
+
+
   EC2ToRDS:
     Type: AWS::EC2::SecurityGroupEgress
     Properties:
@@ -302,7 +330,7 @@ Resources:
       FromPort: 443
       ToPort: 443
       DestinationSecurityGroupId: !Ref EndpointSecurityGroup
-      Description: Dashboard to VPC endpoints
+      Description: RDS client to VPC endpoints
 
 
   EC2ToInternet:
@@ -313,7 +341,7 @@ Resources:
       FromPort: 443
       ToPort: 443
       CidrIp: 0.0.0.0/0
-      Description: HTTPS outbound access for Systems Manager and package installation
+      Description: HTTPS outbound access for package installation
 
 
   # ============================================================
@@ -455,12 +483,9 @@ Resources:
         - !Ref EndpointSecurityGroup
 
 
-# ============================================================
-# EC2 INSTANCE PROFILE FOR SYSTEMS MANAGER
-#
-# The instance is managed through SSM Session Manager.
-# No inbound SSH/HTTP rules are required.
-# ============================================================
+  # ============================================================
+  # EC2 INSTANCE PROFILE FOR SYSTEMS MANAGER
+  # ============================================================
 
   EC2InstanceRole:
     Type: AWS::IAM::Role
@@ -474,8 +499,10 @@ Resources:
                 - ec2.amazonaws.com
             Action:
               - sts:AssumeRole
+
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+
       Policies:
         - PolicyName: ReadCloudMartDbParameters
           PolicyDocument:
@@ -486,11 +513,14 @@ Resources:
                   - ssm:GetParameter
                 Resource:
                   - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/*'
+
       Tags:
         - Key: Project
           Value: CloudMart
+
         - Key: Environment
           Value: !Ref Environment
+
 
   EC2InstanceProfile:
     Type: AWS::IAM::InstanceProfile
@@ -498,29 +528,44 @@ Resources:
       Roles:
         - !Ref EC2InstanceRole
 
+
+  # ============================================================
+  # RDS CLIENT EC2
+  # ============================================================
+
   RDSClientEC2:
     Type: AWS::EC2::Instance
     DependsOn:
       - PublicDefaultRoute
+
     Properties:
       ImageId: !Ref LatestAmiId
       InstanceType: t3.micro
       SubnetId: !Ref PublicSubnetA
+
       SecurityGroupIds:
         - !Ref EC2SecurityGroup
+
       IamInstanceProfile: !Ref EC2InstanceProfile
+
       Tags:
         - Key: Name
-          Value: !Sub CloudMart-${Environment}-rds-cloudmart-dev-data
+          Value: !Sub CloudMart-${Environment}-rds-client
+
         - Key: Project
           Value: CloudMart
+
         - Key: Environment
           Value: !Ref Environment
+
       UserData:
         Fn::Base64: !Sub |
           #!/bin/bash
+
           set -e
-          dnf install -y mariadb105 || true
+
+          dnf install -y mariadb105 || dnf install -y mariadb || true
+
           systemctl enable amazon-ssm-agent || true
           systemctl start amazon-ssm-agent || true
 
@@ -539,7 +584,7 @@ Outputs:
 
 
   PublicSubnetId:
-    Description: Public subnet for EC2 Flask dashboard
+    Description: Public subnet for CloudMart RDS client EC2
     Value: !Ref PublicSubnetA
     Export:
       Name: !Sub CloudMart-${Environment}-PublicSubnetId
@@ -588,10 +633,11 @@ Outputs:
 
 
   RDSClientInstanceId:
-    Description: EC2 instance used to connect to the private RDS instance through Session Manager
+    Description: EC2 instance used to connect to the private RDS instance
     Value: !Ref RDSClientEC2
     Export:
       Name: !Sub CloudMart-${Environment}-RDSClientInstanceId
+
 
   RDSClientPublicIp:
     Description: Public IPv4 address of the RDS client EC2 instance
