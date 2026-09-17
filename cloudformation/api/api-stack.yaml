@@ -148,7 +148,7 @@ Parameters:
 
   LowStockEmail:
     Type: String
-    Default: your-siddeshravula8008@gmail.com
+    Default: siddeshravula8008@gmail.com
     Description: Email address for low-stock notifications. Replace the default with the real notification email.
 
 
