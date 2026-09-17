@@ -6,15 +6,29 @@ Description: >
 
 Parameters:
 
+  # ============================================================
+  # ENVIRONMENT
+  # ============================================================
+
   Environment:
     Type: String
     AllowedPattern: '^[a-zA-Z0-9-]+$'
     Description: Deployment environment name used in resource and parameter names
 
+
+  # ============================================================
+  # DATABASE NAME
+  # ============================================================
+
   DBName:
     Type: String
     Default: cloudmart
     AllowedPattern: '^[a-zA-Z][a-zA-Z0-9_]*$'
+
+
+  # ============================================================
+  # DATABASE USERNAME
+  # ============================================================
 
   DBUsername:
     Type: String
@@ -22,13 +36,31 @@ Parameters:
     NoEcho: true
     AllowedPattern: '^[a-zA-Z][a-zA-Z0-9_]*$'
 
+
+  # ============================================================
+  # DATABASE PASSWORD SSM PARAMETER
+  #
+  # The actual password is stored manually in SSM Parameter Store.
+  # This stack only receives the parameter name.
+  # ============================================================
+
   DBPasswordParameterName:
     Type: AWS::SSM::Parameter::Name
     Description: Existing SSM String parameter containing the RDS master password.
 
+
+  # ============================================================
+  # RDS INSTANCE CLASS
+  # ============================================================
+
   DBInstanceClass:
     Type: String
     Default: db.t3.micro
+
+
+  # ============================================================
+  # RDS STORAGE
+  # ============================================================
 
   AllocatedStorage:
     Type: Number
@@ -36,11 +68,17 @@ Parameters:
     MinValue: 20
 
 
+# ==============================================================
+# RESOURCES
+# ==============================================================
+
 Resources:
+
 
   # ============================================================
   # RDS SUBNET GROUP
-  # Uses BOTH private subnets created by Network Stack
+  #
+  # Uses BOTH private subnets created by Network Stack.
   # ============================================================
 
   DBSubnetGroup:
@@ -77,22 +115,63 @@ Resources:
 
     Properties:
 
+      # --------------------------------------------------------
+      # INSTANCE IDENTIFIER
+      # --------------------------------------------------------
+
       DBInstanceIdentifier:
         !Sub CloudMart-${Environment}-mysql
 
+
+      # --------------------------------------------------------
+      # ENGINE
+      # --------------------------------------------------------
+
       Engine: mysql
+
+
+      # --------------------------------------------------------
+      # DATABASE NAME
+      # --------------------------------------------------------
 
       DBName:
         !Ref DBName
 
+
+      # --------------------------------------------------------
+      # MASTER USERNAME
+      # --------------------------------------------------------
+
       MasterUsername:
         !Ref DBUsername
+
+
+      # --------------------------------------------------------
+      # MASTER PASSWORD
+      #
+      # Password comes from SSM Parameter Store.
+      #
+      # IMPORTANT:
+      # ManageMasterUserPassword is NOT enabled.
+      # Therefore RDS does not generate/manage a
+      # Secrets Manager password.
+      # --------------------------------------------------------
 
       MasterUserPassword:
         !Sub '{{resolve:ssm:${DBPasswordParameterName}}}'
 
+
+      # --------------------------------------------------------
+      # RDS INSTANCE CLASS
+      # --------------------------------------------------------
+
       DBInstanceClass:
         !Ref DBInstanceClass
+
+
+      # --------------------------------------------------------
+      # STORAGE
+      # --------------------------------------------------------
 
       AllocatedStorage:
         !Ref AllocatedStorage
@@ -101,9 +180,19 @@ Resources:
 
       StorageEncrypted: true
 
+
+      # --------------------------------------------------------
+      # NETWORK
+      # --------------------------------------------------------
+
       PubliclyAccessible: false
 
       MultiAZ: false
+
+
+      # --------------------------------------------------------
+      # BACKUP
+      # --------------------------------------------------------
 
       BackupRetentionPeriod: 0
 
@@ -111,13 +200,28 @@ Resources:
 
       CopyTagsToSnapshot: true
 
+
+      # --------------------------------------------------------
+      # SUBNET GROUP
+      # --------------------------------------------------------
+
       DBSubnetGroupName:
         !Ref DBSubnetGroup
+
+
+      # --------------------------------------------------------
+      # SECURITY GROUP
+      # --------------------------------------------------------
 
       VPCSecurityGroups:
 
         - Fn::ImportValue:
             Fn::Sub: CloudMart-${Environment}-RDSSecurityGroupId
+
+
+      # --------------------------------------------------------
+      # TAGS
+      # --------------------------------------------------------
 
       Tags:
 
@@ -134,8 +238,10 @@ Resources:
   # Used by GitHub Actions to store Lambda ZIP files.
   #
   # Example:
+  #
   # s3://cloudmart-${Environment}-lambda-artifacts-ACCOUNT_ID/
   #     product/product.zip
+  #
   # ============================================================
 
   LambdaArtifactBucket:
@@ -149,8 +255,9 @@ Resources:
       BucketName:
         !Sub cloudmart-${Environment}-lambda-artifacts-${AWS::AccountId}
 
+
       # --------------------------------------------------------
-      # Block public access
+      # BLOCK PUBLIC ACCESS
       # --------------------------------------------------------
 
       PublicAccessBlockConfiguration:
@@ -160,15 +267,17 @@ Resources:
         IgnorePublicAcls: true
         RestrictPublicBuckets: true
 
+
       # --------------------------------------------------------
-      # Versioning
+      # VERSIONING
       # --------------------------------------------------------
 
       VersioningConfiguration:
         Status: Enabled
 
+
       # --------------------------------------------------------
-      # Server-side encryption
+      # SERVER-SIDE ENCRYPTION
       # --------------------------------------------------------
 
       BucketEncryption:
@@ -179,8 +288,9 @@ Resources:
 
               SSEAlgorithm: AES256
 
+
       # --------------------------------------------------------
-      # Tags
+      # TAGS
       # --------------------------------------------------------
 
       Tags:
@@ -193,7 +303,17 @@ Resources:
 
 
   # ============================================================
-  # SSM PARAMETERS
+  # SSM DATABASE PARAMETERS
+  #
+  # These four values are automatically obtained from RDS.
+  #
+  # Password is intentionally NOT created here.
+  # The password parameter is created/maintained separately.
+  # ============================================================
+
+
+  # ============================================================
+  # DATABASE HOST
   # ============================================================
 
   DBHostParameter:
@@ -212,6 +332,10 @@ Resources:
       Description: CloudMart RDS MySQL endpoint
 
 
+  # ============================================================
+  # DATABASE PORT
+  # ============================================================
+
   DBPortParameter:
     Type: AWS::SSM::Parameter
 
@@ -227,6 +351,10 @@ Resources:
 
       Description: CloudMart RDS MySQL port
 
+
+  # ============================================================
+  # DATABASE NAME
+  # ============================================================
 
   DBNameParameter:
     Type: AWS::SSM::Parameter
@@ -244,6 +372,10 @@ Resources:
       Description: CloudMart database name
 
 
+  # ============================================================
+  # DATABASE USERNAME
+  # ============================================================
+
   DBUsernameParameter:
     Type: AWS::SSM::Parameter
 
@@ -260,7 +392,12 @@ Resources:
       Description: CloudMart RDS MySQL master username
 
 
+# ==============================================================
+# OUTPUTS
+# ==============================================================
+
 Outputs:
+
 
   # ============================================================
   # RDS OUTPUTS

@@ -35,8 +35,14 @@ permissions:
 # ============================================================
 
 env:
-  # AWS region is supplied by the GitHub Repository Variable AWS_REGION.
+
+  # AWS region comes from GitHub Repository Variable.
+  #
+  # Example:
+  # AWS_REGION = ap-south-1
+  #
   AWS_REGION: ${{ vars.AWS_REGION }}
+
   ENVIRONMENT: dev
 
 
@@ -73,7 +79,7 @@ jobs:
           }
 
           test -n "${ENVIRONMENT}" || {
-            echo "ERROR: GitHub Repository Variable ENVIRONMENT is not set."
+            echo "ERROR: ENVIRONMENT is not configured."
             exit 1
           }
 
@@ -217,30 +223,46 @@ jobs:
             --region "${AWS_REGION}"
 
 
-      - name: Verify or create DB password SSM parameter
+      # ========================================================
+      # VERIFY DB PASSWORD SSM PARAMETER
+      #
+      # IMPORTANT:
+      # We do NOT create a fake password.
+      #
+      # The real parameter must be created manually in SSM
+      # Parameter Store before the Data Stack is deployed.
+      # ========================================================
+
+      - name: Verify DB password SSM parameter
         shell: bash
         run: |
           set -e
 
           PARAMETER="/cloudmart/${ENVIRONMENT}/db/password"
 
+          echo "Checking SSM parameter: ${PARAMETER}"
+
           if ! aws ssm get-parameter \
               --name "${PARAMETER}" \
               --region "${AWS_REGION}" >/dev/null 2>&1; then
 
-            echo "Creating DB password SSM path as a String parameter."
+            echo "ERROR: ${PARAMETER} does not exist."
+            echo ""
+            echo "Create this parameter manually in AWS Systems Manager Parameter Store."
+            echo ""
+            echo "Name:"
+            echo "  ${PARAMETER}"
+            echo ""
+            echo "Type:"
+            echo "  String"
+            echo ""
+            echo "Value:"
+            echo "  Your actual RDS master password"
+            echo ""
 
-            aws ssm put-parameter \
-              --name "${PARAMETER}" \
-              --type String \
-              --value "CHANGE_ME_BEFORE_DEPLOY" \
-              --description "CloudMart RDS MySQL master password. Replace this placeholder manually before deploying the Data Stack." \
-              --region "${AWS_REGION}"
-
-            echo "Created: ${PARAMETER}"
-            echo "Add the real DB password manually in SSM Parameter Store and rerun the workflow."
             exit 1
           fi
+
 
           TYPE=$(aws ssm get-parameter \
             --name "${PARAMETER}" \
@@ -248,25 +270,39 @@ jobs:
             --query "Parameter.Type" \
             --output text)
 
+
+          if [ "${TYPE}" != "String" ]; then
+
+            echo "ERROR: ${PARAMETER} must be an SSM String parameter."
+
+            exit 1
+          fi
+
+
           VALUE=$(aws ssm get-parameter \
             --name "${PARAMETER}" \
             --region "${AWS_REGION}" \
             --query "Parameter.Value" \
             --output text)
 
-          if [ "${TYPE}" != "String" ]; then
-            echo "ERROR: ${PARAMETER} must be a String parameter."
+
+          if [ -z "${VALUE}" ]; then
+
+            echo "ERROR: ${PARAMETER} has an empty value."
+            echo "Enter the actual RDS master password in SSM Parameter Store."
+
             exit 1
           fi
 
-          if [ -z "${VALUE}" ] || [ "${VALUE}" = "CHANGE_ME_BEFORE_DEPLOY" ]; then
-            echo "ERROR: ${PARAMETER} does not contain the real DB password yet."
-            echo "Add the password manually in SSM Parameter Store and rerun the workflow."
-            exit 1
-          fi
 
-          echo "DB password SSM parameter exists and is a String."
+          echo "DB password SSM parameter exists."
+          echo "Parameter type: ${TYPE}"
+          echo "Password value is not displayed."
 
+
+      # ========================================================
+      # DEPLOY DATA STACK
+      # ========================================================
 
       - name: Deploy Data Stack
         run: |
@@ -284,9 +320,18 @@ jobs:
             --no-fail-on-empty-changeset
 
 
+      # ========================================================
+      # VERIFY DATABASE SSM PARAMETERS
+      # ========================================================
+
       - name: Verify database SSM parameters are String
+        shell: bash
         run: |
+
           for PARAMETER in \
+            "/cloudmart/${ENVIRONMENT}/db/host" \
+            "/cloudmart/${ENVIRONMENT}/db/port" \
+            "/cloudmart/${ENVIRONMENT}/db/name" \
             "/cloudmart/${ENVIRONMENT}/db/username" \
             "/cloudmart/${ENVIRONMENT}/db/password"; do
 
@@ -299,9 +344,12 @@ jobs:
             echo "${PARAMETER}: ${TYPE}"
 
             if [ "${TYPE}" != "String" ]; then
+
               echo "ERROR: ${PARAMETER} is not an SSM String parameter."
+
               exit 1
             fi
+
           done
 
 
@@ -472,6 +520,7 @@ jobs:
               --region "${AWS_REGION}" \
               --query "Parameter.Name" \
               --output text
+
           done
 
 
@@ -757,67 +806,81 @@ jobs:
             --region "${AWS_REGION}"
 
 
-      - name: Verify or create notification email SSM parameters
+      # ========================================================
+      # ONE EMAIL SSM PARAMETER
+      #
+      # All SNS topics use the same email parameter.
+      # ========================================================
+
+      - name: Verify notification email SSM parameter
         shell: bash
         run: |
           set -e
 
-          PARAMETERS=(
-            "/cloudmart/${ENVIRONMENT}/notifications/email"
-          )
+          PARAMETER="/cloudmart/${ENVIRONMENT}/notifications/email"
 
-          CREATED_PLACEHOLDER=false
+          echo "Checking notification email parameter:"
+          echo "${PARAMETER}"
 
-          for PARAMETER in "${PARAMETERS[@]}"; do
-
-            if ! aws ssm get-parameter \
-                --name "${PARAMETER}" \
-                --region "${AWS_REGION}" >/dev/null 2>&1; then
-
-              echo "Creating notification email SSM path: ${PARAMETER}"
-
-              aws ssm put-parameter \
-                --name "${PARAMETER}" \
-                --type String \
-                --value "CHANGE_ME@example.com" \
-                --description "CloudMart SNS notification email used by all notification topics. Replace this placeholder manually before deploying notification stacks." \
-                --region "${AWS_REGION}"
-
-              CREATED_PLACEHOLDER=true
-              continue
-            fi
-
-            TYPE=$(aws ssm get-parameter \
+          if ! aws ssm get-parameter \
               --name "${PARAMETER}" \
-              --region "${AWS_REGION}" \
-              --query "Parameter.Type" \
-              --output text)
+              --region "${AWS_REGION}" >/dev/null 2>&1; then
 
-            VALUE=$(aws ssm get-parameter \
-              --name "${PARAMETER}" \
-              --region "${AWS_REGION}" \
-              --query "Parameter.Value" \
-              --output text)
+            echo "ERROR: ${PARAMETER} does not exist."
+            echo ""
+            echo "Create it manually in SSM Parameter Store."
+            echo ""
+            echo "Name:"
+            echo "  ${PARAMETER}"
+            echo ""
+            echo "Type:"
+            echo "  String"
+            echo ""
+            echo "Value:"
+            echo "  Your notification email address"
+            echo ""
 
-            if [ "${TYPE}" != "String" ]; then
-              echo "ERROR: ${PARAMETER} must be an SSM String parameter."
-              exit 1
-            fi
-
-            if [ -z "${VALUE}" ] || [ "${VALUE}" = "CHANGE_ME@example.com" ]; then
-              echo "ERROR: ${PARAMETER} still contains the placeholder email."
-              exit 1
-            fi
-
-            echo "Verified notification parameter: ${PARAMETER}"
-          done
-
-          if [ "${CREATED_PLACEHOLDER}" = "true" ]; then
-            echo "One or more notification email SSM paths were created with placeholders."
-            echo "Replace all placeholders with the real email addresses in SSM Parameter Store, then rerun the workflow."
             exit 1
           fi
 
+
+          TYPE=$(aws ssm get-parameter \
+            --name "${PARAMETER}" \
+            --region "${AWS_REGION}" \
+            --query "Parameter.Type" \
+            --output text)
+
+
+          if [ "${TYPE}" != "String" ]; then
+
+            echo "ERROR: ${PARAMETER} must be an SSM String parameter."
+
+            exit 1
+          fi
+
+
+          VALUE=$(aws ssm get-parameter \
+            --name "${PARAMETER}" \
+            --region "${AWS_REGION}" \
+            --query "Parameter.Value" \
+            --output text)
+
+
+          if [ -z "${VALUE}" ]; then
+
+            echo "ERROR: Notification email parameter is empty."
+
+            exit 1
+          fi
+
+
+          echo "Notification email SSM parameter verified."
+          echo "Email value is not displayed."
+
+
+      # ========================================================
+      # DEPLOY API STACK
+      # ========================================================
 
       - name: Deploy API Stack
         run: |
@@ -864,9 +927,11 @@ jobs:
             --publish \
             --region "${AWS_REGION}"
 
+
           aws lambda wait function-updated \
             --function-name "CloudMart-${ENVIRONMENT}-schema" \
             --region "${AWS_REGION}"
+
 
           echo "Schema Lambda code updated successfully."
 
@@ -890,11 +955,16 @@ jobs:
             --output text \
             schema-response.json)
 
+
           cat schema-response.json
 
+
           if [ "${FUNCTION_ERROR}" != "None" ] && [ "${FUNCTION_ERROR}" != "null" ]; then
+
             echo "Schema Lambda returned a function error: ${FUNCTION_ERROR}"
+
             exit 1
+
           fi
 
 
@@ -939,6 +1009,12 @@ jobs:
             --output text
 
 
+      # ========================================================
+      # DEPLOY EVENTBRIDGE + FOUR SNS TOPICS
+      #
+      # All four topics receive the SAME email parameter.
+      # ========================================================
+
       - name: Deploy EventBridge and SNS stack
         run: |
           aws cloudformation deploy \
@@ -958,6 +1034,15 @@ jobs:
 
           aws cloudformation describe-stacks \
             --stack-name "cloudmart-${ENVIRONMENT}-network" \
+            --region "${AWS_REGION}" \
+            --query "Stacks[0].Outputs" \
+            --output table
+
+
+          echo "================ DATA OUTPUTS ===================="
+
+          aws cloudformation describe-stacks \
+            --stack-name "cloudmart-${ENVIRONMENT}-data" \
             --region "${AWS_REGION}" \
             --query "Stacks[0].Outputs" \
             --output table
