@@ -35,7 +35,8 @@ permissions:
 # ============================================================
 
 env:
-  AWS_REGION: ap-south-1
+  # AWS region is supplied by the GitHub Repository Variable AWS_REGION.
+  AWS_REGION: ${{ vars.AWS_REGION }}
   ENVIRONMENT: dev
 
 
@@ -61,6 +62,25 @@ jobs:
         uses: actions/checkout@v4
 
 
+      - name: Validate deployment configuration
+        shell: bash
+        run: |
+          set -e
+
+          test -n "${AWS_REGION}" || {
+            echo "ERROR: GitHub Repository Variable AWS_REGION is not set."
+            exit 1
+          }
+
+          test -n "${ENVIRONMENT}" || {
+            echo "ERROR: GitHub Repository Variable ENVIRONMENT is not set."
+            exit 1
+          }
+
+          echo "Deployment region: ${AWS_REGION}"
+          echo "Deployment environment: ${ENVIRONMENT}"
+
+
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -83,19 +103,22 @@ jobs:
         run: |
           set -e
 
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+          if [ -n "${{ vars.OPERATIONS_CIDR }}" ]; then
+
+            CIDR="${{ vars.OPERATIONS_CIDR }}"
+            echo "Using GitHub Repository Variable OPERATIONS_CIDR."
+
+          elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
 
             CIDR="${{ inputs.operations_cidr }}"
+            echo "Using workflow_dispatch operations CIDR."
 
           else
 
-            echo "Push deployment detected."
-
-            echo "For automatic push deployments, the current GitHub Actions"
-            echo "runner public IP will be used."
+            echo "No OPERATIONS_CIDR repository variable is set."
+            echo "Using the GitHub Actions runner public IP for this deployment."
 
             PUBLIC_IP=$(curl -fsS https://checkip.amazonaws.com)
-
             CIDR="${PUBLIC_IP}/32"
 
           fi
@@ -194,6 +217,57 @@ jobs:
             --region "${AWS_REGION}"
 
 
+      - name: Verify or create DB password SSM parameter
+        shell: bash
+        run: |
+          set -e
+
+          PARAMETER="/cloudmart/${ENVIRONMENT}/db/password"
+
+          if ! aws ssm get-parameter \
+              --name "${PARAMETER}" \
+              --region "${AWS_REGION}" >/dev/null 2>&1; then
+
+            echo "Creating DB password SSM path as a String parameter."
+
+            aws ssm put-parameter \
+              --name "${PARAMETER}" \
+              --type String \
+              --value "CHANGE_ME_BEFORE_DEPLOY" \
+              --description "CloudMart RDS MySQL master password. Replace this placeholder manually before deploying the Data Stack." \
+              --region "${AWS_REGION}"
+
+            echo "Created: ${PARAMETER}"
+            echo "Add the real DB password manually in SSM Parameter Store and rerun the workflow."
+            exit 1
+          fi
+
+          TYPE=$(aws ssm get-parameter \
+            --name "${PARAMETER}" \
+            --region "${AWS_REGION}" \
+            --query "Parameter.Type" \
+            --output text)
+
+          VALUE=$(aws ssm get-parameter \
+            --name "${PARAMETER}" \
+            --region "${AWS_REGION}" \
+            --query "Parameter.Value" \
+            --output text)
+
+          if [ "${TYPE}" != "String" ]; then
+            echo "ERROR: ${PARAMETER} must be a String parameter."
+            exit 1
+          fi
+
+          if [ -z "${VALUE}" ] || [ "${VALUE}" = "CHANGE_ME_BEFORE_DEPLOY" ]; then
+            echo "ERROR: ${PARAMETER} does not contain the real DB password yet."
+            echo "Add the password manually in SSM Parameter Store and rerun the workflow."
+            exit 1
+          fi
+
+          echo "DB password SSM parameter exists and is a String."
+
+
       - name: Deploy Data Stack
         run: |
           aws cloudformation deploy \
@@ -203,6 +277,7 @@ jobs:
               Environment="${ENVIRONMENT}" \
               DBName="cloudmart" \
               DBUsername="cloudmartadmin" \
+              DBPasswordParameterName="/cloudmart/${ENVIRONMENT}/db/password" \
               DBInstanceClass="db.t3.micro" \
               AllocatedStorage="20" \
             --region "${AWS_REGION}" \
@@ -682,6 +757,71 @@ jobs:
             --region "${AWS_REGION}"
 
 
+      - name: Verify or create notification email SSM parameters
+        shell: bash
+        run: |
+          set -e
+
+          PARAMETERS=(
+            "/cloudmart/${ENVIRONMENT}/notifications/low-stock-email"
+            "/cloudmart/${ENVIRONMENT}/notifications/order-confirmed-email"
+            "/cloudmart/${ENVIRONMENT}/notifications/order-failed-email"
+            "/cloudmart/${ENVIRONMENT}/notifications/order-cancelled-email"
+          )
+
+          CREATED_PLACEHOLDER=false
+
+          for PARAMETER in "${PARAMETERS[@]}"; do
+
+            if ! aws ssm get-parameter \
+                --name "${PARAMETER}" \
+                --region "${AWS_REGION}" >/dev/null 2>&1; then
+
+              echo "Creating notification email SSM path: ${PARAMETER}"
+
+              aws ssm put-parameter \
+                --name "${PARAMETER}" \
+                --type String \
+                --value "CHANGE_ME@example.com" \
+                --description "CloudMart SNS notification email. Replace this placeholder manually before deploying notification stacks." \
+                --region "${AWS_REGION}"
+
+              CREATED_PLACEHOLDER=true
+              continue
+            fi
+
+            TYPE=$(aws ssm get-parameter \
+              --name "${PARAMETER}" \
+              --region "${AWS_REGION}" \
+              --query "Parameter.Type" \
+              --output text)
+
+            VALUE=$(aws ssm get-parameter \
+              --name "${PARAMETER}" \
+              --region "${AWS_REGION}" \
+              --query "Parameter.Value" \
+              --output text)
+
+            if [ "${TYPE}" != "String" ]; then
+              echo "ERROR: ${PARAMETER} must be an SSM String parameter."
+              exit 1
+            fi
+
+            if [ -z "${VALUE}" ] || [ "${VALUE}" = "CHANGE_ME@example.com" ]; then
+              echo "ERROR: ${PARAMETER} still contains the placeholder email."
+              exit 1
+            fi
+
+            echo "Verified notification parameter: ${PARAMETER}"
+          done
+
+          if [ "${CREATED_PLACEHOLDER}" = "true" ]; then
+            echo "One or more notification email SSM paths were created with placeholders."
+            echo "Replace all placeholders with the real email addresses in SSM Parameter Store, then rerun the workflow."
+            exit 1
+          fi
+
+
       - name: Deploy API Stack
         run: |
           aws cloudformation deploy \
@@ -707,6 +847,7 @@ jobs:
               DBPasswordParameter="/cloudmart/${ENVIRONMENT}/db/password" \
               AuthorizerCacheTTL="0" \
               EventBusName="cloudmart-${ENVIRONMENT}-event-bus" \
+              LowStockEmailParameter="/cloudmart/${ENVIRONMENT}/notifications/low-stock-email" \
             --no-fail-on-empty-changeset
 
 
@@ -808,6 +949,9 @@ jobs:
             --stack-name "CloudMart-${ENVIRONMENT}-eventbridge" \
             --parameter-overrides \
               Environment="${ENVIRONMENT}" \
+              OrderConfirmedEmailParameter="/cloudmart/${ENVIRONMENT}/notifications/order-confirmed-email" \
+              OrderFailedEmailParameter="/cloudmart/${ENVIRONMENT}/notifications/order-failed-email" \
+              OrderCancelledEmailParameter="/cloudmart/${ENVIRONMENT}/notifications/order-cancelled-email" \
             --region "${AWS_REGION}" \
             --no-fail-on-empty-changeset
 

@@ -22,20 +22,17 @@ Parameters:
   # LOW STOCK EMAIL
   # ============================================================
 
-  LowStockEmail:
-    Type: String
-    Default: siddeshravula8008@gmail.com
-    Description: Email address for low-stock notifications. Replace the default with the real notification email.
+  OrderConfirmedEmailParameter:
+    Type: AWS::SSM::Parameter::Value<String>
+    Description: SSM String parameter containing the email for order-confirmed notifications.
 
+  OrderFailedEmailParameter:
+    Type: AWS::SSM::Parameter::Value<String>
+    Description: SSM String parameter containing the email for order-failed notifications.
 
-  # ============================================================
-  # ORDER NOTIFICATION EMAIL
-  # ============================================================
-
-  OrderNotificationEmail:
-    Type: String
-    Default: siddeshravula8008@gmail.com
-    Description: Email address for order notifications. Replace the default with the real notification email.
+  OrderCancelledEmailParameter:
+    Type: AWS::SSM::Parameter::Value<String>
+    Description: SSM String parameter containing the email for order-cancelled notifications.
 
 
 # ==============================================================
@@ -145,81 +142,99 @@ Resources:
 
 
   # ============================================================
-  # ORDER NOTIFICATION SNS TOPIC
+  # ORDER CONFIRMED SNS TOPIC
   # ============================================================
 
-  OrderNotificationTopic:
+  OrderConfirmedTopic:
     Type: AWS::SNS::Topic
 
     Properties:
-
       TopicName:
-        !Sub cloudmart-${Environment}-order-notifications
-
+        !Sub cloudmart-${Environment}-order-confirmed
       Tags:
-
         - Key: Project
           Value: CloudMart
-
         - Key: Environment
           Value: !Ref Environment
 
 
-  # ============================================================
-  # ORDER NOTIFICATION EMAIL SUBSCRIPTION
-  # ============================================================
-
-  OrderNotificationEmailSubscription:
+  OrderConfirmedEmailSubscription:
     Type: AWS::SNS::Subscription
 
     Properties:
-
       TopicArn:
-        !Ref OrderNotificationTopic
-
-      Protocol:
-        email
-
+        !Ref OrderConfirmedTopic
+      Protocol: email
       Endpoint:
-        !Ref OrderNotificationEmail
+        !Ref OrderConfirmedEmailParameter
 
 
-  # ============================================================
-  # ORDER SNS TOPIC POLICY
-  # ============================================================
-
-  OrderNotificationSNSTopicPolicy:
+  OrderConfirmedSNSTopicPolicy:
     Type: AWS::SNS::TopicPolicy
 
     Properties:
-
       Topics:
-
-        - !Ref OrderNotificationTopic
-
+        - !Ref OrderConfirmedTopic
       PolicyDocument:
-
-        Version:
-          '2012-10-17'
-
+        Version: '2012-10-17'
         Statement:
-
-          - Sid:
-              AllowEventBridgePublish
-
-            Effect:
-              Allow
-
+          - Sid: AllowEventBridgePublish
+            Effect: Allow
             Principal:
-
               Service:
                 - events.amazonaws.com
-
             Action:
               - sns:Publish
-
             Resource:
-              !Ref OrderNotificationTopic
+              !Ref OrderConfirmedTopic
+
+
+  # ============================================================
+  # ORDER FAILED SNS TOPIC
+  # ============================================================
+
+  OrderFailedTopic:
+    Type: AWS::SNS::Topic
+
+    Properties:
+      TopicName:
+        !Sub cloudmart-${Environment}-order-failed
+      Tags:
+        - Key: Project
+          Value: CloudMart
+        - Key: Environment
+          Value: !Ref Environment
+
+
+  OrderFailedEmailSubscription:
+    Type: AWS::SNS::Subscription
+
+    Properties:
+      TopicArn:
+        !Ref OrderFailedTopic
+      Protocol: email
+      Endpoint:
+        !Ref OrderFailedEmailParameter
+
+
+  OrderFailedSNSTopicPolicy:
+    Type: AWS::SNS::TopicPolicy
+
+    Properties:
+      Topics:
+        - !Ref OrderFailedTopic
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: AllowEventBridgePublish
+            Effect: Allow
+            Principal:
+              Service:
+                - events.amazonaws.com
+            Action:
+              - sns:Publish
+            Resource:
+              !Ref OrderFailedTopic
 
 
   # ============================================================
@@ -254,7 +269,7 @@ Resources:
             OrderConfirmedSNSTarget
 
           Arn:
-            !Ref OrderNotificationTopic
+            !Ref OrderConfirmedTopic
 
           InputTransformer:
             InputPathsMap:
@@ -299,7 +314,7 @@ Resources:
             OrderFailedSNSTarget
 
           Arn:
-            !Ref OrderNotificationTopic
+            !Ref OrderFailedTopic
 
           InputTransformer:
             InputPathsMap:
@@ -347,7 +362,7 @@ Resources:
         email
 
       Endpoint:
-        !Ref OrderNotificationEmail
+        !Ref OrderCancelledEmailParameter
 
 
   # ============================================================
@@ -524,16 +539,29 @@ Outputs:
   # ORDER NOTIFICATION SNS TOPIC ARN
   # ============================================================
 
-  OrderNotificationTopicArn:
+  OrderConfirmedTopicArn:
     Description:
-      SNS topic ARN for order confirmation notifications
+      SNS topic ARN for order-confirmed notifications
 
     Value:
-      !Ref OrderNotificationTopic
+      !Ref OrderConfirmedTopic
 
     Export:
       Name:
-        !Sub CloudMart-${Environment}-OrderNotificationTopicArn
+        !Sub CloudMart-${Environment}-OrderConfirmedTopicArn
+
+
+  OrderFailedTopicArn:
+    Description:
+      SNS topic ARN for order-failed notifications
+
+    Value:
+      !Ref OrderFailedTopic
+
+    Export:
+      Name:
+        !Sub CloudMart-${Environment}-OrderFailedTopicArn
+
 
   OrderCancellationTopicArn:
     Description:

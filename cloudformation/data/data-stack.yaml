@@ -22,13 +22,9 @@ Parameters:
     NoEcho: true
     AllowedPattern: '^[a-zA-Z][a-zA-Z0-9_]*$'
 
-  DBPassword:
-    Type: String
-    NoEcho: true
-    Default: CloudMartDb2026!
-    MinLength: 8
-    MaxLength: 41
-    Description: RDS master password. Stored in SSM Parameter Store as a String by this stack.
+  DBPasswordParameterName:
+    Type: AWS::SSM::Parameter::Name
+    Description: Existing SSM String parameter containing the RDS master password.
 
   DBInstanceClass:
     Type: String
@@ -93,7 +89,7 @@ Resources:
         !Ref DBUsername
 
       MasterUserPassword:
-        !Ref DBPassword
+        !Sub '{{resolve:ssm:${DBPasswordParameterName}}}'
 
       DBInstanceClass:
         !Ref DBInstanceClass
@@ -262,22 +258,6 @@ Resources:
         !Ref DBUsername
 
       Description: CloudMart RDS MySQL master username
-
-
-  DBPasswordParameter:
-    Type: AWS::SSM::Parameter
-
-    Properties:
-
-      Name:
-        !Sub /cloudmart/${Environment}/db/password
-
-      Type: String
-
-      Value:
-        !Ref DBPassword
-
-      Description: CloudMart RDS MySQL master password
 
 
 Outputs:

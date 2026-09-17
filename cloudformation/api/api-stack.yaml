@@ -146,10 +146,9 @@ Parameters:
   # SNS
   # ============================================================
 
-  LowStockEmail:
-    Type: String
-    Default: siddeshravula8008@gmail.com
-    Description: Email address for low-stock notifications. Replace the default with the real notification email.
+  LowStockEmailParameter:
+    Type: AWS::SSM::Parameter::Value<String>
+    Description: SSM String parameter containing the email for low-stock notifications.
 
 
 # ==============================================================
@@ -196,7 +195,7 @@ Resources:
         email
 
       Endpoint:
-        !Ref LowStockEmail
+        !Ref LowStockEmailParameter
 
 
   # ============================================================
