@@ -130,28 +130,34 @@ def get_foreign_keys(
     table_name,
     referenced_table=None
 ):
-    """Return foreign-key constraints for a table."""
 
     query = """
         SELECT DISTINCT
             kcu.CONSTRAINT_NAME AS constraint_name,
             kcu.REFERENCED_TABLE_NAME AS referenced_table_name,
             kcu.REFERENCED_COLUMN_NAME AS referenced_column_name
-        FROM information_schema.KEY_COLUMN_USAGE AS kcu
-        WHERE kcu.TABLE_SCHEMA = DATABASE()
-          AND kcu.TABLE_NAME = %s
-          AND kcu.REFERENCED_TABLE_NAME IS NOT NULL
+        FROM information_schema.key_column_usage AS kcu
+        WHERE table_schema = DATABASE()
+          AND table_name = %s
+          AND referenced_table_name IS NOT NULL
     """
 
     parameters = [table_name]
 
     if referenced_table:
-        query += """
-          AND kcu.REFERENCED_TABLE_NAME = %s
-        """
-        parameters.append(referenced_table)
 
-    cursor.execute(query, parameters)
+        query += """
+          AND referenced_table_name = %s
+        """
+
+        parameters.append(
+            referenced_table
+        )
+
+    cursor.execute(
+        query,
+        parameters
+    )
 
     return cursor.fetchall()
 
@@ -161,7 +167,6 @@ def drop_foreign_keys_referencing(
     table_name,
     referenced_table
 ):
-    """Drop foreign keys on table_name referencing referenced_table."""
 
     foreign_keys = get_foreign_keys(
         cursor,
@@ -170,6 +175,7 @@ def drop_foreign_keys_referencing(
     )
 
     for foreign_key in foreign_keys:
+
         constraint_name = (
             foreign_key.get("constraint_name")
             or foreign_key.get("CONSTRAINT_NAME")
@@ -177,8 +183,8 @@ def drop_foreign_keys_referencing(
 
         if not constraint_name:
             raise RuntimeError(
-                f"Could not determine foreign-key constraint name for "
-                f"{table_name} -> {referenced_table}"
+                f"Could not determine foreign-key constraint name "
+                f"for {table_name} -> {referenced_table}"
             )
 
         cursor.execute(
@@ -671,6 +677,22 @@ def lambda_handler(event, context):
                 COLLATE=utf8mb4_unicode_ci
                 """
             )
+
+            # Existing deployments may have an older order_status table
+            # without the description column. CREATE TABLE IF NOT EXISTS
+            # does not modify an existing table, so add the column when needed.
+            if not column_exists(
+                cursor,
+                "order_status",
+                "description"
+            ):
+                cursor.execute(
+                    """
+                    ALTER TABLE order_status
+                    ADD COLUMN description VARCHAR(255) NULL
+                    AFTER status_name
+                    """
+                )
 
             # Make status_id consistently INT.
 
