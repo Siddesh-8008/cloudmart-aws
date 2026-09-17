@@ -560,6 +560,25 @@ jobs:
             --key order-processor/order-processor.zip
 
 
+      - name: Force update Schema Lambda code
+        shell: bash
+        run: |
+          set -e
+
+          aws lambda update-function-code \
+            --function-name "CloudMart-${ENVIRONMENT}-schema" \
+            --s3-bucket "${{ steps.bucket.outputs.bucket }}" \
+            --s3-key "schema/schema.zip" \
+            --publish \
+            --region "${AWS_REGION}"
+
+          aws lambda wait function-updated \
+            --function-name "CloudMart-${ENVIRONMENT}-schema" \
+            --region "${AWS_REGION}"
+
+          echo "Schema Lambda code updated successfully."
+
+
       - name: Validate API CloudFormation template
         run: |
           aws cloudformation validate-template \

@@ -130,34 +130,28 @@ def get_foreign_keys(
     table_name,
     referenced_table=None
 ):
+    """Return foreign-key constraints for a table."""
 
     query = """
         SELECT DISTINCT
-            constraint_name,
-            referenced_table_name,
-            referenced_column_name
-        FROM information_schema.key_column_usage
-        WHERE table_schema = DATABASE()
-          AND table_name = %s
-          AND referenced_table_name IS NOT NULL
+            kcu.CONSTRAINT_NAME AS constraint_name,
+            kcu.REFERENCED_TABLE_NAME AS referenced_table_name,
+            kcu.REFERENCED_COLUMN_NAME AS referenced_column_name
+        FROM information_schema.KEY_COLUMN_USAGE AS kcu
+        WHERE kcu.TABLE_SCHEMA = DATABASE()
+          AND kcu.TABLE_NAME = %s
+          AND kcu.REFERENCED_TABLE_NAME IS NOT NULL
     """
 
     parameters = [table_name]
 
     if referenced_table:
-
         query += """
-          AND referenced_table_name = %s
+          AND kcu.REFERENCED_TABLE_NAME = %s
         """
+        parameters.append(referenced_table)
 
-        parameters.append(
-            referenced_table
-        )
-
-    cursor.execute(
-        query,
-        parameters
-    )
+    cursor.execute(query, parameters)
 
     return cursor.fetchall()
 
@@ -167,6 +161,7 @@ def drop_foreign_keys_referencing(
     table_name,
     referenced_table
 ):
+    """Drop foreign keys on table_name referencing referenced_table."""
 
     foreign_keys = get_foreign_keys(
         cursor,
@@ -175,10 +170,16 @@ def drop_foreign_keys_referencing(
     )
 
     for foreign_key in foreign_keys:
-
         constraint_name = (
-            foreign_key["constraint_name"]
+            foreign_key.get("constraint_name")
+            or foreign_key.get("CONSTRAINT_NAME")
         )
+
+        if not constraint_name:
+            raise RuntimeError(
+                f"Could not determine foreign-key constraint name for "
+                f"{table_name} -> {referenced_table}"
+            )
 
         cursor.execute(
             f"""
