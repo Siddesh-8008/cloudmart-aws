@@ -752,3 +752,4 @@ Outputs:
   RDSClientPublicIp:
     Description: Public IPv4 address of the RDS client EC2 instance
     Value: !GetAtt RDSClientEC2.PublicIp
+    #
