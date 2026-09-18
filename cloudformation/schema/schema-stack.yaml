@@ -9,8 +9,10 @@ Parameters:
 
   Environment:
     Type: String
-    AllowedPattern: '^[a-zA-Z0-9-]+$'
-    Description: Deployment environment name used in resource and parameter names
+    Default: dev
+    AllowedValues:
+      - dev
+      - prod
 
 
   PrivateSubnetIds:
@@ -35,22 +37,27 @@ Parameters:
 
   DBHostParameter:
     Type: String
+    Default: /cloudmart/dev/db/host
 
 
   DBNameParameter:
     Type: String
+    Default: /cloudmart/dev/db/name
 
 
   DBUsernameParameter:
     Type: String
+    Default: /cloudmart/dev/db/username
 
 
   DBPasswordParameter:
     Type: String
+    Default: /cloudmart/dev/db/password
 
 
   DBPortParameter:
     Type: String
+    Default: /cloudmart/dev/db/port
 
 
 Resources:
@@ -120,3 +127,4 @@ Outputs:
     Description: Schema Lambda name
 
     Value: !Ref SchemaLambda
+    

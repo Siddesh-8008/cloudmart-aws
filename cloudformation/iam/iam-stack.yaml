@@ -97,6 +97,33 @@ Resources:
 
 
         # --------------------------------------------------------
+        # READ ADMIN AUTH TOKEN FROM SSM
+        #
+        # Admin token is stored as a normal String.
+        # No KMS decrypt permission is required.
+        #
+        # Customer token is NOT stored in SSM.
+        # Customer tokens are validated using RDS.
+        # --------------------------------------------------------
+
+        - PolicyName: AuthorizerReadAdminAuthToken
+
+          PolicyDocument:
+
+            Version: '2012-10-17'
+
+            Statement:
+
+              - Effect: Allow
+
+                Action:
+                  - ssm:GetParameter
+
+                Resource:
+                  - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/auth/admin-token'
+
+
+        # --------------------------------------------------------
         # READ DATABASE PARAMETERS FROM SSM
         #
         # Database parameters are normal String parameters.
@@ -473,3 +500,4 @@ Outputs:
     Export:
       Name:
         !Sub CloudMart-${Environment}-OrderProcessorLambdaRoleArn
+        

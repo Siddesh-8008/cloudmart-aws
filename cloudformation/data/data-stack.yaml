@@ -6,29 +6,17 @@ Description: >
 
 Parameters:
 
-  # ============================================================
-  # ENVIRONMENT
-  # ============================================================
-
   Environment:
     Type: String
-    AllowedPattern: '^[a-zA-Z0-9-]+$'
-    Description: Deployment environment name used in resource and parameter names
-
-
-  # ============================================================
-  # DATABASE NAME
-  # ============================================================
+    Default: dev
+    AllowedValues:
+      - dev
+      - prod
 
   DBName:
     Type: String
     Default: cloudmart
     AllowedPattern: '^[a-zA-Z][a-zA-Z0-9_]*$'
-
-
-  # ============================================================
-  # DATABASE USERNAME
-  # ============================================================
 
   DBUsername:
     Type: String
@@ -36,52 +24,15 @@ Parameters:
     NoEcho: true
     AllowedPattern: '^[a-zA-Z][a-zA-Z0-9_]*$'
 
-
-  # ============================================================
-  # DATABASE PASSWORD SSM PARAMETER
-  #
-  # The actual password is stored in SSM Parameter Store.
-  # The parameter must be Type: String.
-  # ============================================================
-
-  DBPasswordParameterName:
-    Type: AWS::SSM::Parameter::Name
-    Description: Existing SSM String parameter containing the RDS master password.
-
-
-  # ============================================================
-  # DATABASE PASSWORD SSM VERSION
-  #
-  # This makes CloudFormation detect a changed SSM password.
-  #
-  # Example:
-  #
-  # SSM version 1 -> old password
-  # SSM version 2 -> new password
-  #
-  # When the workflow passes version 2, CloudFormation updates
-  # the RDS master password to the value stored in version 2.
-  # ============================================================
-
-  DBPasswordParameterVersion:
-    Type: Number
-    MinValue: 1
-    Default: 1
-    Description: SSM parameter version used as the RDS master password.
-
-
-  # ============================================================
-  # RDS INSTANCE CLASS
-  # ============================================================
+  DBPassword:
+    Type: String
+    NoEcho: true
+    MinLength: 8
+    MaxLength: 41
 
   DBInstanceClass:
     Type: String
     Default: db.t3.micro
-
-
-  # ============================================================
-  # RDS STORAGE
-  # ============================================================
 
   AllocatedStorage:
     Type: Number
@@ -89,17 +40,11 @@ Parameters:
     MinValue: 20
 
 
-# ==============================================================
-# RESOURCES
-# ==============================================================
-
 Resources:
-
 
   # ============================================================
   # RDS SUBNET GROUP
-  #
-  # Uses BOTH private subnets created by Network Stack.
+  # Uses BOTH private subnets created by Network Stack
   # ============================================================
 
   DBSubnetGroup:
@@ -136,67 +81,22 @@ Resources:
 
     Properties:
 
-      # --------------------------------------------------------
-      # INSTANCE IDENTIFIER
-      # --------------------------------------------------------
-
       DBInstanceIdentifier:
         !Sub CloudMart-${Environment}-mysql
 
-
-      # --------------------------------------------------------
-      # ENGINE
-      # --------------------------------------------------------
-
       Engine: mysql
-
-
-      # --------------------------------------------------------
-      # DATABASE NAME
-      # --------------------------------------------------------
 
       DBName:
         !Ref DBName
 
-
-      # --------------------------------------------------------
-      # MASTER USERNAME
-      # --------------------------------------------------------
-
       MasterUsername:
         !Ref DBUsername
 
-
-      # --------------------------------------------------------
-      # MASTER PASSWORD
-      #
-      # Password comes from SSM Parameter Store.
-      #
-      # IMPORTANT:
-      # ManageMasterUserPassword is NOT enabled.
-      #
-      # Therefore RDS does not create or manage a
-      # Secrets Manager password.
-      #
-      # The SSM VERSION is included so that CloudFormation
-      # detects when the SSM password has changed.
-      # --------------------------------------------------------
-
       MasterUserPassword:
-        !Sub '{{resolve:ssm:${DBPasswordParameterName}:${DBPasswordParameterVersion}}}'
-
-
-      # --------------------------------------------------------
-      # RDS INSTANCE CLASS
-      # --------------------------------------------------------
+        !Ref DBPassword
 
       DBInstanceClass:
         !Ref DBInstanceClass
-
-
-      # --------------------------------------------------------
-      # STORAGE
-      # --------------------------------------------------------
 
       AllocatedStorage:
         !Ref AllocatedStorage
@@ -205,19 +105,9 @@ Resources:
 
       StorageEncrypted: true
 
-
-      # --------------------------------------------------------
-      # NETWORK
-      # --------------------------------------------------------
-
       PubliclyAccessible: false
 
       MultiAZ: false
-
-
-      # --------------------------------------------------------
-      # BACKUP
-      # --------------------------------------------------------
 
       BackupRetentionPeriod: 0
 
@@ -225,28 +115,13 @@ Resources:
 
       CopyTagsToSnapshot: true
 
-
-      # --------------------------------------------------------
-      # SUBNET GROUP
-      # --------------------------------------------------------
-
       DBSubnetGroupName:
         !Ref DBSubnetGroup
-
-
-      # --------------------------------------------------------
-      # SECURITY GROUP
-      # --------------------------------------------------------
 
       VPCSecurityGroups:
 
         - Fn::ImportValue:
             Fn::Sub: CloudMart-${Environment}-RDSSecurityGroupId
-
-
-      # --------------------------------------------------------
-      # TAGS
-      # --------------------------------------------------------
 
       Tags:
 
@@ -263,10 +138,8 @@ Resources:
   # Used by GitHub Actions to store Lambda ZIP files.
   #
   # Example:
-  #
-  # s3://cloudmart-${Environment}-lambda-artifacts-ACCOUNT_ID/
+  # s3://cloudmart-dev-lambda-artifacts-ACCOUNT_ID/
   #     product/product.zip
-  #
   # ============================================================
 
   LambdaArtifactBucket:
@@ -280,9 +153,8 @@ Resources:
       BucketName:
         !Sub cloudmart-${Environment}-lambda-artifacts-${AWS::AccountId}
 
-
       # --------------------------------------------------------
-      # BLOCK PUBLIC ACCESS
+      # Block public access
       # --------------------------------------------------------
 
       PublicAccessBlockConfiguration:
@@ -292,17 +164,15 @@ Resources:
         IgnorePublicAcls: true
         RestrictPublicBuckets: true
 
-
       # --------------------------------------------------------
-      # VERSIONING
+      # Versioning
       # --------------------------------------------------------
 
       VersioningConfiguration:
         Status: Enabled
 
-
       # --------------------------------------------------------
-      # SERVER-SIDE ENCRYPTION
+      # Server-side encryption
       # --------------------------------------------------------
 
       BucketEncryption:
@@ -313,9 +183,8 @@ Resources:
 
               SSEAlgorithm: AES256
 
-
       # --------------------------------------------------------
-      # TAGS
+      # Tags
       # --------------------------------------------------------
 
       Tags:
@@ -328,17 +197,7 @@ Resources:
 
 
   # ============================================================
-  # SSM DATABASE PARAMETERS
-  #
-  # These four values are automatically obtained from RDS.
-  #
-  # Password is intentionally NOT created here.
-  # The password parameter is created/maintained separately.
-  # ============================================================
-
-
-  # ============================================================
-  # DATABASE HOST
+  # SSM PARAMETERS
   # ============================================================
 
   DBHostParameter:
@@ -357,10 +216,6 @@ Resources:
       Description: CloudMart RDS MySQL endpoint
 
 
-  # ============================================================
-  # DATABASE PORT
-  # ============================================================
-
   DBPortParameter:
     Type: AWS::SSM::Parameter
 
@@ -376,10 +231,6 @@ Resources:
 
       Description: CloudMart RDS MySQL port
 
-
-  # ============================================================
-  # DATABASE NAME
-  # ============================================================
 
   DBNameParameter:
     Type: AWS::SSM::Parameter
@@ -397,10 +248,6 @@ Resources:
       Description: CloudMart database name
 
 
-  # ============================================================
-  # DATABASE USERNAME
-  # ============================================================
-
   DBUsernameParameter:
     Type: AWS::SSM::Parameter
 
@@ -417,12 +264,23 @@ Resources:
       Description: CloudMart RDS MySQL master username
 
 
-# ==============================================================
-# OUTPUTS
-# ==============================================================
+  DBPasswordParameter:
+    Type: AWS::SSM::Parameter
+
+    Properties:
+
+      Name:
+        !Sub /cloudmart/${Environment}/db/password
+
+      Type: String
+
+      Value:
+        !Ref DBPassword
+
+      Description: CloudMart RDS MySQL master password
+
 
 Outputs:
-
 
   # ============================================================
   # RDS OUTPUTS
@@ -485,7 +343,7 @@ Outputs:
 
 
   LambdaArtifactBucketArn:
-    Description: ARN of the S3 bucket used for Lambda artifacts
+    Description: ARN of the Lambda artifact S3 bucket
     Value:
       !GetAtt LambdaArtifactBucket.Arn
 
