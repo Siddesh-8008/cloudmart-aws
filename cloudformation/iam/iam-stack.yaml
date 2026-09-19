@@ -25,11 +25,6 @@ Parameters:
       - prod
 
 
-  DashboardEC2InstanceId:
-    Type: AWS::EC2::Instance::Id
-    Description: Existing EC2 instance used by the CloudMart operations dashboard
-    Default: i-031a315ec368edbd9
-
 
 # ==============================================================
 # RESOURCES
@@ -637,13 +632,6 @@ Resources:
         !Sub CloudMart-${Environment}-dashboard-ec2-profile
       Roles:
         - !Ref DashboardEC2Role
-
-
-  DashboardEC2InstanceProfileAssociation:
-    Type: AWS::EC2::InstanceProfileAssociation
-    Properties:
-      InstanceId: !Ref DashboardEC2InstanceId
-      IamInstanceProfile: !Ref DashboardEC2InstanceProfile
 
 
 # ==============================================================

@@ -258,7 +258,6 @@ jobs:
             --stack-name "${IAM_STACK_NAME}" \
             --parameter-overrides \
               Environment="${ENVIRONMENT}" \
-              DashboardEC2InstanceId="${DASHBOARD_EC2_INSTANCE_ID}" \
             --capabilities CAPABILITY_NAMED_IAM \
             --region "${AWS_REGION}" \
             --no-fail-on-empty-changeset
@@ -289,6 +288,81 @@ jobs:
 
             echo "${OUTPUT}: ${VALUE}"
           done
+
+
+      - name: Attach dashboard IAM instance profile to existing EC2
+        shell: bash
+        run: |
+          set -e
+
+          INSTANCE_ID="${DASHBOARD_EC2_INSTANCE_ID}"
+          PROFILE_NAME="CloudMart-${ENVIRONMENT}-dashboard-ec2-profile"
+
+          echo "Checking current IAM instance profile association..."
+
+          ASSOCIATION_ID=$(aws ec2 describe-iam-instance-profile-associations \
+            --filters "Name=instance-id,Values=${INSTANCE_ID}" \
+            --region "${AWS_REGION}" \
+            --query "IamInstanceProfileAssociations[?State=='associated'] | [0].AssociationId" \
+            --output text)
+
+          CURRENT_PROFILE_ID=$(aws ec2 describe-iam-instance-profile-associations \
+            --filters "Name=instance-id,Values=${INSTANCE_ID}" \
+            --region "${AWS_REGION}" \
+            --query "IamInstanceProfileAssociations[?State=='associated'] | [0].IamInstanceProfile.Id" \
+            --output text)
+
+          TARGET_PROFILE_ARN=$(aws iam get-instance-profile \
+            --instance-profile-name "${PROFILE_NAME}" \
+            --query "InstanceProfile.Arn" \
+            --output text)
+
+          TARGET_PROFILE_ID=$(aws iam get-instance-profile \
+            --instance-profile-name "${PROFILE_NAME}" \
+            --query "InstanceProfile.InstanceProfileId" \
+            --output text)
+
+          echo "Current association: ${ASSOCIATION_ID}"
+          echo "Current profile ID: ${CURRENT_PROFILE_ID}"
+          echo "Target profile ID: ${TARGET_PROFILE_ID}"
+
+          if [ "${CURRENT_PROFILE_ID}" = "${TARGET_PROFILE_ID}" ]; then
+            echo "Correct dashboard IAM instance profile is already attached."
+          elif [ -n "${ASSOCIATION_ID}" ] && [ "${ASSOCIATION_ID}" != "None" ]; then
+            echo "Replacing existing IAM instance profile association..."
+
+            aws ec2 replace-iam-instance-profile-association \
+              --association-id "${ASSOCIATION_ID}" \
+              --iam-instance-profile "${TARGET_PROFILE_ARN}" \
+              --region "${AWS_REGION}"
+          else
+            echo "Associating dashboard IAM instance profile..."
+
+            aws ec2 associate-iam-instance-profile \
+              --instance-id "${INSTANCE_ID}" \
+              --iam-instance-profile "${TARGET_PROFILE_ARN}" \
+              --region "${AWS_REGION}"
+          fi
+
+          echo "Waiting for IAM instance profile association..."
+
+          for attempt in {1..12}; do
+            ASSOCIATED_PROFILE_ID=$(aws ec2 describe-iam-instance-profile-associations \
+              --filters "Name=instance-id,Values=${INSTANCE_ID}" \
+              --region "${AWS_REGION}" \
+              --query "IamInstanceProfileAssociations[?State=='associated'] | [0].IamInstanceProfile.Id" \
+              --output text)
+
+            if [ "${ASSOCIATED_PROFILE_ID}" = "${TARGET_PROFILE_ID}" ]; then
+              echo "Dashboard IAM instance profile successfully associated."
+              exit 0
+            fi
+
+            sleep 5
+          done
+
+          echo "ERROR: Dashboard IAM instance profile was not associated."
+          exit 1
 
 
   # ============================================================
