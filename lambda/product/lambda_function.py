@@ -20,6 +20,7 @@ logger.setLevel(logging.INFO)
 
 ssm = boto3.client("ssm")
 events = boto3.client("events")
+cloudwatch = boto3.client("cloudwatch")
 
 
 ENVIRONMENT = os.environ.get(
@@ -31,6 +32,38 @@ EVENT_BUS_NAME = os.environ.get(
     "EVENT_BUS_NAME",
     "cloudmart-dev-event-bus"
 )
+
+
+# ============================================================
+# CUSTOM CLOUDWATCH METRICS
+# ============================================================
+
+def publish_metric(metric_name, value=1):
+
+    try:
+
+        cloudwatch.put_metric_data(
+            Namespace="CloudMart/Operations",
+            MetricData=[
+                {
+                    "MetricName": metric_name,
+                    "Dimensions": [
+                        {
+                            "Name": "Environment",
+                            "Value": ENVIRONMENT
+                        }
+                    ],
+                    "Value": value,
+                    "Unit": "Count"
+                }
+            ]
+        )
+
+    except Exception:
+        logger.exception(
+            "Failed to publish CloudWatch metric %s",
+            metric_name
+        )
 
 
 # ============================================================
@@ -218,6 +251,9 @@ def publish_low_stock_event(
         raise Exception(
             "Failed to publish low stock event"
         )
+
+
+    publish_metric("LowStockEvents")
 
 
     logger.info(

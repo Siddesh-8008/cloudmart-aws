@@ -404,6 +404,9 @@ def lambda_handler(event, context):
                 ),
                 (
                     'FAILED'
+                ),
+                (
+                    'CANCELLED'
                 )
                 """
             )

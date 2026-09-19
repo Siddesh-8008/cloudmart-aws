@@ -1,0 +1,17 @@
+[Unit]
+Description=CloudMart Flask Operations Dashboard
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=cloudmart
+Group=cloudmart
+WorkingDirectory=/opt/cloudmart-dashboard
+EnvironmentFile=/etc/cloudmart-dashboard.env
+ExecStart=/opt/cloudmart-dashboard/venv/bin/gunicorn --workers 2 --bind 127.0.0.1:8000 app:app
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -5,6 +5,7 @@ on:
     branches:
       - main
       - orders
+      - dashboard
 
   workflow_dispatch:
     inputs:
@@ -36,6 +37,9 @@ env:
   AUTH_STACK_NAME: cloudmart-dev-auth
   API_STACK_NAME: cloudmart-dev-api
   EVENTBRIDGE_STACK_NAME: CloudMart-dev-eventbridge
+  REPORTING_STACK_NAME: CloudMart-dev-reporting
+  MONITORING_STACK_NAME: CloudMart-dev-monitoring
+  DASHBOARD_EC2_INSTANCE_ID: i-031a315ec368edbd9
 
 
 # ============================================================
@@ -254,6 +258,7 @@ jobs:
             --stack-name "${IAM_STACK_NAME}" \
             --parameter-overrides \
               Environment="${ENVIRONMENT}" \
+              DashboardEC2InstanceId="${DASHBOARD_EC2_INSTANCE_ID}" \
             --capabilities CAPABILITY_NAMED_IAM \
             --region "${AWS_REGION}" \
             --no-fail-on-empty-changeset
@@ -267,7 +272,9 @@ jobs:
           for OUTPUT in \
             "AuthorizerLambdaRoleArn" \
             "ProductLambdaRoleArn" \
-            "OrderProcessorLambdaRoleArn"; do
+            "OrderProcessorLambdaRoleArn" \
+            "ReportingLambdaRoleArn" \
+            "DashboardEC2RoleArn"; do
 
             VALUE=$(aws cloudformation describe-stacks \
               --stack-name "${IAM_STACK_NAME}" \
@@ -788,3 +795,361 @@ jobs:
             --region "${AWS_REGION}" \
             --query "Stacks[0].Outputs" \
             --output table
+
+  # ============================================================
+  # JOB 7 - DAILY REPORTING
+  # ============================================================
+
+  deploy-reporting:
+    name: Deploy Daily Reporting
+    runs-on: ubuntu-latest
+    needs:
+      - deploy-eventbridge
+      - deploy-iam
+
+    steps:
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Get deployment outputs
+        id: deployment
+        shell: bash
+        run: |
+          set -e
+
+          SUBNET_A=$(aws cloudformation describe-stacks \
+            --stack-name "${NETWORK_STACK_NAME}" \
+            --region "${AWS_REGION}" \
+            --query "Stacks[0].Outputs[?OutputKey=='PrivateSubnetAId'].OutputValue | [0]" \
+            --output text)
+
+          SUBNET_B=$(aws cloudformation describe-stacks \
+            --stack-name "${NETWORK_STACK_NAME}" \
+            --region "${AWS_REGION}" \
+            --query "Stacks[0].Outputs[?OutputKey=='PrivateSubnetBId'].OutputValue | [0]" \
+            --output text)
+
+          SG=$(aws cloudformation describe-stacks \
+            --stack-name "${NETWORK_STACK_NAME}" \
+            --region "${AWS_REGION}" \
+            --query "Stacks[0].Outputs[?OutputKey=='LambdaSecurityGroupId'].OutputValue | [0]" \
+            --output text)
+
+          BUCKET=$(aws cloudformation describe-stacks \
+            --stack-name "${DATA_STACK_NAME}" \
+            --region "${AWS_REGION}" \
+            --query "Stacks[0].Outputs[?OutputKey=='LambdaArtifactBucketName'].OutputValue | [0]" \
+            --output text)
+
+          ROLE=$(aws cloudformation describe-stacks \
+            --stack-name "${IAM_STACK_NAME}" \
+            --region "${AWS_REGION}" \
+            --query "Stacks[0].Outputs[?OutputKey=='ReportingLambdaRoleArn'].OutputValue | [0]" \
+            --output text)
+
+          echo "subnets=${SUBNET_A},${SUBNET_B}" >> "$GITHUB_OUTPUT"
+          echo "sg=${SG}" >> "$GITHUB_OUTPUT"
+          echo "bucket=${BUCKET}" >> "$GITHUB_OUTPUT"
+          echo "role=${ROLE}" >> "$GITHUB_OUTPUT"
+
+      - name: Package reporting Lambda
+        run: |
+          rm -rf reporting-package reporting.zip
+          mkdir -p reporting-package
+          cp lambda/reporting/lambda_function.py reporting-package/
+          pip install -r lambda/reporting/requirements.txt -t reporting-package
+          (cd reporting-package && zip -qr ../reporting.zip .)
+
+      - name: Upload reporting Lambda
+        run: |
+          aws s3 cp reporting.zip \
+            "s3://${{ steps.deployment.outputs.bucket }}/reporting/reporting.zip" \
+            --region "${AWS_REGION}"
+
+      - name: Validate reporting stack
+        run: |
+          aws cloudformation validate-template \
+            --template-body file://cloudformation/reporting/reporting-stack.yaml \
+            --region "${AWS_REGION}"
+
+      - name: Deploy reporting stack
+        run: |
+          aws cloudformation deploy \
+            --template-file cloudformation/reporting/reporting-stack.yaml \
+            --stack-name "${REPORTING_STACK_NAME}" \
+            --parameter-overrides \
+              Environment="${ENVIRONMENT}" \
+              PrivateSubnetIds="${{ steps.deployment.outputs.subnets }}" \
+              LambdaSecurityGroupId="${{ steps.deployment.outputs.sg }}" \
+              ReportingLambdaExecutionRoleArn="${{ steps.deployment.outputs.role }}" \
+              ReportBucketName="${{ steps.deployment.outputs.bucket }}" \
+              DBHostParameter="/cloudmart/${ENVIRONMENT}/db/host" \
+              DBPortParameter="/cloudmart/${ENVIRONMENT}/db/port" \
+              DBNameParameter="/cloudmart/${ENVIRONMENT}/db/name" \
+              DBUsernameParameter="/cloudmart/${ENVIRONMENT}/db/username" \
+              DBPasswordParameter="/cloudmart/${ENVIRONMENT}/db/password" \
+              ReportingLambdaCodeKey="reporting/reporting.zip" \
+            --region "${AWS_REGION}" \
+            --no-fail-on-empty-changeset
+
+      - name: Verify daily report Lambda
+        run: |
+          aws lambda get-function \
+            --function-name "CloudMart-${ENVIRONMENT}-daily-report" \
+            --region "${AWS_REGION}" >/dev/null
+
+      - name: Generate initial daily report
+        run: |
+          aws lambda invoke \
+            --function-name "CloudMart-${ENVIRONMENT}-daily-report" \
+            --region "${AWS_REGION}" \
+            --cli-binary-format raw-in-base64-out \
+            --payload '{}' \
+            reporting-response.json
+
+          cat reporting-response.json
+
+          aws s3api head-object \
+            --bucket "${{ steps.deployment.outputs.bucket }}" \
+            --key "reports/daily-report-$(date -u +%Y-%m-%d).csv" \
+            --region "${AWS_REGION}"
+
+
+  # ============================================================
+  # JOB 8 - MONITORING
+  # ============================================================
+
+  deploy-monitoring:
+    name: Deploy Monitoring Stack
+    runs-on: ubuntu-latest
+    needs:
+      - deploy-eventbridge
+      - deploy-iam
+
+    steps:
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Determine Operations CIDR
+        id: cidr
+        shell: bash
+        run: |
+          set -e
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            OPERATIONS_CIDR="${{ inputs.operations_cidr }}"
+          else
+            OPERATIONS_CIDR="${{ vars.OPERATIONS_CIDR }}"
+          fi
+
+          if [ -z "${OPERATIONS_CIDR}" ]; then
+            echo "ERROR: Operations CIDR is not configured."
+            exit 1
+          fi
+
+          echo "operations_cidr=${OPERATIONS_CIDR}" >> "$GITHUB_OUTPUT"
+
+      - name: Get dashboard security group
+        id: dashboard_sg
+        shell: bash
+        run: |
+          SG=$(aws cloudformation describe-stacks \
+            --stack-name "${NETWORK_STACK_NAME}" \
+            --region "${AWS_REGION}" \
+            --query "Stacks[0].Outputs[?OutputKey=='EC2SecurityGroupId'].OutputValue | [0]" \
+            --output text)
+
+          test -n "${SG}" && test "${SG}" != "None"
+          echo "sg=${SG}" >> "$GITHUB_OUTPUT"
+
+      - name: Validate monitoring stack
+        run: |
+          aws cloudformation validate-template \
+            --template-body file://cloudformation/monitoring/monitoring-stack.yaml \
+            --region "${AWS_REGION}"
+
+      - name: Deploy monitoring stack
+        run: |
+          aws cloudformation deploy \
+            --template-file cloudformation/monitoring/monitoring-stack.yaml \
+            --stack-name "${MONITORING_STACK_NAME}" \
+            --parameter-overrides \
+              Environment="${ENVIRONMENT}" \
+              AlarmEmail="${{ secrets.ORDER_NOTIFICATION_EMAIL }}" \
+              DashboardSecurityGroupId="${{ steps.dashboard_sg.outputs.sg }}" \
+              OperationsCidr="${{ steps.cidr.outputs.operations_cidr }}" \
+            --region "${AWS_REGION}" \
+            --no-fail-on-empty-changeset
+
+      - name: Verify monitoring alarms
+        run: |
+          aws cloudwatch describe-alarms \
+            --alarm-name-prefix "CloudMart-${ENVIRONMENT}-" \
+            --region "${AWS_REGION}" \
+            --query 'MetricAlarms[].AlarmName' \
+            --output table
+
+
+  # ============================================================
+  # JOB 9 - EXISTING EC2 DASHBOARD
+  # ============================================================
+
+  deploy-dashboard:
+    name: Deploy Flask Dashboard to Existing EC2
+    runs-on: ubuntu-latest
+    needs:
+      - deploy-reporting
+      - deploy-monitoring
+
+    steps:
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Get EC2 details
+        id: ec2
+        shell: bash
+        run: |
+          set -e
+
+          PUBLIC_IP=$(aws ec2 describe-instances \
+            --instance-ids "${DASHBOARD_EC2_INSTANCE_ID}" \
+            --region "${AWS_REGION}" \
+            --query "Reservations[0].Instances[0].PublicIpAddress" \
+            --output text)
+
+          DASHBOARD_SG=$(aws cloudformation describe-stacks \
+            --stack-name "${NETWORK_STACK_NAME}" \
+            --region "${AWS_REGION}" \
+            --query "Stacks[0].Outputs[?OutputKey=='EC2SecurityGroupId'].OutputValue | [0]" \
+            --output text)
+
+          BUCKET=$(aws cloudformation describe-stacks \
+            --stack-name "${DATA_STACK_NAME}" \
+            --region "${AWS_REGION}" \
+            --query "Stacks[0].Outputs[?OutputKey=='LambdaArtifactBucketName'].OutputValue | [0]" \
+            --output text)
+
+          test -n "${PUBLIC_IP}" && test "${PUBLIC_IP}" != "None"
+          test -n "${DASHBOARD_SG}" && test "${DASHBOARD_SG}" != "None"
+
+          echo "public_ip=${PUBLIC_IP}" >> "$GITHUB_OUTPUT"
+          echo "dashboard_sg=${DASHBOARD_SG}" >> "$GITHUB_OUTPUT"
+          echo "bucket=${BUCKET}" >> "$GITHUB_OUTPUT"
+
+      - name: Attach CloudFormation dashboard security group to existing EC2
+        shell: bash
+        run: |
+          set -e
+
+          CURRENT_GROUPS=$(aws ec2 describe-instances \
+            --instance-ids "${DASHBOARD_EC2_INSTANCE_ID}" \
+            --region "${AWS_REGION}" \
+            --query "Reservations[0].Instances[0].SecurityGroups[].GroupId" \
+            --output text | tr '\t' '\n' | sort -u | tr '\n' ' ')
+
+          case " ${CURRENT_GROUPS} " in
+            *" ${{ steps.ec2.outputs.dashboard_sg }} "*)
+              echo "Dashboard security group already attached."
+              ;;
+            *)
+              aws ec2 modify-instance-attribute \
+                --instance-id "${DASHBOARD_EC2_INSTANCE_ID}" \
+                --groups ${CURRENT_GROUPS} "${{ steps.ec2.outputs.dashboard_sg }}"
+              ;;
+          esac
+
+      - name: Temporarily allow GitHub runner SSH access
+        id: ssh_rule
+        shell: bash
+        run: |
+          set -e
+          RUNNER_IP=$(curl -fsS https://checkip.amazonaws.com | tr -d '\r\n')
+          RUNNER_CIDR="${RUNNER_IP}/32"
+
+          aws ec2 authorize-security-group-ingress \
+            --group-id "${{ steps.ec2.outputs.dashboard_sg }}" \
+            --ip-permissions "IpProtocol=tcp,FromPort=22,ToPort=22,IpRanges=[{CidrIp=${RUNNER_CIDR},Description='Temporary GitHub Actions SSH access'}]" \
+            --region "${AWS_REGION}" || true
+
+          echo "runner_cidr=${RUNNER_CIDR}" >> "$GITHUB_OUTPUT"
+
+      - name: Prepare SSH key
+        shell: bash
+        env:
+          EC2_SSH_PRIVATE_KEY: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
+        run: |
+          if [ -z "${EC2_SSH_PRIVATE_KEY}" ]; then
+            echo "ERROR: Add EC2_SSH_PRIVATE_KEY GitHub secret before dashboard deployment."
+            exit 1
+          fi
+
+          umask 077
+          printf '%s\n' "${EC2_SSH_PRIVATE_KEY}" > /tmp/cloudmart-ec2-key.pem
+
+      - name: Wait for SSH
+        shell: bash
+        run: |
+          for attempt in {1..30}; do
+            if ssh -o StrictHostKeyChecking=no \
+              -o ConnectTimeout=5 \
+              -i /tmp/cloudmart-ec2-key.pem \
+              ec2-user@"${{ steps.ec2.outputs.public_ip }}" true; then
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "EC2 SSH connection was not available."
+          exit 1
+
+      - name: Copy dashboard files
+        run: |
+          scp -o StrictHostKeyChecking=no \
+            -i /tmp/cloudmart-ec2-key.pem \
+            -r dashboard \
+            ec2-user@"${{ steps.ec2.outputs.public_ip }}":/tmp/cloudmart-dashboard
+
+      - name: Install and start dashboard
+        run: |
+          ssh -o StrictHostKeyChecking=no \
+            -i /tmp/cloudmart-ec2-key.pem \
+            ec2-user@"${{ steps.ec2.outputs.public_ip }}" \
+            "cd /tmp/cloudmart-dashboard/dashboard && sudo env REPORT_BUCKET='${{ steps.ec2.outputs.bucket }}' bash install.sh"
+
+      - name: Remove temporary GitHub runner SSH access
+        if: always()
+        run: |
+          if [ -n "${{ steps.ssh_rule.outputs.runner_cidr }}" ]; then
+            aws ec2 revoke-security-group-ingress \
+              --group-id "${{ steps.ec2.outputs.dashboard_sg }}" \
+              --ip-permissions "IpProtocol=tcp,FromPort=22,ToPort=22,IpRanges=[{CidrIp=${{ steps.ssh_rule.outputs.runner_cidr }}}]" \
+              --region "${AWS_REGION}" || true
+          fi
+
+      - name: Clean SSH key
+        if: always()
+        run: rm -f /tmp/cloudmart-ec2-key.pem
