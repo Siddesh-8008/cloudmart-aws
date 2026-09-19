@@ -312,11 +312,6 @@ jobs:
             --query "IamInstanceProfileAssociations[?State=='associated'] | [0].IamInstanceProfile.Id" \
             --output text)
 
-          TARGET_PROFILE_ARN=$(aws iam get-instance-profile \
-            --instance-profile-name "${PROFILE_NAME}" \
-            --query "InstanceProfile.Arn" \
-            --output text)
-
           TARGET_PROFILE_ID=$(aws iam get-instance-profile \
             --instance-profile-name "${PROFILE_NAME}" \
             --query "InstanceProfile.InstanceProfileId" \
@@ -333,14 +328,14 @@ jobs:
 
             aws ec2 replace-iam-instance-profile-association \
               --association-id "${ASSOCIATION_ID}" \
-              --iam-instance-profile "${TARGET_PROFILE_ARN}" \
+              --iam-instance-profile Name="${PROFILE_NAME}" \
               --region "${AWS_REGION}"
           else
             echo "Associating dashboard IAM instance profile..."
 
             aws ec2 associate-iam-instance-profile \
               --instance-id "${INSTANCE_ID}" \
-              --iam-instance-profile "${TARGET_PROFILE_ARN}" \
+              --iam-instance-profile Name="${PROFILE_NAME}" \
               --region "${AWS_REGION}"
           fi
 
