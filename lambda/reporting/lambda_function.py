@@ -6,7 +6,6 @@ from datetime import datetime, timezone
 
 import boto3
 import pymysql
-from botocore.config import Config
 
 
 # ============================================================
@@ -18,106 +17,40 @@ logger.setLevel(logging.INFO)
 
 
 # ============================================================
-# AWS CLIENT CONFIGURATION
+# AWS CLIENTS
 # ============================================================
 
-aws_config = Config(
-    connect_timeout=5,
-    read_timeout=10,
-    retries={
-        "max_attempts": 2,
-        "mode": "standard",
-    },
-)
-
-
-s3 = boto3.client(
-    "s3",
-    config=aws_config,
-)
-
-ssm = boto3.client(
-    "ssm",
-    config=aws_config,
-)
+ssm = boto3.client("ssm")
+s3 = boto3.client("s3")
 
 
 # ============================================================
 # ENVIRONMENT VARIABLES
 # ============================================================
 
-ENVIRONMENT = os.environ.get(
-    "ENVIRONMENT",
-    "dev",
-)
+ENVIRONMENT = os.environ.get("ENVIRONMENT", "dev")
 
 REPORT_BUCKET = os.environ["REPORT_BUCKET"]
+REPORT_PREFIX = os.environ.get("REPORT_PREFIX", "reports/")
 
-REPORT_PREFIX = os.environ.get(
-    "REPORT_PREFIX",
-    "reports/",
-)
-
-DB_HOST_PARAMETER = os.environ[
-    "DB_HOST_PARAMETER"
-]
-
-DB_PORT_PARAMETER = os.environ.get(
-    "DB_PORT_PARAMETER"
-)
-
-DB_NAME_PARAMETER = os.environ[
-    "DB_NAME_PARAMETER"
-]
-
-DB_USERNAME_PARAMETER = os.environ[
-    "DB_USERNAME_PARAMETER"
-]
-
-DB_PASSWORD_PARAMETER = os.environ[
-    "DB_PASSWORD_PARAMETER"
-]
+DB_HOST_PARAMETER = os.environ["DB_HOST_PARAMETER"]
+DB_PORT_PARAMETER = os.environ["DB_PORT_PARAMETER"]
+DB_NAME_PARAMETER = os.environ["DB_NAME_PARAMETER"]
+DB_USERNAME_PARAMETER = os.environ["DB_USERNAME_PARAMETER"]
+DB_PASSWORD_PARAMETER = os.environ["DB_PASSWORD_PARAMETER"]
 
 
 # ============================================================
-# SSM PARAMETER
+# READ SSM PARAMETER
 # ============================================================
 
-def get_parameter(name):
-
-    logger.info(
-        "Reading SSM parameter: %s",
-        name,
+def get_parameter(parameter_name):
+    response = ssm.get_parameter(
+        Name=parameter_name,
+        WithDecryption=False
     )
 
-    try:
-
-        response = ssm.get_parameter(
-            Name=name,
-            WithDecryption=False,
-        )
-
-        value = response[
-            "Parameter"
-        ][
-            "Value"
-        ]
-
-        logger.info(
-            "Successfully read SSM parameter: %s",
-            name,
-        )
-
-        return value
-
-    except Exception:
-
-        logger.exception(
-            "Failed to read SSM parameter: %s",
-            name,
-        )
-
-        raise
+    return response["Parameter"]["Value"]
 
 
 # ============================================================
@@ -126,65 +59,16 @@ def get_parameter(name):
 
 def get_connection():
 
-    logger.info(
-        "Starting database connection setup"
-    )
-
-    host = get_parameter(
-        DB_HOST_PARAMETER
-    )
+    host = get_parameter(DB_HOST_PARAMETER)
+    port = int(get_parameter(DB_PORT_PARAMETER))
+    username = get_parameter(DB_USERNAME_PARAMETER)
+    password = get_parameter(DB_PASSWORD_PARAMETER)
+    database = get_parameter(DB_NAME_PARAMETER)
 
     logger.info(
-        "Database host parameter retrieved"
-    )
-
-    if DB_PORT_PARAMETER:
-
-        port = int(
-            get_parameter(
-                DB_PORT_PARAMETER
-            )
-        )
-
-    else:
-
-        port = 3306
-
-    logger.info(
-        "Database port: %s",
-        port,
-    )
-
-    username = get_parameter(
-        DB_USERNAME_PARAMETER
-    )
-
-    logger.info(
-        "Database username retrieved"
-    )
-
-    password = get_parameter(
-        DB_PASSWORD_PARAMETER
-    )
-
-    logger.info(
-        "Database password retrieved"
-    )
-
-    database = get_parameter(
-        DB_NAME_PARAMETER
-    )
-
-    logger.info(
-        "Database name retrieved: %s",
+        "Connecting to RDS database %s on port %s",
         database,
-    )
-
-    logger.info(
-        "Connecting to RDS: %s:%s/%s",
-        host,
-        port,
-        database,
+        port
     )
 
     connection = pymysql.connect(
@@ -195,35 +79,27 @@ def get_connection():
         database=database,
         cursorclass=pymysql.cursors.DictCursor,
         connect_timeout=10,
-        autocommit=True,
+        read_timeout=30,
+        write_timeout=30,
+        autocommit=True
     )
 
-    logger.info(
-        "RDS connection established successfully"
-    )
+    logger.info("RDS connection established")
 
     return connection
 
 
 # ============================================================
-# BUILD REPORT
+# BUILD CSV REPORT
 # ============================================================
 
 def build_report(connection):
-
-    logger.info(
-        "Starting report generation"
-    )
 
     with connection.cursor() as cursor:
 
         # ----------------------------------------------------
         # PRODUCTS
         # ----------------------------------------------------
-
-        logger.info(
-            "Querying products"
-        )
 
         cursor.execute(
             """
@@ -243,16 +119,12 @@ def build_report(connection):
 
         logger.info(
             "Products retrieved: %s",
-            len(products),
+            len(products)
         )
 
         # ----------------------------------------------------
-        # ORDERS
+        # RECENT ORDERS
         # ----------------------------------------------------
-
-        logger.info(
-            "Querying recent orders"
-        )
 
         cursor.execute(
             """
@@ -276,18 +148,16 @@ def build_report(connection):
 
         logger.info(
             "Orders retrieved: %s",
-            len(orders),
+            len(orders)
         )
 
     # --------------------------------------------------------
-    # CSV
+    # CREATE CSV
     # --------------------------------------------------------
 
     output = io.StringIO()
 
-    writer = csv.writer(
-        output
-    )
+    writer = csv.writer(output)
 
     writer.writerow(
         [
@@ -303,7 +173,7 @@ def build_report(connection):
             "status",
             "failure_reason",
             "created_at",
-            "updated_at",
+            "updated_at"
         ]
     )
 
@@ -319,9 +189,7 @@ def build_report(connection):
                 product["id"],
                 product["name"],
                 product["stock"],
-                product[
-                    "low_stock_threshold"
-                ],
+                product["low_stock_threshold"],
                 product["is_active"],
                 "",
                 "",
@@ -329,7 +197,7 @@ def build_report(connection):
                 "",
                 "",
                 "",
-                product["updated_at"],
+                product["updated_at"]
             ]
         )
 
@@ -351,42 +219,26 @@ def build_report(connection):
                 order["customer_id"],
                 order["total_amount"],
                 order["status"],
-                order[
-                    "failure_reason"
-                ] or "",
+                order["failure_reason"] or "",
                 order["created_at"],
-                order["updated_at"],
+                order["updated_at"]
             ]
         )
 
-    report = output.getvalue().encode(
-        "utf-8"
-    )
-
-    logger.info(
-        "Report generated successfully: %s bytes",
-        len(report),
-    )
-
-    return report
+    return output.getvalue().encode("utf-8")
 
 
 # ============================================================
 # LAMBDA HANDLER
 # ============================================================
 
-def lambda_handler(
-    event,
-    context,
-):
+def lambda_handler(event, context):
 
     connection = None
 
     report_date = datetime.now(
         timezone.utc
-    ).strftime(
-        "%Y-%m-%d"
-    )
+    ).strftime("%Y-%m-%d")
 
     key = (
         f"{REPORT_PREFIX.rstrip('/')}"
@@ -394,50 +246,36 @@ def lambda_handler(
     )
 
     logger.info(
-        "================================================"
-    )
-
-    logger.info(
         "Starting CloudMart daily report"
     )
 
     logger.info(
-        "Environment: %s",
-        ENVIRONMENT,
-    )
-
-    logger.info(
-        "Report bucket: %s",
+        "Report destination: s3://%s/%s",
         REPORT_BUCKET,
-    )
-
-    logger.info(
-        "Report key: %s",
-        key,
-    )
-
-    logger.info(
-        "================================================"
+        key
     )
 
     try:
 
         # ----------------------------------------------------
-        # DATABASE
+        # CONNECT TO RDS
         # ----------------------------------------------------
 
         connection = get_connection()
 
         # ----------------------------------------------------
-        # REPORT
+        # GENERATE REPORT
         # ----------------------------------------------------
 
-        report = build_report(
-            connection
+        report = build_report(connection)
+
+        logger.info(
+            "Report generated: %s bytes",
+            len(report)
         )
 
         # ----------------------------------------------------
-        # S3
+        # UPLOAD REPORT TO S3
         # ----------------------------------------------------
 
         logger.info(
@@ -449,20 +287,19 @@ def lambda_handler(
             Key=key,
             Body=report,
             ContentType="text/csv",
-            ServerSideEncryption="AES256",
+            ServerSideEncryption="AES256"
         )
 
         logger.info(
-            "Daily report written successfully to "
-            "s3://%s/%s",
+            "Report uploaded successfully to s3://%s/%s",
             REPORT_BUCKET,
-            key,
+            key
         )
 
         return {
             "statusCode": 200,
             "bucket": REPORT_BUCKET,
-            "key": key,
+            "key": key
         }
 
     except Exception:
@@ -475,10 +312,10 @@ def lambda_handler(
 
     finally:
 
-        if connection:
+        if connection is not None:
 
             connection.close()
 
             logger.info(
-                "Database connection closed"
+                "RDS connection closed"
             )
