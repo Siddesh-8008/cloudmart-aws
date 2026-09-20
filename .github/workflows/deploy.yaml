@@ -865,6 +865,7 @@ jobs:
             --query "Stacks[0].Outputs" \
             --output table
 
+
   # ============================================================
   # JOB 7 - DAILY REPORTING
   # ============================================================
@@ -1044,6 +1045,7 @@ jobs:
         shell: bash
         run: |
           set -e
+
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             OPERATIONS_CIDR="${{ inputs.operations_cidr }}"
           else
@@ -1068,6 +1070,7 @@ jobs:
             --output text)
 
           test -n "${SG}" && test "${SG}" != "None"
+
           echo "sg=${SG}" >> "$GITHUB_OUTPUT"
 
       - name: Validate monitoring stack
@@ -1178,6 +1181,7 @@ jobs:
         shell: bash
         run: |
           set -e
+
           RUNNER_IP=$(curl -fsS https://checkip.amazonaws.com | tr -d '\r\n')
           RUNNER_CIDR="${RUNNER_IP}/32"
 
@@ -1211,8 +1215,10 @@ jobs:
               ec2-user@"${{ steps.ec2.outputs.public_ip }}" true; then
               exit 0
             fi
+
             sleep 10
           done
+
           echo "EC2 SSH connection was not available."
           exit 1
 
@@ -1228,7 +1234,7 @@ jobs:
           ssh -o StrictHostKeyChecking=no \
             -i /tmp/cloudmart-ec2-key.pem \
             ec2-user@"${{ steps.ec2.outputs.public_ip }}" \
-            "cd /tmp/cloudmart-dashboard/dashboard && sudo env REPORT_BUCKET='${{ steps.ec2.outputs.bucket }}' bash install.sh"
+            "cd /tmp/cloudmart-dashboard && sudo env REPORT_BUCKET='${{ steps.ec2.outputs.bucket }}' bash install.sh"
 
       - name: Remove temporary GitHub runner SSH access
         if: always()
@@ -1242,4 +1248,5 @@ jobs:
 
       - name: Clean SSH key
         if: always()
-        run: rm -f /tmp/cloudmart-ec2-key.pem
+        run: |
+          rm -f /tmp/cloudmart-ec2-key.pem
