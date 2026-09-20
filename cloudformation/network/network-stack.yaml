@@ -283,24 +283,24 @@ Resources:
 
 
   # ------------------------------------------------------------
-  # Lambda HTTPS access inside the VPC
+  # Lambda HTTPS access to S3 Gateway Endpoint
   #
-  # Required for AWS services reached through the S3 Gateway
-  # Endpoint and other VPC networking paths.
-  #
-  # S3 Gateway Endpoints use route tables and do not use the
+  # S3 Gateway Endpoints use route tables rather than
   # EndpointSecurityGroup.
+  #
+  # PrefixListId identifies the AWS-managed S3 prefix list,
+  # allowing Lambda HTTPS traffic specifically to S3.
   # ------------------------------------------------------------
 
-  LambdaToVpcHttps:
+  LambdaToS3:
     Type: AWS::EC2::SecurityGroupEgress
     Properties:
       GroupId: !Ref LambdaSecurityGroup
       IpProtocol: tcp
       FromPort: 443
       ToPort: 443
-      CidrIp: 10.0.0.0/16
-      Description: Lambda HTTPS access within CloudMart VPC
+      DestinationPrefixListId: !GetAtt S3Endpoint.PrefixListId
+      Description: Lambda HTTPS access to S3 Gateway Endpoint
 
 
   # ============================================================
