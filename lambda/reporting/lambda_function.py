@@ -6,43 +6,225 @@ from datetime import datetime, timezone
 
 import boto3
 import pymysql
+from botocore.config import Config
 
+
+# ============================================================
+# LOGGING
+# ============================================================
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
-s3 = boto3.client("s3")
-ssm = boto3.client("ssm")
 
-ENVIRONMENT = os.environ.get("ENVIRONMENT", "dev")
+# ============================================================
+# AWS CLIENT CONFIGURATION
+# ============================================================
+
+aws_config = Config(
+    connect_timeout=5,
+    read_timeout=10,
+    retries={
+        "max_attempts": 2,
+        "mode": "standard",
+    },
+)
+
+
+s3 = boto3.client(
+    "s3",
+    config=aws_config,
+)
+
+ssm = boto3.client(
+    "ssm",
+    config=aws_config,
+)
+
+
+# ============================================================
+# ENVIRONMENT VARIABLES
+# ============================================================
+
+ENVIRONMENT = os.environ.get(
+    "ENVIRONMENT",
+    "dev",
+)
+
 REPORT_BUCKET = os.environ["REPORT_BUCKET"]
-REPORT_PREFIX = os.environ.get("REPORT_PREFIX", "reports/")
-DB_HOST_PARAMETER = os.environ["DB_HOST_PARAMETER"]
-DB_PORT_PARAMETER = os.environ.get("DB_PORT_PARAMETER")
-DB_NAME_PARAMETER = os.environ["DB_NAME_PARAMETER"]
-DB_USERNAME_PARAMETER = os.environ["DB_USERNAME_PARAMETER"]
-DB_PASSWORD_PARAMETER = os.environ["DB_PASSWORD_PARAMETER"]
 
+REPORT_PREFIX = os.environ.get(
+    "REPORT_PREFIX",
+    "reports/",
+)
+
+DB_HOST_PARAMETER = os.environ[
+    "DB_HOST_PARAMETER"
+]
+
+DB_PORT_PARAMETER = os.environ.get(
+    "DB_PORT_PARAMETER"
+)
+
+DB_NAME_PARAMETER = os.environ[
+    "DB_NAME_PARAMETER"
+]
+
+DB_USERNAME_PARAMETER = os.environ[
+    "DB_USERNAME_PARAMETER"
+]
+
+DB_PASSWORD_PARAMETER = os.environ[
+    "DB_PASSWORD_PARAMETER"
+]
+
+
+# ============================================================
+# SSM PARAMETER
+# ============================================================
 
 def get_parameter(name):
-    return ssm.get_parameter(Name=name, WithDecryption=False)["Parameter"]["Value"]
 
+    logger.info(
+        "Reading SSM parameter: %s",
+        name,
+    )
+
+    try:
+
+        response = ssm.get_parameter(
+            Name=name,
+            WithDecryption=False,
+        )
+
+        value = response[
+            "Parameter"
+        ][
+            "Value"
+        ]
+
+        logger.info(
+            "Successfully read SSM parameter: %s",
+            name,
+        )
+
+        return value
+
+    except Exception:
+
+        logger.exception(
+            "Failed to read SSM parameter: %s",
+            name,
+        )
+
+        raise
+
+
+# ============================================================
+# DATABASE CONNECTION
+# ============================================================
 
 def get_connection():
-    return pymysql.connect(
-        host=get_parameter(DB_HOST_PARAMETER),
-        port=int(get_parameter(DB_PORT_PARAMETER)) if DB_PORT_PARAMETER else 3306,
-        user=get_parameter(DB_USERNAME_PARAMETER),
-        password=get_parameter(DB_PASSWORD_PARAMETER),
-        database=get_parameter(DB_NAME_PARAMETER),
+
+    logger.info(
+        "Starting database connection setup"
+    )
+
+    host = get_parameter(
+        DB_HOST_PARAMETER
+    )
+
+    logger.info(
+        "Database host parameter retrieved"
+    )
+
+    if DB_PORT_PARAMETER:
+
+        port = int(
+            get_parameter(
+                DB_PORT_PARAMETER
+            )
+        )
+
+    else:
+
+        port = 3306
+
+    logger.info(
+        "Database port: %s",
+        port,
+    )
+
+    username = get_parameter(
+        DB_USERNAME_PARAMETER
+    )
+
+    logger.info(
+        "Database username retrieved"
+    )
+
+    password = get_parameter(
+        DB_PASSWORD_PARAMETER
+    )
+
+    logger.info(
+        "Database password retrieved"
+    )
+
+    database = get_parameter(
+        DB_NAME_PARAMETER
+    )
+
+    logger.info(
+        "Database name retrieved: %s",
+        database,
+    )
+
+    logger.info(
+        "Connecting to RDS: %s:%s/%s",
+        host,
+        port,
+        database,
+    )
+
+    connection = pymysql.connect(
+        host=host,
+        port=port,
+        user=username,
+        password=password,
+        database=database,
         cursorclass=pymysql.cursors.DictCursor,
         connect_timeout=10,
         autocommit=True,
     )
 
+    logger.info(
+        "RDS connection established successfully"
+    )
+
+    return connection
+
+
+# ============================================================
+# BUILD REPORT
+# ============================================================
 
 def build_report(connection):
+
+    logger.info(
+        "Starting report generation"
+    )
+
     with connection.cursor() as cursor:
+
+        # ----------------------------------------------------
+        # PRODUCTS
+        # ----------------------------------------------------
+
+        logger.info(
+            "Querying products"
+        )
+
         cursor.execute(
             """
             SELECT
@@ -56,7 +238,21 @@ def build_report(connection):
             ORDER BY id
             """
         )
+
         products = cursor.fetchall()
+
+        logger.info(
+            "Products retrieved: %s",
+            len(products),
+        )
+
+        # ----------------------------------------------------
+        # ORDERS
+        # ----------------------------------------------------
+
+        logger.info(
+            "Querying recent orders"
+        )
 
         cursor.execute(
             """
@@ -75,10 +271,24 @@ def build_report(connection):
             LIMIT 50
             """
         )
+
         orders = cursor.fetchall()
 
+        logger.info(
+            "Orders retrieved: %s",
+            len(orders),
+        )
+
+    # --------------------------------------------------------
+    # CSV
+    # --------------------------------------------------------
+
     output = io.StringIO()
-    writer = csv.writer(output)
+
+    writer = csv.writer(
+        output
+    )
+
     writer.writerow(
         [
             "record_type",
@@ -97,14 +307,21 @@ def build_report(connection):
         ]
     )
 
+    # --------------------------------------------------------
+    # PRODUCT ROWS
+    # --------------------------------------------------------
+
     for product in products:
+
         writer.writerow(
             [
                 "PRODUCT",
                 product["id"],
                 product["name"],
                 product["stock"],
-                product["low_stock_threshold"],
+                product[
+                    "low_stock_threshold"
+                ],
                 product["is_active"],
                 "",
                 "",
@@ -116,7 +333,12 @@ def build_report(connection):
             ]
         )
 
+    # --------------------------------------------------------
+    # ORDER ROWS
+    # --------------------------------------------------------
+
     for order in orders:
+
         writer.writerow(
             [
                 "ORDER",
@@ -129,23 +351,98 @@ def build_report(connection):
                 order["customer_id"],
                 order["total_amount"],
                 order["status"],
-                order["failure_reason"] or "",
+                order[
+                    "failure_reason"
+                ] or "",
                 order["created_at"],
                 order["updated_at"],
             ]
         )
 
-    return output.getvalue().encode("utf-8")
+    report = output.getvalue().encode(
+        "utf-8"
+    )
+
+    logger.info(
+        "Report generated successfully: %s bytes",
+        len(report),
+    )
+
+    return report
 
 
-def lambda_handler(event, context):
+# ============================================================
+# LAMBDA HANDLER
+# ============================================================
+
+def lambda_handler(
+    event,
+    context,
+):
+
     connection = None
-    report_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    key = f"{REPORT_PREFIX.rstrip('/')}/daily-report-{report_date}.csv"
+
+    report_date = datetime.now(
+        timezone.utc
+    ).strftime(
+        "%Y-%m-%d"
+    )
+
+    key = (
+        f"{REPORT_PREFIX.rstrip('/')}"
+        f"/daily-report-{report_date}.csv"
+    )
+
+    logger.info(
+        "================================================"
+    )
+
+    logger.info(
+        "Starting CloudMart daily report"
+    )
+
+    logger.info(
+        "Environment: %s",
+        ENVIRONMENT,
+    )
+
+    logger.info(
+        "Report bucket: %s",
+        REPORT_BUCKET,
+    )
+
+    logger.info(
+        "Report key: %s",
+        key,
+    )
+
+    logger.info(
+        "================================================"
+    )
 
     try:
+
+        # ----------------------------------------------------
+        # DATABASE
+        # ----------------------------------------------------
+
         connection = get_connection()
-        report = build_report(connection)
+
+        # ----------------------------------------------------
+        # REPORT
+        # ----------------------------------------------------
+
+        report = build_report(
+            connection
+        )
+
+        # ----------------------------------------------------
+        # S3
+        # ----------------------------------------------------
+
+        logger.info(
+            "Uploading report to S3"
+        )
 
         s3.put_object(
             Bucket=REPORT_BUCKET,
@@ -156,7 +453,8 @@ def lambda_handler(event, context):
         )
 
         logger.info(
-            "Daily report written to s3://%s/%s",
+            "Daily report written successfully to "
+            "s3://%s/%s",
             REPORT_BUCKET,
             key,
         )
@@ -168,9 +466,19 @@ def lambda_handler(event, context):
         }
 
     except Exception:
-        logger.exception("Daily report generation failed")
+
+        logger.exception(
+            "Daily report generation failed"
+        )
+
         raise
 
     finally:
+
         if connection:
+
             connection.close()
+
+            logger.info(
+                "Database connection closed"
+            )
