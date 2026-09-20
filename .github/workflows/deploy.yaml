@@ -979,16 +979,37 @@ jobs:
             --function-name "CloudMart-${ENVIRONMENT}-daily-report" \
             --region "${AWS_REGION}" >/dev/null
 
+      - name: Check reporting Lambda configuration
+        run: |
+          aws lambda get-function-configuration \
+            --function-name "CloudMart-${ENVIRONMENT}-daily-report" \
+            --region "${AWS_REGION}" \
+            --query '{Timeout:Timeout,MemorySize:MemorySize,VpcConfig:VpcConfig}' \
+            --output json
+
       - name: Generate initial daily report
         run: |
-          aws lambda invoke \
+          set -e
+
+          rm -f reporting-response.json
+
+          FUNCTION_ERROR=$(aws lambda invoke \
             --function-name "CloudMart-${ENVIRONMENT}-daily-report" \
             --region "${AWS_REGION}" \
             --cli-binary-format raw-in-base64-out \
+            --cli-connect-timeout 30 \
+            --cli-read-timeout 300 \
             --payload '{}' \
-            reporting-response.json
+            --query 'FunctionError' \
+            --output text \
+            reporting-response.json)
 
           cat reporting-response.json
+
+          if [ "${FUNCTION_ERROR}" != "None" ] && [ "${FUNCTION_ERROR}" != "null" ]; then
+            echo "Daily report Lambda returned a function error: ${FUNCTION_ERROR}"
+            exit 1
+          fi
 
           aws s3api head-object \
             --bucket "${{ steps.deployment.outputs.bucket }}" \
