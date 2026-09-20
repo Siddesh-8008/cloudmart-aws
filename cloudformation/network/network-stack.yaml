@@ -285,11 +285,12 @@ Resources:
   # ------------------------------------------------------------
   # Lambda HTTPS access to S3 Gateway Endpoint
   #
-  # S3 Gateway Endpoints use route tables rather than
-  # EndpointSecurityGroup.
+  # S3 Gateway Endpoints use the AWS-managed S3 prefix list.
+  # They do not use the EndpointSecurityGroup.
   #
-  # PrefixListId identifies the AWS-managed S3 prefix list,
-  # allowing Lambda HTTPS traffic specifically to S3.
+  # This rule allows Lambda HTTPS traffic specifically to the
+  # S3 Gateway Endpoint instead of allowing HTTPS to the entire
+  # VPC CIDR.
   # ------------------------------------------------------------
 
   LambdaToS3:
@@ -300,7 +301,7 @@ Resources:
       FromPort: 443
       ToPort: 443
       DestinationPrefixListId: !GetAtt S3Endpoint.PrefixListId
-      Description: Lambda HTTPS access to S3 Gateway Endpoint
+      Description: Lambda HTTPS to S3 Gateway Endpoint
 
 
   # ============================================================
@@ -499,7 +500,7 @@ Resources:
         - !Ref EndpointSecurityGroup
 
 
-# ==============================================================
+# ============================================================== 
 # OUTPUTS
 # ==============================================================
 
