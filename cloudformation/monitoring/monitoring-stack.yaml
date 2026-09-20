@@ -1,0 +1,248 @@
+AWSTemplateFormatVersion: '2010-09-09'
+
+Description: >
+  CloudMart Milestone 5 monitoring stack.
+  Creates the operations CloudWatch dashboard, four alarms,
+  and one SNS notification topic.
+
+Parameters:
+
+  Environment:
+    Type: String
+    Default: dev
+    AllowedValues:
+      - dev
+      - prod
+
+  AlarmEmail:
+    Type: String
+    Description: Email address that receives CloudWatch alarm notifications.
+
+  DashboardSecurityGroupId:
+    Type: AWS::EC2::SecurityGroup::Id
+    Description: Existing EC2 security group attached to the dashboard instance.
+
+  OperationsCidr:
+    Type: String
+    Description: CIDR allowed to access the EC2 dashboard over HTTP.
+
+Resources:
+
+  MonitoringAlarmTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub cloudmart-${Environment}-monitoring-alarms
+      Tags:
+        - Key: Project
+          Value: CloudMart
+        - Key: Environment
+          Value: !Ref Environment
+
+  MonitoringAlarmSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      TopicArn: !Ref MonitoringAlarmTopic
+      Protocol: email
+      Endpoint: !Ref AlarmEmail
+
+  OrdersPlacedAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub CloudMart-${Environment}-OrdersPlaced
+      AlarmDescription: Alarm when at least one order is placed in a five-minute period.
+      Namespace: CloudMart/Operations
+      MetricName: OrdersPlaced
+      Dimensions:
+        - Name: Environment
+          Value: !Ref Environment
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref MonitoringAlarmTopic
+
+  OrdersFailedAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub CloudMart-${Environment}-OrdersFailed
+      AlarmDescription: Alarm when at least one order fails in a five-minute period.
+      Namespace: CloudMart/Operations
+      MetricName: OrdersFailed
+      Dimensions:
+        - Name: Environment
+          Value: !Ref Environment
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref MonitoringAlarmTopic
+
+  LowStockEventsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub CloudMart-${Environment}-LowStockEvents
+      AlarmDescription: Alarm when at least one low-stock event is published in five minutes.
+      Namespace: CloudMart/Operations
+      MetricName: LowStockEvents
+      Dimensions:
+        - Name: Environment
+          Value: !Ref Environment
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref MonitoringAlarmTopic
+
+  OrderCancelledAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub CloudMart-${Environment}-ordercancelled
+      AlarmDescription: Alarm when at least one order is cancelled in five minutes.
+      Namespace: CloudMart/Operations
+      MetricName: ordercancelled
+      Dimensions:
+        - Name: Environment
+          Value: !Ref Environment
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref MonitoringAlarmTopic
+
+  OperationsDashboard:
+    Type: AWS::CloudWatch::Dashboard
+    Properties:
+      DashboardName: !Sub cloudmart-operations
+      DashboardBody: !Sub |
+        {
+          "start": "-PT6H",
+          "periodOverride": "inherit",
+          "widgets": [
+            {
+              "type": "metric",
+              "x": 0,
+              "y": 0,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "title": "Orders Placed",
+                "view": "timeSeries",
+                "region": "${AWS::Region}",
+                "stat": "Sum",
+                "period": 300,
+                "metrics": [["CloudMart/Operations", "OrdersPlaced", "Environment", "${Environment}"]]
+              }
+            },
+            {
+              "type": "metric",
+              "x": 12,
+              "y": 0,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "title": "Orders Failed",
+                "view": "timeSeries",
+                "region": "${AWS::Region}",
+                "stat": "Sum",
+                "period": 300,
+                "metrics": [["CloudMart/Operations", "OrdersFailed", "Environment", "${Environment}"]]
+              }
+            },
+            {
+              "type": "metric",
+              "x": 0,
+              "y": 6,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "title": "Low Stock Events",
+                "view": "timeSeries",
+                "region": "${AWS::Region}",
+                "stat": "Sum",
+                "period": 300,
+                "metrics": [["CloudMart/Operations", "LowStockEvents", "Environment", "${Environment}"]]
+              }
+            },
+            {
+              "type": "metric",
+              "x": 12,
+              "y": 6,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "title": "Order Cancelled",
+                "view": "timeSeries",
+                "region": "${AWS::Region}",
+                "stat": "Sum",
+                "period": 300,
+                "metrics": [["CloudMart/Operations", "ordercancelled", "Environment", "${Environment}"]]
+              }
+            },
+            {
+              "type": "metric",
+              "x": 0,
+              "y": 12,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "title": "Order Processor Lambda Errors",
+                "view": "timeSeries",
+                "region": "${AWS::Region}",
+                "stat": "Sum",
+                "period": 300,
+                "metrics": [["AWS/Lambda", "Errors", "FunctionName", "CloudMart-${Environment}-order-processor"]]
+              }
+            },
+            {
+              "type": "metric",
+              "x": 12,
+              "y": 12,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "title": "RDS CPU Utilization",
+                "view": "timeSeries",
+                "region": "${AWS::Region}",
+                "stat": "Average",
+                "period": 300,
+                "metrics": [["AWS/RDS", "CPUUtilization", "DBInstanceIdentifier", "CloudMart-${Environment}-mysql"]]
+              }
+            }
+          ]
+        }
+
+  DashboardHttpIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref DashboardSecurityGroupId
+      IpProtocol: tcp
+      FromPort: 80
+      ToPort: 80
+      CidrIp: !Ref OperationsCidr
+      Description: Operations team HTTP access to Flask dashboard
+
+Outputs:
+
+  MonitoringAlarmTopicArn:
+    Description: SNS topic for CloudWatch alarm notifications
+    Value: !Ref MonitoringAlarmTopic
+    Export:
+      Name: !Sub CloudMart-${Environment}-MonitoringAlarmTopicArn
+
+  OperationsDashboardName:
+    Description: CloudWatch operations dashboard name
+    Value: !Sub cloudmart-operations
+    Export:
+      Name: !Sub CloudMart-${Environment}-OperationsDashboardName
