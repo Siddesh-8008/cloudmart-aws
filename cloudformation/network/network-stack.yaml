@@ -401,11 +401,14 @@ Resources:
 
 
   # ============================================================
-  # DASHBOARD EC2 IAM ROLE
+  # CLOUDFORMATION-MANAGED DASHBOARD EC2 IAM ROLE
   #
   # IMPORTANT:
-  # This uses a NEW IAM role name so it does not conflict with
-  # the existing role used by the old manually-created EC2.
+  # This is deliberately different from the existing role:
+  #
+  # CloudMart-dev-dashboard-ec2-role
+  #
+  # used by the old manually-created EC2.
   # ============================================================
 
   DashboardEC2Role:
@@ -421,6 +424,7 @@ Resources:
         Version: '2012-10-17'
 
         Statement:
+
           - Effect: Allow
 
             Principal:
@@ -434,11 +438,9 @@ Resources:
       Policies:
 
         # --------------------------------------------------------
-        # READ DATABASE PARAMETERS
+        # CURRENT DASHBOARD DATABASE PARAMETERS
         #
-        # Kept for the current dashboard deployment.
-        # We can remove this when dashboard configuration is
-        # migrated completely from SSM to RDS.
+        # This is retained for the current dashboard deployment.
         # --------------------------------------------------------
 
         - PolicyName: DashboardReadDatabaseParameters
@@ -506,11 +508,10 @@ Resources:
 
 
   # ============================================================
-  # DASHBOARD EC2 INSTANCE PROFILE
+  # CLOUDFORMATION-MANAGED DASHBOARD INSTANCE PROFILE
   #
-  # IMPORTANT:
-  # This also uses a NEW name so it does not conflict with the
-  # existing profile used by the old EC2.
+  # NEW NAME:
+  # CloudMart-dev-dashboard-cfn-ec2-profile
   # ============================================================
 
   DashboardEC2InstanceProfile:
@@ -541,10 +542,6 @@ Resources:
       InstanceType: !Ref EC2InstanceType
 
       KeyName: !Ref KeyPairName
-
-      # ----------------------------------------------------------
-      # NEW CLOUDFORMATION-MANAGED IAM INSTANCE PROFILE
-      # ----------------------------------------------------------
 
       IamInstanceProfile: !Ref DashboardEC2InstanceProfile
 
@@ -743,7 +740,6 @@ Outputs:
   VpcId:
     Description: CloudMart VPC ID
     Value: !Ref VPC
-
     Export:
       Name: !Sub CloudMart-${Environment}-VpcId
 
@@ -751,7 +747,6 @@ Outputs:
   PublicSubnetId:
     Description: Public subnet for EC2 Flask dashboard
     Value: !Ref PublicSubnetA
-
     Export:
       Name: !Sub CloudMart-${Environment}-PublicSubnetId
 
@@ -759,7 +754,6 @@ Outputs:
   PrivateSubnetAId:
     Description: Private subnet A for Lambda and RDS
     Value: !Ref PrivateSubnetA
-
     Export:
       Name: !Sub CloudMart-${Environment}-PrivateSubnetAId
 
@@ -767,7 +761,6 @@ Outputs:
   PrivateSubnetBId:
     Description: Private subnet B for Lambda and RDS
     Value: !Ref PrivateSubnetB
-
     Export:
       Name: !Sub CloudMart-${Environment}-PrivateSubnetBId
 
@@ -775,7 +768,6 @@ Outputs:
   LambdaSecurityGroupId:
     Description: Lambda security group ID
     Value: !Ref LambdaSecurityGroup
-
     Export:
       Name: !Sub CloudMart-${Environment}-LambdaSecurityGroupId
 
@@ -783,7 +775,6 @@ Outputs:
   EC2SecurityGroupId:
     Description: EC2 security group ID
     Value: !Ref EC2SecurityGroup
-
     Export:
       Name: !Sub CloudMart-${Environment}-EC2SecurityGroupId
 
@@ -791,7 +782,6 @@ Outputs:
   RDSSecurityGroupId:
     Description: RDS security group ID
     Value: !Ref RDSSecurityGroup
-
     Export:
       Name: !Sub CloudMart-${Environment}-RDSSecurityGroupId
 
@@ -799,38 +789,18 @@ Outputs:
   EndpointSecurityGroupId:
     Description: VPC endpoint security group ID
     Value: !Ref EndpointSecurityGroup
-
     Export:
       Name: !Sub CloudMart-${Environment}-EndpointSecurityGroupId
 
 
+  # ============================================================
+  # DASHBOARD EC2 INSTANCE
+  #
+  # This is the output consumed by the dashboard deployment job.
+  # ============================================================
+
   DashboardInstanceId:
     Description: CloudMart dashboard EC2 instance ID
     Value: !Ref DashboardEC2
-
     Export:
       Name: !Sub CloudMart-${Environment}-DashboardInstanceId
-
-
-  # ============================================================
-  # CLOUDFORMATION-MANAGED DASHBOARD ROLE
-  # ============================================================
-
-  DashboardEC2RoleArn:
-    Description: ARN of the CloudFormation-managed dashboard EC2 IAM role
-    Value: !GetAtt DashboardEC2Role.Arn
-
-    Export:
-      Name: !Sub CloudMart-${Environment}-DashboardEC2RoleArn
-
-
-  # ============================================================
-  # CLOUDFORMATION-MANAGED DASHBOARD INSTANCE PROFILE
-  # ============================================================
-
-  DashboardEC2InstanceProfileArn:
-    Description: ARN of the CloudFormation-managed dashboard EC2 instance profile
-    Value: !GetAtt DashboardEC2InstanceProfile.Arn
-
-    Export:
-      Name: !Sub CloudMart-${Environment}-DashboardEC2InstanceProfileArn
