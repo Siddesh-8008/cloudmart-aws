@@ -859,6 +859,10 @@ jobs:
             dashboard/templates/index.html \
             dashboard-build/dashboard/templates/index.html
 
+          cp \
+            dashboard/templates/login.html \
+            dashboard-build/dashboard/templates/login.html
+
           (
             cd dashboard-build
             zip -qr ../dashboard.zip dashboard
@@ -999,3 +1003,4 @@ jobs:
             --region "${AWS_REGION}" \
             --query "Stacks[0].Outputs" \
             --output table
+            

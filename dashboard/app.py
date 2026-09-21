@@ -4,7 +4,16 @@ from datetime import datetime, timezone
 
 import boto3
 import pymysql
-from flask import Flask, render_template
+from flask import (
+    Flask,
+    render_template,
+    request,
+    redirect,
+    url_for,
+    session
+)
+
+import hmac
 
 
 # ============================================================
@@ -12,6 +21,54 @@ from flask import Flask, render_template
 # ============================================================
 
 app = Flask(__name__)
+
+
+# ============================================================
+# FLASK SESSION CONFIGURATION
+# ============================================================
+
+FLASK_SECRET_KEY_FILE = os.environ.get(
+    "FLASK_SECRET_KEY_FILE",
+    "/etc/cloudmart-dashboard/flask-secret"
+)
+
+
+def load_flask_secret_key():
+
+    secret_key = os.environ.get(
+        "FLASK_SECRET_KEY"
+    )
+
+    if secret_key:
+
+        return secret_key
+
+    with open(
+        FLASK_SECRET_KEY_FILE,
+        "r",
+        encoding="utf-8"
+    ) as secret_file:
+
+        secret_key = secret_file.read().strip()
+
+    if not secret_key:
+
+        raise RuntimeError(
+            "Flask session secret is empty"
+        )
+
+    return secret_key
+
+
+app.secret_key = load_flask_secret_key()
+
+app.config[
+    "SESSION_COOKIE_HTTPONLY"
+] = True
+
+app.config[
+    "SESSION_COOKIE_SAMESITE"
+] = "Lax"
 
 
 # ============================================================
@@ -64,6 +121,15 @@ REPORT_BUCKET = os.environ[
 
 
 # ============================================================
+# ADMIN AUTHENTICATION PARAMETER
+# ============================================================
+
+ADMIN_AUTH_TOKEN_PARAMETER = os.environ[
+    "ADMIN_AUTH_TOKEN_PARAMETER"
+]
+
+
+# ============================================================
 # AWS CLIENTS
 # ============================================================
 
@@ -88,6 +154,108 @@ def get_parameter(name):
         Name=name,
         WithDecryption=True
     )["Parameter"]["Value"]
+
+
+# ============================================================
+# ADMIN AUTHENTICATION
+# ============================================================
+
+def get_admin_token():
+
+    return get_parameter(
+        ADMIN_AUTH_TOKEN_PARAMETER
+    )
+
+
+def is_authenticated():
+
+    return session.get(
+        "authenticated",
+        False
+    )
+
+
+# ============================================================
+# ADMIN LOGIN
+# ============================================================
+
+@app.route(
+    "/login",
+    methods=["GET", "POST"]
+)
+def login():
+
+    if is_authenticated():
+
+        return redirect(
+            url_for("dashboard")
+        )
+
+    error = None
+
+    if request.method == "POST":
+
+        entered_token = request.form.get(
+            "token",
+            ""
+        ).strip()
+
+        if not entered_token:
+
+            error = "Admin token is required."
+
+        else:
+
+            try:
+
+                admin_token = get_admin_token()
+
+                if hmac.compare_digest(
+                    entered_token,
+                    admin_token
+                ):
+
+                    session.clear()
+
+                    session["authenticated"] = True
+
+                    return redirect(
+                        url_for("dashboard")
+                    )
+
+                error = "Invalid admin token."
+
+            except Exception:
+
+                app.logger.exception(
+                    "Failed to validate admin token"
+                )
+
+                error = (
+                    "Unable to validate authentication. "
+                    "Please try again."
+                )
+
+    response = render_template(
+        "login.html",
+        error=error
+    )
+
+    return response
+
+
+# ============================================================
+# ADMIN LOGOUT
+# ============================================================
+
+@app.route("/logout")
+def logout():
+
+    session.clear()
+
+    return redirect(
+        url_for("login")
+    )
 
 
 # ============================================================
@@ -407,6 +575,12 @@ def get_latest_report():
 
 @app.route("/")
 def dashboard():
+
+    if not is_authenticated():
+
+        return redirect(
+            url_for("login")
+        )
 
     database_error = None
 

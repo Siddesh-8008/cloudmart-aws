@@ -1,0 +1,201 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+
+  <meta charset="utf-8">
+
+  <meta
+    name="viewport"
+    content="width=device-width, initial-scale=1"
+  >
+
+  <title>CloudMart Admin Login</title>
+
+  <style>
+
+    :root {
+      --bg: #07111f;
+      --panel: #0d1b2d;
+      --line: rgba(255,255,255,.09);
+      --text: #e8f0f7;
+      --muted: #8fa4b8;
+      --cyan: #55d6ff;
+      --red: #ff6f7d;
+      --shadow: 0 18px 50px rgba(0,0,0,.25);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background:
+        radial-gradient(
+          circle at 10% 0%,
+          rgba(85,214,255,.12),
+          transparent 28%
+        ),
+        radial-gradient(
+          circle at 100% 10%,
+          rgba(80,216,144,.08),
+          transparent 24%
+        ),
+        var(--bg);
+      color: var(--text);
+      font-family:
+        Inter,
+        ui-sans-serif,
+        system-ui,
+        -apple-system,
+        BlinkMacSystemFont,
+        "Segoe UI",
+        sans-serif;
+    }
+
+    .login-card {
+      width: min(420px, calc(100% - 36px));
+      padding: 32px;
+      background:
+        linear-gradient(
+          145deg,
+          rgba(17,36,58,.96),
+          rgba(9,24,40,.96)
+        );
+      border: 1px solid var(--line);
+      border-radius: 20px;
+      box-shadow: var(--shadow);
+    }
+
+    .eyebrow {
+      color: var(--cyan);
+      font-size: 12px;
+      font-weight: 800;
+      letter-spacing: .16em;
+      text-transform: uppercase;
+      margin-bottom: 10px;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 30px;
+      letter-spacing: -.03em;
+    }
+
+    .subtitle {
+      margin-top: 8px;
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.5;
+    }
+
+    label {
+      display: block;
+      margin-top: 26px;
+      margin-bottom: 8px;
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    input {
+      width: 100%;
+      padding: 13px 14px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: rgba(255,255,255,.04);
+      color: var(--text);
+      outline: none;
+      font-size: 14px;
+    }
+
+    input:focus {
+      border-color: var(--cyan);
+    }
+
+    button {
+      width: 100%;
+      margin-top: 16px;
+      padding: 13px 14px;
+      border: 0;
+      border-radius: 10px;
+      background: var(--cyan);
+      color: #04101b;
+      font-weight: 800;
+      cursor: pointer;
+      font-size: 13px;
+    }
+
+    .error {
+      margin-top: 16px;
+      padding: 11px;
+      border: 1px solid rgba(255,111,125,.25);
+      border-radius: 10px;
+      background: rgba(255,111,125,.06);
+      color: #ffb3bc;
+      font-size: 12px;
+      line-height: 1.5;
+    }
+
+  </style>
+
+</head>
+
+<body>
+
+  <main class="login-card">
+
+    <div class="eyebrow">
+      CloudMart · Operations
+    </div>
+
+    <h1>
+      Admin Login
+    </h1>
+
+    <div class="subtitle">
+      Enter the CloudMart admin token
+      to access the Operations Command Center.
+    </div>
+
+    <form
+      method="POST"
+      action="{{ url_for('login') }}"
+    >
+
+      <label for="token">
+        Admin Token
+      </label>
+
+      <input
+        id="token"
+        name="token"
+        type="password"
+        placeholder="Enter admin token"
+        autocomplete="off"
+        required
+      >
+
+      <button type="submit">
+        Login
+      </button>
+
+    </form>
+
+    {% if error %}
+
+      <div class="error">
+        {{ error }}
+      </div>
+
+    {% endif %}
+
+  </main>
+
+</body>
+
+</html>

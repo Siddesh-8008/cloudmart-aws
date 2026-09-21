@@ -460,6 +460,9 @@ Resources:
                   - !Sub
                     arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/password
 
+                  - !Sub
+                    arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/auth/admin-token
+
 
         # --------------------------------------------------------
         # READ REPORTS
@@ -628,7 +631,8 @@ Resources:
               python3.12 \
               python3.12-pip \
               nginx \
-              unzip
+              unzip \
+              openssl
 
 
             # --------------------------------------------------
@@ -684,6 +688,23 @@ Resources:
 
 
             # --------------------------------------------------
+            # FLASK SESSION SECRET
+            # --------------------------------------------------
+
+            mkdir -p /etc/cloudmart-dashboard
+
+            if [ ! -s /etc/cloudmart-dashboard/flask-secret ]; then
+
+              openssl rand -hex 32 \
+                > /etc/cloudmart-dashboard/flask-secret
+
+              chmod 600 \
+                /etc/cloudmart-dashboard/flask-secret
+
+            fi
+
+
+            # --------------------------------------------------
             # SYSTEMD SERVICE
             # --------------------------------------------------
 
@@ -721,6 +742,10 @@ Resources:
             Environment=DB_USERNAME_PARAMETER=/cloudmart/${Environment}/db/username
 
             Environment=DB_PASSWORD_PARAMETER=/cloudmart/${Environment}/db/password
+
+            Environment=ADMIN_AUTH_TOKEN_PARAMETER=/cloudmart/${Environment}/auth/admin-token
+
+            Environment=FLASK_SECRET_KEY_FILE=/etc/cloudmart-dashboard/flask-secret
 
             Environment=REPORT_BUCKET=${ReportsBucketName}
 
