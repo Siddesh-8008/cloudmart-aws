@@ -1,3 +1,4 @@
+
 AWSTemplateFormatVersion: '2010-09-09'
 
 Description: CloudMart network stack
@@ -305,6 +306,23 @@ Resources:
       ToPort: 443
       DestinationSecurityGroupId: !Ref EndpointSecurityGroup
       Description: Dashboard to VPC endpoints
+
+
+  # ============================================================
+  # EC2 HTTPS OUTBOUND
+  # Required for HTTPS access to external AWS endpoints such as
+  # Amazon Linux repositories.
+  # ============================================================
+
+  EC2ToHttps:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      GroupId: !Ref EC2SecurityGroup
+      IpProtocol: tcp
+      FromPort: 443
+      ToPort: 443
+      CidrIp: 0.0.0.0/0
+      Description: Dashboard HTTPS outbound access
 
 
   EC2FromOperationsIngress:
