@@ -3,8 +3,8 @@ AWSTemplateFormatVersion: '2010-09-09'
 Description: >
   CloudMart Authentication Stack.
   Creates the Lambda Authorizer used by API Gateway.
-  Customer and admin authentication are handled using RDS MySQL.
-  Only SHA-256 token hashes are stored in the database.
+  Admin authentication is handled using SSM.
+  Customer authentication is handled using RDS MySQL.
 
 
 Parameters:
@@ -29,6 +29,19 @@ Parameters:
   LambdaSecurityGroupId:
     Type: AWS::EC2::SecurityGroup::Id
     Description: Security group for the Lambda Authorizer
+
+
+  # ============================================================
+  # ADMIN TOKEN
+  # ============================================================
+
+  AdminAuthTokenParameterName:
+    Type: String
+    Default: /cloudmart/dev/auth/admin-token
+
+    Description: >
+      SSM String containing the CloudMart
+      admin authentication token
 
 
   # ============================================================
@@ -176,6 +189,14 @@ Resources:
 
           ENVIRONMENT:
             !Ref Environment
+
+
+          # ----------------------------------------------------
+          # ADMIN TOKEN
+          # ----------------------------------------------------
+
+          ADMIN_AUTH_TOKEN_PARAMETER:
+            !Ref AdminAuthTokenParameterName
 
 
           # ----------------------------------------------------

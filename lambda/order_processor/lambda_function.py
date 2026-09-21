@@ -20,7 +20,6 @@ logger.setLevel(logging.INFO)
 
 ssm = boto3.client("ssm")
 events = boto3.client("events")
-cloudwatch = boto3.client("cloudwatch")
 
 
 # ============================================================
@@ -37,38 +36,6 @@ DB_PORT_PARAMETER = os.environ.get("DB_PORT_PARAMETER")
 DB_NAME_PARAMETER = os.environ["DB_NAME_PARAMETER"]
 DB_USERNAME_PARAMETER = os.environ["DB_USERNAME_PARAMETER"]
 DB_PASSWORD_PARAMETER = os.environ["DB_PASSWORD_PARAMETER"]
-
-
-# ============================================================
-# CUSTOM CLOUDWATCH METRICS
-# ============================================================
-
-def publish_metric(metric_name, value=1):
-
-    try:
-
-        cloudwatch.put_metric_data(
-            Namespace="CloudMart/Operations",
-            MetricData=[
-                {
-                    "MetricName": metric_name,
-                    "Dimensions": [
-                        {
-                            "Name": "Environment",
-                            "Value": os.environ.get("ENVIRONMENT", "dev")
-                        }
-                    ],
-                    "Value": value,
-                    "Unit": "Count"
-                }
-            ]
-        )
-
-    except Exception:
-        logger.exception(
-            "Failed to publish CloudWatch metric %s",
-            metric_name
-        )
 
 
 # ============================================================
@@ -886,8 +853,6 @@ def create_order(event):
                 }
             )
 
-            publish_metric("OrdersPlaced")
-
             # ------------------------------------------------
             # LOW STOCK EVENTS
             # ------------------------------------------------
@@ -912,8 +877,6 @@ def create_order(event):
                             ]
                     }
                 )
-
-                publish_metric("LowStockEvents")
 
             # ------------------------------------------------
             # RESPONSE
@@ -1012,8 +975,6 @@ def create_order(event):
                             str(exc)
                     }
                 )
-
-                publish_metric("OrdersFailed")
 
             except Exception:
 
@@ -1977,8 +1938,6 @@ def cancel_order(event):
                         cancelled_by
                 }
             )
-
-            publish_metric("ordercancelled")
 
             # ------------------------------------------------
             # RESPONSE

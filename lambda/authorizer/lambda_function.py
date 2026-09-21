@@ -148,8 +148,7 @@ def generate_policy(
     principal_id,
     resources,
     role,
-    customer_id=None,
-    admin_id=None
+    customer_id=None
 ):
 
     response = {
@@ -188,10 +187,10 @@ def generate_policy(
     }
 
     if customer_id:
-        response["context"]["customerId"] = customer_id
 
-    if admin_id:
-        response["context"]["adminId"] = admin_id
+        response["context"]["customerId"] = (
+            customer_id
+        )
 
     return response
 
@@ -249,108 +248,106 @@ def get_customer_resources(method_arn):
 
 
 # ============================================================
-# FIND AUTHENTICATION RECORD BY ID + TOKEN
-#
-# The client sends:
-#   customerId + Bearer token  -> customer
-#   adminId    + Bearer token  -> admin
-#
-# Only the SHA-256 hash is compared with the RDS value.
-# The plaintext token is never stored in RDS.
+# FIND CUSTOMER BY CUSTOMER ID + TOKEN
 # ============================================================
 
-def find_auth_record(customer_id=None, admin_id=None, supplied_token=""):
+def find_customer_by_credentials(
+    customer_id,
+    supplied_token
+):
 
-    token_hash = hash_token(supplied_token)
+    token_hash = hash_token(
+        supplied_token
+    )
 
     connection = None
 
     try:
+
         connection = get_db_connection()
 
         with connection.cursor() as cursor:
 
-            if admin_id:
-                cursor.execute(
-                    """
-                    SELECT
-                        admin_id,
-                        customer_id,
-                        role,
-                        is_active,
-                        expires_at,
-                        token_hash
-                    FROM customer_auth_tokens
-                    WHERE admin_id = %s
-                      AND role = 'admin'
-                      AND is_active = TRUE
-                      AND token_hash = %s
-                    LIMIT 1
-                    """,
-                    (admin_id, token_hash)
+            cursor.execute(
+                """
+                SELECT
+                    c.customer_id,
+                    c.name,
+                    c.email,
+                    c.status,
+                    t.token_hash,
+                    t.is_active,
+                    t.expires_at
+                FROM customer_auth_tokens t
+                INNER JOIN customers c
+                    ON c.customer_id = t.customer_id
+                WHERE t.customer_id = %s
+                  AND t.is_active = TRUE
+                  AND c.status = 'ACTIVE'
+                  AND t.token_hash = %s
+                LIMIT 1
+                """,
+                (
+                    customer_id,
+                    token_hash,
                 )
-            else:
-                cursor.execute(
-                    """
-                    SELECT
-                        admin_id,
-                        customer_id,
-                        role,
-                        is_active,
-                        expires_at,
-                        token_hash
-                    FROM customer_auth_tokens
-                    WHERE customer_id = %s
-                      AND role = 'customer'
-                      AND is_active = TRUE
-                      AND token_hash = %s
-                    LIMIT 1
-                    """,
-                    (customer_id, token_hash)
-                )
+            )
 
-            record = cursor.fetchone()
+            customer = cursor.fetchone()
 
-        if not record:
+        if not customer:
+
             return None
 
-        if record["expires_at"]:
+
+        # ====================================================
+        # OPTIONAL EXPIRATION CHECK
+        # ====================================================
+
+        if customer["expires_at"]:
+
             from datetime import datetime, timezone
 
-            expires_at = record["expires_at"]
-            now = datetime.now(timezone.utc).replace(tzinfo=None)
+            expires_at = customer[
+                "expires_at"
+            ]
+
+            now = datetime.now(
+                timezone.utc
+            ).replace(
+                tzinfo=None
+            )
 
             if expires_at <= now:
+
                 return None
 
-        with connection.cursor() as cursor:
-            if admin_id:
-                cursor.execute(
-                    """
-                    UPDATE customer_auth_tokens
-                    SET last_used_at = CURRENT_TIMESTAMP
-                    WHERE admin_id = %s
-                      AND role = 'admin'
-                      AND token_hash = %s
-                    """,
-                    (admin_id, token_hash)
-                )
-            else:
-                cursor.execute(
-                    """
-                    UPDATE customer_auth_tokens
-                    SET last_used_at = CURRENT_TIMESTAMP
-                    WHERE customer_id = %s
-                      AND role = 'customer'
-                      AND token_hash = %s
-                    """,
-                    (customer_id, token_hash)
-                )
 
-        return record
+        # ====================================================
+        # UPDATE LAST USED
+        # ====================================================
+
+        with connection.cursor() as cursor:
+
+            cursor.execute(
+                """
+                UPDATE customer_auth_tokens
+                SET last_used_at = CURRENT_TIMESTAMP
+                WHERE customer_id = %s
+                  AND token_hash = %s
+                """,
+                (
+                    customer_id,
+                    token_hash,
+                )
+            )
+
+        return customer
 
     finally:
+
         if connection:
+
             connection.close()
 
 
@@ -505,114 +502,204 @@ def handler(event, context):
 
 
     # ========================================================
-    # CUSTOMER / ADMIN ID FROM QUERY STRING
-    #
-    # Both identifiers are mandatory:
-    #   customer -> customerId
-    #   admin    -> adminId
-    #
-    # Exactly one must be supplied.
+    # CUSTOMER ID FROM QUERY STRING
     # ========================================================
 
-    query_parameters = event.get("queryStringParameters") or {}
+    query_parameters = event.get(
+        "queryStringParameters"
+    ) or {}
 
-    customer_id = query_parameters.get("customerId")
-    admin_id = query_parameters.get("adminId")
+    customer_id = query_parameters.get(
+        "customerId"
+    )
 
     if customer_id is not None:
-        customer_id = str(customer_id).strip()
 
-    if admin_id is not None:
-        admin_id = str(admin_id).strip()
+        customer_id = str(
+            customer_id
+        ).strip()
 
-    if bool(customer_id) == bool(admin_id):
-        print(
-            json.dumps({
-                "event": "token_validation",
-                "result": "exactly_one_identity_required"
-            })
-        )
-        raise Exception("customerId or adminId is required")
+
+    # Admin authentication is checked first, so admin requests
+    # do not need a customerId query parameter.
 
 
     # ========================================================
-    # TOKEN -> RDS
+    # ADMIN TOKEN
     #
-    # The supplied token is hashed with SHA-256 and compared
-    # with token_hash in customer_auth_tokens.
+    # Admin token is stored in SSM as a normal String.
+    # No SecureString.
+    # No KMS decryption.
+    # ========================================================
+
+    admin_parameter = os.environ.get(
+        "ADMIN_AUTH_TOKEN_PARAMETER"
+    )
+
+    if admin_parameter:
+
+        try:
+
+            admin_token = get_parameter(
+                admin_parameter
+            )
+
+            if hmac.compare_digest(
+                supplied_token,
+                admin_token
+            ):
+
+                print(
+                    json.dumps({
+
+                        "event":
+                            "token_validation",
+
+                        "result":
+                            "success",
+
+                        "role":
+                            "admin"
+
+                    })
+                )
+
+                return generate_policy(
+
+                    effect="Allow",
+
+                    principal_id=
+                        "cloudmart-admin",
+
+                    resources=
+                        get_admin_resources(
+                            method_arn
+                        ),
+
+                    role="admin"
+                )
+
+        except Exception as error:
+
+            print(
+                json.dumps({
+
+                    "event":
+                        "admin_validation_error",
+
+                    "error":
+                        str(error)
+
+                })
+            )
+
+
+    # ========================================================
+    # CUSTOMER ID IS MANDATORY FOR CUSTOMER AUTHENTICATION
+    # ========================================================
+
+    if not customer_id:
+
+        print(
+            json.dumps({
+
+                "event":
+                    "token_validation",
+
+                "result":
+                    "customerId_required"
+
+            })
+        )
+
+        raise Exception(
+            "customerId is required"
+        )
+
+
+    # ========================================================
+    # CUSTOMER TOKEN -> RDS
     # ========================================================
 
     try:
-        auth_record = find_auth_record(
-            customer_id=customer_id,
-            admin_id=admin_id,
-            supplied_token=supplied_token
+
+        customer = find_customer_by_credentials(
+
+            customer_id,
+
+            supplied_token
+
         )
 
     except Exception as error:
-        print(
-            json.dumps({
-                "level": "ERROR",
-                "event": "token_validation_database_error",
-                "error": str(error)
-            })
-        )
-        raise Exception("Unauthorized")
-
-
-    if not auth_record:
-        print(
-            json.dumps({
-                "event": "token_validation",
-                "result": "invalid_credentials"
-            })
-        )
-        raise Exception("Unauthorized")
-
-
-    # ========================================================
-    # ADMIN AUTHORIZATION
-    # ========================================================
-
-    if auth_record["role"] == "admin":
 
         print(
             json.dumps({
-                "event": "token_validation",
-                "result": "success",
-                "role": "admin",
-                "adminId": auth_record["admin_id"]
+
+                "level":
+                    "ERROR",
+
+                "event":
+                    "customer_token_database_error",
+
+                "error":
+                    str(error)
+
             })
         )
 
-        return generate_policy(
-            effect="Allow",
-            principal_id=f"admin-{auth_record['admin_id']}",
-            resources=get_admin_resources(method_arn),
-            role="admin",
-            admin_id=auth_record["admin_id"]
+        raise Exception(
+            "Unauthorized"
         )
 
 
     # ========================================================
-    # CUSTOMER AUTHORIZATION
+    # CUSTOMER NOT FOUND
     # ========================================================
+
+    if not customer:
+
+        print(
+            json.dumps({
+
+                "event":
+                    "token_validation",
+
+                "result":
+                    "invalid_customer_credentials"
+
+            })
+        )
+
+        raise Exception(
+            "Unauthorized"
+        )
+
+
+    # ========================================================
+    # CUSTOMER AUTHORIZED
+    # ========================================================
+
+    customer_id = customer[
+        "customer_id"
+    ]
 
     print(
         json.dumps({
-            "event": "token_validation",
-            "result": "success",
-            "role": "customer",
-            "customerId": auth_record["customer_id"]
-        })
-    )
 
-    return generate_policy(
-        effect="Allow",
-        principal_id=f"customer-{auth_record['customer_id']}",
-        resources=get_customer_resources(method_arn),
-        role="customer",
-        customer_id=auth_record["customer_id"]
+            "event":
+                "token_validation",
+
+            "result":
+                "success",
+
+            "role":
+                "customer",
+
+            "customerId":
+                customer_id
+
+        })
     )
 
 
