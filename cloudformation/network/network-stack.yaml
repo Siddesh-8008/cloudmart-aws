@@ -376,6 +376,7 @@ Resources:
       ServiceName: !Sub com.amazonaws.${AWS::Region}.s3
       RouteTableIds:
         - !Ref PrivateRouteTable
+        - !Ref PublicRouteTable
 
 
   # ============================================================
