@@ -46,6 +46,12 @@ Parameters:
     Description: S3 key for the daily report Lambda ZIP
 
 
+  ReportsBucketName:
+    Type: String
+    Default: cloudmart-dev-reports-550684041874
+    Description: Existing S3 bucket containing CloudMart daily reports
+
+
   LatestAmiId:
     Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
 
@@ -58,55 +64,6 @@ Parameters:
 # ==============================================================
 
 Resources:
-
-
-  # ============================================================
-  # REPORTS S3 BUCKET
-  # ============================================================
-
-  ReportsBucket:
-    Type: AWS::S3::Bucket
-
-    DeletionPolicy: Retain
-    UpdateReplacePolicy: Retain
-
-    Properties:
-
-      BucketName:
-        !Sub cloudmart-${Environment}-reports-${AWS::AccountId}
-
-      PublicAccessBlockConfiguration:
-
-        BlockPublicAcls: true
-
-        BlockPublicPolicy: true
-
-        IgnorePublicAcls: true
-
-        RestrictPublicBuckets: true
-
-      VersioningConfiguration:
-
-        Status: Enabled
-
-      BucketEncryption:
-
-        ServerSideEncryptionConfiguration:
-
-          - ServerSideEncryptionByDefault:
-
-              SSEAlgorithm: AES256
-
-      Tags:
-
-        - Key: Project
-          Value: CloudMart
-
-        - Key: Environment
-          Value: !Ref Environment
-
-        - Key: Purpose
-          Value: OperationsReports
 
 
   # ============================================================
@@ -358,11 +315,8 @@ Resources:
           ENVIRONMENT:
             !Ref Environment
 
-          AWS_REGION:
-            !Ref AWS::Region
-
           REPORT_BUCKET:
-            !Ref ReportsBucket
+            !Ref ReportsBucketName
 
           DB_HOST_PARAMETER:
             !Sub
@@ -522,7 +476,8 @@ Resources:
                   - s3:ListBucket
 
                 Resource:
-                  - !GetAtt ReportsBucket.Arn
+                  - !Sub
+                    arn:${AWS::Partition}:s3:::${ReportsBucketName}
 
 
               - Effect: Allow
@@ -532,7 +487,7 @@ Resources:
 
                 Resource:
                   - !Sub
-                    ${ReportsBucket.Arn}/*
+                    arn:${AWS::Partition}:s3:::${ReportsBucketName}/*
 
 
         # --------------------------------------------------------
@@ -765,7 +720,7 @@ Resources:
 
             Environment=DB_PASSWORD_PARAMETER=/cloudmart/${Environment}/db/password
 
-            Environment=REPORT_BUCKET=${ReportsBucket}
+            Environment=REPORT_BUCKET=${ReportsBucketName}
 
             ExecStart=/opt/cloudmart-dashboard/venv/bin/gunicorn --workers 2 --bind 127.0.0.1:8000 app:app
 
@@ -1453,7 +1408,7 @@ Outputs:
       S3 bucket containing CloudMart daily CSV reports
 
     Value:
-      !Ref ReportsBucket
+      !Ref ReportsBucketName
 
     Export:
       Name:
@@ -1466,7 +1421,7 @@ Outputs:
       ARN of the CloudMart reports bucket
 
     Value:
-      !GetAtt ReportsBucket.Arn
+      !Sub arn:${AWS::Partition}:s3:::${ReportsBucketName}
 
     Export:
       Name:
