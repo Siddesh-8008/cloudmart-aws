@@ -23,6 +23,11 @@ logger.setLevel(logging.INFO)
 ssm = boto3.client("ssm")
 s3 = boto3.client("s3")
 
+logger.info(
+    "S3 client endpoint: %s",
+    s3.meta.endpoint_url
+)
+
 
 # ============================================================
 # ENVIRONMENT
@@ -67,10 +72,22 @@ DB_PASSWORD_PARAMETER = os.environ[
 
 def get_parameter(name):
 
-    return ssm.get_parameter(
+    logger.info(
+        "Getting SSM parameter: %s",
+        name
+    )
+
+    value = ssm.get_parameter(
         Name=name,
         WithDecryption=True
     )["Parameter"]["Value"]
+
+    logger.info(
+        "Successfully got SSM parameter: %s",
+        name
+    )
+
+    return value
 
 
 # ============================================================
@@ -79,7 +96,11 @@ def get_parameter(name):
 
 def get_connection():
 
-    return pymysql.connect(
+    logger.info(
+        "Starting RDS connection"
+    )
+
+    connection = pymysql.connect(
         host=get_parameter(
             DB_HOST_PARAMETER
         ),
@@ -113,6 +134,12 @@ def get_connection():
         autocommit=True
     )
 
+    logger.info(
+        "RDS connection established"
+    )
+
+    return connection
+
 
 # ============================================================
 # BUILD DAILY REPORT
@@ -126,6 +153,11 @@ def build_report():
 
     report_date = generated_at.date()
 
+    logger.info(
+        "Building daily report for date: %s",
+        report_date
+    )
+
     connection = get_connection()
 
     try:
@@ -135,6 +167,10 @@ def build_report():
             # ------------------------------------------------
             # CURRENT INVENTORY
             # ------------------------------------------------
+
+            logger.info(
+                "Fetching current inventory"
+            )
 
             cursor.execute(
                 """
@@ -160,10 +196,18 @@ def build_report():
 
             inventory = cursor.fetchall()
 
+            logger.info(
+                "Current inventory fetched successfully"
+            )
+
 
             # ------------------------------------------------
             # TODAY'S ORDERS
             # ------------------------------------------------
+
+            logger.info(
+                "Fetching today's orders"
+            )
 
             cursor.execute(
                 """
@@ -191,10 +235,18 @@ def build_report():
 
             orders = cursor.fetchall()
 
+            logger.info(
+                "Today's orders fetched successfully"
+            )
+
 
             # ------------------------------------------------
             # ORDER SUMMARY
             # ------------------------------------------------
+
+            logger.info(
+                "Fetching order summary"
+            )
 
             cursor.execute(
                 """
@@ -224,10 +276,18 @@ def build_report():
 
             summary = cursor.fetchall()
 
+            logger.info(
+                "Order summary fetched successfully"
+            )
+
 
         # ====================================================
         # CREATE CSV
         # ====================================================
+
+        logger.info(
+            "Creating CSV report"
+        )
 
         output = io.StringIO()
 
@@ -370,12 +430,20 @@ def build_report():
             )
 
 
+        logger.info(
+            "CSV report created successfully"
+        )
+
         return output.getvalue()
 
 
     finally:
 
         connection.close()
+
+        logger.info(
+            "RDS connection closed"
+        )
 
 
 # ============================================================
@@ -393,11 +461,31 @@ def lambda_handler(
 
     report_date = generated_at.date()
 
+    logger.info(
+        "Daily report Lambda started"
+    )
+
 
     try:
 
+        # ----------------------------------------------------
+        # BUILD REPORT
+        # ----------------------------------------------------
+
+        logger.info(
+            "Starting report generation"
+        )
+
         csv_content = build_report()
 
+        logger.info(
+            "Report generation completed"
+        )
+
+
+        # ----------------------------------------------------
+        # S3 OBJECT KEY
+        # ----------------------------------------------------
 
         key = (
             f"daily/"
@@ -407,6 +495,16 @@ def lambda_handler(
             f".csv"
         )
 
+
+        # ----------------------------------------------------
+        # UPLOAD REPORT TO S3
+        # ----------------------------------------------------
+
+        logger.info(
+            "Uploading report to S3: s3://%s/%s",
+            REPORT_BUCKET,
+            key
+        )
 
         s3.put_object(
             Bucket=REPORT_BUCKET,
