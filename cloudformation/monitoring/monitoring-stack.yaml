@@ -514,7 +514,7 @@ Resources:
 
                 Resource:
                   - !Sub
-                    arn:${AWS::Partition}:s3:::${DashboardArtifactBucketName}/${DashboardArtifactKey}
+                    arn:${AWS::Partition}:s3:::${DashboardArtifactBucketName}/*
 
 
   # ============================================================
