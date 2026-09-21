@@ -1,4 +1,3 @@
-
 import csv
 import io
 import logging
@@ -448,4 +447,3 @@ def lambda_handler(
         )
 
         raise exc
-
