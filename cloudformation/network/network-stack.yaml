@@ -403,46 +403,67 @@ Resources:
   # ============================================================
   # DASHBOARD EC2 IAM ROLE
   #
-  # NEW:
-  # The role is created in the same stack as the EC2.
-  # This avoids a circular dependency between Network and IAM.
+  # IMPORTANT:
+  # This uses a NEW IAM role name so it does not conflict with
+  # the existing role used by the old manually-created EC2.
   # ============================================================
 
   DashboardEC2Role:
     Type: AWS::IAM::Role
-    Properties:
-      RoleName: !Sub CloudMart-${Environment}-dashboard-ec2-role
 
-      Description: Least-privilege role for the CloudMart Flask operations dashboard
+    Properties:
+
+      RoleName: !Sub CloudMart-${Environment}-dashboard-cfn-ec2-role
+
+      Description: IAM role for the CloudFormation-managed CloudMart Flask dashboard EC2 instance
 
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
+
         Statement:
           - Effect: Allow
+
             Principal:
               Service:
                 - ec2.amazonaws.com
+
             Action:
               - sts:AssumeRole
+
 
       Policies:
 
         # --------------------------------------------------------
         # READ DATABASE PARAMETERS
+        #
+        # Kept for the current dashboard deployment.
+        # We can remove this when dashboard configuration is
+        # migrated completely from SSM to RDS.
         # --------------------------------------------------------
 
         - PolicyName: DashboardReadDatabaseParameters
+
           PolicyDocument:
+
             Version: '2012-10-17'
+
             Statement:
+
               - Effect: Allow
+
                 Action:
                   - ssm:GetParameter
+
                 Resource:
+
                   - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/host
+
                   - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/port
+
                   - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/name
+
                   - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/username
+
                   - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/password
 
 
@@ -451,36 +472,54 @@ Resources:
         # --------------------------------------------------------
 
         - PolicyName: DashboardReadReports
+
           PolicyDocument:
+
             Version: '2012-10-17'
+
             Statement:
 
               - Effect: Allow
+
                 Action:
                   - s3:ListBucket
+
                 Resource:
                   - !Sub arn:${AWS::Partition}:s3:::cloudmart-${Environment}-lambda-artifacts-${AWS::AccountId}
+
                 Condition:
+
                   StringLike:
+
                     s3:prefix:
                       - reports/
                       - reports/*
 
+
               - Effect: Allow
+
                 Action:
                   - s3:GetObject
+
                 Resource:
                   - !Sub arn:${AWS::Partition}:s3:::cloudmart-${Environment}-lambda-artifacts-${AWS::AccountId}/reports/*
 
 
   # ============================================================
   # DASHBOARD EC2 INSTANCE PROFILE
+  #
+  # IMPORTANT:
+  # This also uses a NEW name so it does not conflict with the
+  # existing profile used by the old EC2.
   # ============================================================
 
   DashboardEC2InstanceProfile:
     Type: AWS::IAM::InstanceProfile
+
     Properties:
-      InstanceProfileName: !Sub CloudMart-${Environment}-dashboard-ec2-profile
+
+      InstanceProfileName: !Sub CloudMart-${Environment}-dashboard-cfn-ec2-profile
+
       Roles:
         - !Ref DashboardEC2Role
 
@@ -496,13 +535,17 @@ Resources:
       - DashboardEC2InstanceProfile
 
     Properties:
+
       ImageId: !Ref EC2AmiId
+
       InstanceType: !Ref EC2InstanceType
+
       KeyName: !Ref KeyPairName
 
       # ----------------------------------------------------------
-      # IAM INSTANCE PROFILE
+      # NEW CLOUDFORMATION-MANAGED IAM INSTANCE PROFILE
       # ----------------------------------------------------------
+
       IamInstanceProfile: !Ref DashboardEC2InstanceProfile
 
       SubnetId: !Ref PublicSubnetA
@@ -511,6 +554,7 @@ Resources:
         - !Ref EC2SecurityGroup
 
       Tags:
+
         - Key: Name
           Value: !Sub CloudMart-${Environment}-dashboard
 
@@ -527,10 +571,15 @@ Resources:
 
   S3Endpoint:
     Type: AWS::EC2::VPCEndpoint
+
     Properties:
+
       VpcId: !Ref VPC
+
       VpcEndpointType: Gateway
+
       ServiceName: !Sub com.amazonaws.${AWS::Region}.s3
+
       RouteTableIds:
         - !Ref PrivateRouteTable
 
@@ -541,14 +590,21 @@ Resources:
 
   SNSEndpoint:
     Type: AWS::EC2::VPCEndpoint
+
     Properties:
+
       VpcId: !Ref VPC
+
       VpcEndpointType: Interface
+
       ServiceName: !Sub com.amazonaws.${AWS::Region}.sns
+
       PrivateDnsEnabled: true
+
       SubnetIds:
         - !Ref PrivateSubnetA
         - !Ref PrivateSubnetB
+
       SecurityGroupIds:
         - !Ref EndpointSecurityGroup
 
@@ -559,14 +615,21 @@ Resources:
 
   LogsEndpoint:
     Type: AWS::EC2::VPCEndpoint
+
     Properties:
+
       VpcId: !Ref VPC
+
       VpcEndpointType: Interface
+
       ServiceName: !Sub com.amazonaws.${AWS::Region}.logs
+
       PrivateDnsEnabled: true
+
       SubnetIds:
         - !Ref PrivateSubnetA
         - !Ref PrivateSubnetB
+
       SecurityGroupIds:
         - !Ref EndpointSecurityGroup
 
@@ -577,14 +640,21 @@ Resources:
 
   MonitoringEndpoint:
     Type: AWS::EC2::VPCEndpoint
+
     Properties:
+
       VpcId: !Ref VPC
+
       VpcEndpointType: Interface
+
       ServiceName: !Sub com.amazonaws.${AWS::Region}.monitoring
+
       PrivateDnsEnabled: true
+
       SubnetIds:
         - !Ref PrivateSubnetA
         - !Ref PrivateSubnetB
+
       SecurityGroupIds:
         - !Ref EndpointSecurityGroup
 
@@ -595,14 +665,21 @@ Resources:
 
   SSMEndpoint:
     Type: AWS::EC2::VPCEndpoint
+
     Properties:
+
       VpcId: !Ref VPC
+
       VpcEndpointType: Interface
+
       ServiceName: !Sub com.amazonaws.${AWS::Region}.ssm
+
       PrivateDnsEnabled: true
+
       SubnetIds:
         - !Ref PrivateSubnetA
         - !Ref PrivateSubnetB
+
       SecurityGroupIds:
         - !Ref EndpointSecurityGroup
 
@@ -613,14 +690,21 @@ Resources:
 
   KMSEndpoint:
     Type: AWS::EC2::VPCEndpoint
+
     Properties:
+
       VpcId: !Ref VPC
+
       VpcEndpointType: Interface
+
       ServiceName: !Sub com.amazonaws.${AWS::Region}.kms
+
       PrivateDnsEnabled: true
+
       SubnetIds:
         - !Ref PrivateSubnetA
         - !Ref PrivateSubnetB
+
       SecurityGroupIds:
         - !Ref EndpointSecurityGroup
 
@@ -631,14 +715,21 @@ Resources:
 
   EventBridgeEndpoint:
     Type: AWS::EC2::VPCEndpoint
+
     Properties:
+
       VpcId: !Ref VPC
+
       VpcEndpointType: Interface
+
       ServiceName: !Sub com.amazonaws.${AWS::Region}.events
+
       PrivateDnsEnabled: true
+
       SubnetIds:
         - !Ref PrivateSubnetA
         - !Ref PrivateSubnetB
+
       SecurityGroupIds:
         - !Ref EndpointSecurityGroup
 
@@ -652,6 +743,7 @@ Outputs:
   VpcId:
     Description: CloudMart VPC ID
     Value: !Ref VPC
+
     Export:
       Name: !Sub CloudMart-${Environment}-VpcId
 
@@ -659,6 +751,7 @@ Outputs:
   PublicSubnetId:
     Description: Public subnet for EC2 Flask dashboard
     Value: !Ref PublicSubnetA
+
     Export:
       Name: !Sub CloudMart-${Environment}-PublicSubnetId
 
@@ -666,6 +759,7 @@ Outputs:
   PrivateSubnetAId:
     Description: Private subnet A for Lambda and RDS
     Value: !Ref PrivateSubnetA
+
     Export:
       Name: !Sub CloudMart-${Environment}-PrivateSubnetAId
 
@@ -673,6 +767,7 @@ Outputs:
   PrivateSubnetBId:
     Description: Private subnet B for Lambda and RDS
     Value: !Ref PrivateSubnetB
+
     Export:
       Name: !Sub CloudMart-${Environment}-PrivateSubnetBId
 
@@ -680,6 +775,7 @@ Outputs:
   LambdaSecurityGroupId:
     Description: Lambda security group ID
     Value: !Ref LambdaSecurityGroup
+
     Export:
       Name: !Sub CloudMart-${Environment}-LambdaSecurityGroupId
 
@@ -687,6 +783,7 @@ Outputs:
   EC2SecurityGroupId:
     Description: EC2 security group ID
     Value: !Ref EC2SecurityGroup
+
     Export:
       Name: !Sub CloudMart-${Environment}-EC2SecurityGroupId
 
@@ -694,6 +791,7 @@ Outputs:
   RDSSecurityGroupId:
     Description: RDS security group ID
     Value: !Ref RDSSecurityGroup
+
     Export:
       Name: !Sub CloudMart-${Environment}-RDSSecurityGroupId
 
@@ -701,6 +799,7 @@ Outputs:
   EndpointSecurityGroupId:
     Description: VPC endpoint security group ID
     Value: !Ref EndpointSecurityGroup
+
     Export:
       Name: !Sub CloudMart-${Environment}-EndpointSecurityGroupId
 
@@ -708,27 +807,30 @@ Outputs:
   DashboardInstanceId:
     Description: CloudMart dashboard EC2 instance ID
     Value: !Ref DashboardEC2
+
     Export:
       Name: !Sub CloudMart-${Environment}-DashboardInstanceId
 
 
   # ============================================================
-  # NEW: DASHBOARD ROLE OUTPUT
+  # CLOUDFORMATION-MANAGED DASHBOARD ROLE
   # ============================================================
 
   DashboardEC2RoleArn:
-    Description: ARN of the CloudMart dashboard EC2 IAM role
+    Description: ARN of the CloudFormation-managed dashboard EC2 IAM role
     Value: !GetAtt DashboardEC2Role.Arn
+
     Export:
       Name: !Sub CloudMart-${Environment}-DashboardEC2RoleArn
 
 
   # ============================================================
-  # NEW: DASHBOARD INSTANCE PROFILE OUTPUT
+  # CLOUDFORMATION-MANAGED DASHBOARD INSTANCE PROFILE
   # ============================================================
 
   DashboardEC2InstanceProfileArn:
-    Description: ARN of the CloudMart dashboard EC2 instance profile
+    Description: ARN of the CloudFormation-managed dashboard EC2 instance profile
     Value: !GetAtt DashboardEC2InstanceProfile.Arn
+
     Export:
       Name: !Sub CloudMart-${Environment}-DashboardEC2InstanceProfileArn
