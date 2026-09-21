@@ -451,6 +451,26 @@ Resources:
 
 
   # ============================================================
+  # SSM MESSAGES INTERFACE ENDPOINT
+  # Required for AWS Systems Manager Session Manager
+  # and Run Command communication.
+  # ============================================================
+
+  SSMMessagesEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref VPC
+      VpcEndpointType: Interface
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.ssmmessages
+      PrivateDnsEnabled: true
+      SubnetIds:
+        - !Ref PrivateSubnetA
+        - !Ref PrivateSubnetB
+      SecurityGroupIds:
+        - !Ref EndpointSecurityGroup
+
+
+  # ============================================================
   # KMS INTERFACE ENDPOINT
   # Required for private Lambda access to KMS
   # when decrypting SecureString SSM parameters.
@@ -548,5 +568,3 @@ Outputs:
     Value: !Ref EndpointSecurityGroup
     Export:
       Name: !Sub CloudMart-${Environment}-EndpointSecurityGroupId
-
-
