@@ -386,22 +386,6 @@ Resources:
 
 
   # ============================================================
-  # DAILY REPORT LOG GROUP
-  # ============================================================
-
-  DailyReportLogGroup:
-    Type: AWS::Logs::LogGroup
-
-    Properties:
-
-      LogGroupName:
-        !Sub /aws/lambda/CloudMart-${Environment}-daily-report
-
-      RetentionInDays:
-        14
-
-
-  # ============================================================
   # DAILY REPORT EVENTBRIDGE SCHEDULE
   #
   # 18:00 UTC = 23:30 IST
