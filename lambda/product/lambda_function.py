@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+from datetime import datetime, timezone
 
 import boto3
 import pymysql
@@ -31,6 +32,39 @@ EVENT_BUS_NAME = os.environ.get(
     "EVENT_BUS_NAME",
     "cloudmart-dev-event-bus"
 )
+
+
+# ============================================================
+# CLOUDWATCH CUSTOM METRIC
+# ============================================================
+
+def publish_metric(metric_name, value=1):
+
+    logger.info(
+        json.dumps(
+            {
+                "_aws": {
+                    "Timestamp": int(
+                        datetime.now(timezone.utc).timestamp() * 1000
+                    ),
+                    "CloudWatchMetrics": [
+                        {
+                            "Namespace": "CloudMart/Operations",
+                            "Dimensions": [["Environment"]],
+                            "Metrics": [
+                                {
+                                    "Name": metric_name,
+                                    "Unit": "Count"
+                                }
+                            ]
+                        }
+                    ]
+                },
+                "Environment": ENVIRONMENT,
+                metric_name: value
+            }
+        )
+    )
 
 
 # ============================================================
@@ -218,6 +252,10 @@ def publish_low_stock_event(
         raise Exception(
             "Failed to publish low stock event"
         )
+
+    publish_metric(
+        "LowStockEvents"
+    )
 
 
     logger.info(

@@ -318,6 +318,17 @@ Resources:
       Description: Operations team HTTPS access
 
 
+  EC2FromOperationsHttpIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref EC2SecurityGroup
+      IpProtocol: tcp
+      FromPort: 80
+      ToPort: 80
+      CidrIp: !Ref OperationsCidr
+      Description: Operations team HTTP access to dashboard
+
+
   # ============================================================
   # RDS SECURITY GROUP RULES
   # ============================================================

@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+from datetime import datetime, timezone
 
 import boto3
 import pymysql
@@ -185,6 +186,39 @@ def get_authenticated_role(event):
     return str(
         role
     ).lower()
+
+
+# ============================================================
+# CLOUDWATCH CUSTOM METRIC
+# ============================================================
+
+def publish_metric(metric_name, value=1):
+
+    logger.info(
+        json.dumps(
+            {
+                "_aws": {
+                    "Timestamp": int(
+                        datetime.now(timezone.utc).timestamp() * 1000
+                    ),
+                    "CloudWatchMetrics": [
+                        {
+                            "Namespace": "CloudMart/Operations",
+                            "Dimensions": [["Environment"]],
+                            "Metrics": [
+                                {
+                                    "Name": metric_name,
+                                    "Unit": "Count"
+                                }
+                            ]
+                        }
+                    ]
+                },
+                "Environment": os.environ.get("ENVIRONMENT", "dev"),
+                metric_name: value
+            }
+        )
+    )
 
 
 # ============================================================
@@ -853,6 +887,10 @@ def create_order(event):
                 }
             )
 
+            publish_metric(
+                "OrdersPlaced"
+            )
+
             # ------------------------------------------------
             # LOW STOCK EVENTS
             # ------------------------------------------------
@@ -974,6 +1012,10 @@ def create_order(event):
                         "reason":
                             str(exc)
                     }
+                )
+
+                publish_metric(
+                    "OrdersFailed"
                 )
 
             except Exception:

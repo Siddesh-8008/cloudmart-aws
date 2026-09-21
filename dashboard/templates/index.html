@@ -1,0 +1,1540 @@
+
+<!doctype html>
+<html lang="en">
+
+<head>
+
+  <meta charset="utf-8">
+
+  <meta
+    name="viewport"
+    content="width=device-width, initial-scale=1"
+  >
+
+  <meta
+    http-equiv="refresh"
+    content="60"
+  >
+
+  <title>
+    CloudMart Operations Center
+  </title>
+
+
+  <style>
+
+    :root {
+
+      --bg: #07111f;
+
+      --panel: #0d1b2d;
+
+      --panel-2: #11243a;
+
+      --line:
+        rgba(255,255,255,.09);
+
+      --text: #e8f0f7;
+
+      --muted: #8fa4b8;
+
+      --cyan: #55d6ff;
+
+      --green: #50d890;
+
+      --amber: #ffca63;
+
+      --red: #ff6f7d;
+
+      --shadow:
+        0 18px 50px rgba(0,0,0,.25);
+    }
+
+
+    * {
+      box-sizing: border-box;
+    }
+
+
+    body {
+
+      margin: 0;
+
+      background:
+        radial-gradient(
+          circle at 10% 0%,
+          rgba(85,214,255,.12),
+          transparent 28%
+        ),
+
+        radial-gradient(
+          circle at 100% 10%,
+          rgba(80,216,144,.08),
+          transparent 24%
+        ),
+
+        var(--bg);
+
+      color: var(--text);
+
+      font-family:
+        Inter,
+        ui-sans-serif,
+        system-ui,
+        -apple-system,
+        BlinkMacSystemFont,
+        "Segoe UI",
+        sans-serif;
+    }
+
+
+    .shell {
+
+      width:
+        min(
+          1440px,
+          calc(100% - 36px)
+        );
+
+      margin: 0 auto;
+
+      padding:
+        28px 0 44px;
+    }
+
+
+    .topbar {
+
+      display: flex;
+
+      justify-content:
+        space-between;
+
+      align-items:
+        flex-end;
+
+      gap: 20px;
+
+      margin-bottom: 24px;
+    }
+
+
+    .eyebrow {
+
+      color:
+        var(--cyan);
+
+      font-size: 12px;
+
+      font-weight: 800;
+
+      letter-spacing:
+        .16em;
+
+      text-transform:
+        uppercase;
+
+      margin-bottom: 8px;
+    }
+
+
+    h1 {
+
+      margin: 0;
+
+      font-size:
+        clamp(
+          28px,
+          4vw,
+          46px
+        );
+
+      letter-spacing:
+        -.04em;
+    }
+
+
+    .subtitle {
+
+      color:
+        var(--muted);
+
+      margin-top: 8px;
+
+      font-size: 14px;
+    }
+
+
+    .environment {
+
+      border:
+        1px solid var(--line);
+
+      background:
+        rgba(13,27,45,.82);
+
+      padding:
+        12px 15px;
+
+      border-radius:
+        14px;
+
+      text-align:
+        right;
+
+      box-shadow:
+        var(--shadow);
+    }
+
+
+    .environment span {
+
+      display: block;
+
+      color:
+        var(--muted);
+
+      font-size: 11px;
+
+      text-transform:
+        uppercase;
+
+      letter-spacing:
+        .1em;
+    }
+
+
+    .environment strong {
+
+      display: block;
+
+      margin-top: 3px;
+
+      color:
+        var(--green);
+
+      font-size: 16px;
+    }
+
+
+    .stats {
+
+      display: grid;
+
+      grid-template-columns:
+        repeat(4, 1fr);
+
+      gap: 14px;
+
+      margin-bottom: 18px;
+    }
+
+
+    .card {
+
+      background:
+        linear-gradient(
+          145deg,
+          rgba(17,36,58,.94),
+          rgba(9,24,40,.94)
+        );
+
+      border:
+        1px solid var(--line);
+
+      border-radius:
+        18px;
+
+      box-shadow:
+        var(--shadow);
+    }
+
+
+    .stat {
+
+      padding: 20px;
+
+      min-height: 125px;
+
+      position: relative;
+
+      overflow: hidden;
+    }
+
+
+    .stat::after {
+
+      content: "";
+
+      position: absolute;
+
+      width: 90px;
+
+      height: 90px;
+
+      right: -35px;
+
+      bottom: -45px;
+
+      border-radius: 50%;
+
+      background:
+        rgba(85,214,255,.08);
+    }
+
+
+    .stat-label {
+
+      color:
+        var(--muted);
+
+      font-size: 12px;
+
+      font-weight: 700;
+
+      text-transform:
+        uppercase;
+
+      letter-spacing:
+        .08em;
+    }
+
+
+    .stat-value {
+
+      margin-top: 12px;
+
+      font-size: 36px;
+
+      font-weight: 800;
+
+      letter-spacing:
+        -.04em;
+    }
+
+
+    .stat-note {
+
+      color:
+        var(--muted);
+
+      font-size: 12px;
+
+      margin-top: 3px;
+    }
+
+
+    .main-grid {
+
+      display: grid;
+
+      grid-template-columns:
+        1.35fr .65fr;
+
+      gap: 18px;
+
+      align-items:
+        start;
+    }
+
+
+    .section {
+
+      padding: 20px;
+    }
+
+
+    .section-head {
+
+      display: flex;
+
+      justify-content:
+        space-between;
+
+      align-items:
+        center;
+
+      gap: 15px;
+
+      margin-bottom: 16px;
+    }
+
+
+    .section-title {
+
+      margin: 0;
+
+      font-size: 17px;
+    }
+
+
+    .section-description {
+
+      color:
+        var(--muted);
+
+      font-size: 12px;
+
+      margin-top: 4px;
+    }
+
+
+    .badge {
+
+      display: inline-flex;
+
+      align-items: center;
+
+      gap: 6px;
+
+      border:
+        1px solid var(--line);
+
+      border-radius:
+        999px;
+
+      padding:
+        7px 10px;
+
+      font-size: 11px;
+
+      color:
+        var(--muted);
+
+      white-space:
+        nowrap;
+    }
+
+
+    .badge.ok {
+      color:
+        var(--green);
+    }
+
+
+    .badge.warn {
+      color:
+        var(--amber);
+    }
+
+
+    .badge.bad {
+      color:
+        var(--red);
+    }
+
+
+    .dot {
+
+      width: 7px;
+
+      height: 7px;
+
+      border-radius: 50%;
+
+      background:
+        currentColor;
+    }
+
+
+    .table-wrap {
+
+      overflow-x:
+        auto;
+
+      border:
+        1px solid var(--line);
+
+      border-radius:
+        13px;
+    }
+
+
+    table {
+
+      width: 100%;
+
+      border-collapse:
+        collapse;
+
+      min-width:
+        650px;
+    }
+
+
+    th,
+    td {
+
+      padding:
+        12px 13px;
+
+      text-align:
+        left;
+
+      border-bottom:
+        1px solid var(--line);
+
+      font-size: 12px;
+    }
+
+
+    th {
+
+      color:
+        var(--muted);
+
+      font-size: 10px;
+
+      text-transform:
+        uppercase;
+
+      letter-spacing:
+        .08em;
+
+      background:
+        rgba(255,255,255,.025);
+    }
+
+
+    tr:last-child td {
+
+      border-bottom:
+        0;
+    }
+
+
+    .number {
+
+      text-align:
+        right;
+    }
+
+
+    .status {
+
+      display:
+        inline-flex;
+
+      border-radius:
+        999px;
+
+      padding:
+        5px 8px;
+
+      font-size: 10px;
+
+      font-weight: 800;
+
+      letter-spacing:
+        .04em;
+    }
+
+
+    .healthy,
+    .confirmed {
+
+      color:
+        var(--green);
+
+      background:
+        rgba(80,216,144,.1);
+    }
+
+
+    .low,
+    .pending {
+
+      color:
+        var(--amber);
+
+      background:
+        rgba(255,202,99,.1);
+    }
+
+
+    .failed,
+    .cancelled {
+
+      color:
+        var(--red);
+
+      background:
+        rgba(255,111,125,.1);
+    }
+
+
+    .side-stack {
+
+      display:
+        grid;
+
+      gap: 18px;
+    }
+
+
+    .report-card {
+
+      padding: 22px;
+
+      background:
+        linear-gradient(
+          145deg,
+          rgba(24,58,68,.9),
+          rgba(10,28,44,.96)
+        );
+    }
+
+
+    .report-icon {
+
+      width: 48px;
+
+      height: 48px;
+
+      display:
+        grid;
+
+      place-items:
+        center;
+
+      border-radius:
+        14px;
+
+      background:
+        rgba(85,214,255,.1);
+
+      color:
+        var(--cyan);
+
+      font-size: 22px;
+
+      margin-bottom:
+        14px;
+    }
+
+
+    .report-name {
+
+      font-weight:
+        750;
+
+      word-break:
+        break-word;
+
+      margin-top:
+        9px;
+    }
+
+
+    .report-time {
+
+      color:
+        var(--muted);
+
+      font-size: 11px;
+
+      margin-top:
+        6px;
+    }
+
+
+    .button {
+
+      display:
+        inline-flex;
+
+      justify-content:
+        center;
+
+      width: 100%;
+
+      margin-top:
+        17px;
+
+      padding:
+        12px 14px;
+
+      border-radius:
+        11px;
+
+      background:
+        var(--cyan);
+
+      color:
+        #04101b;
+
+      font-weight:
+        800;
+
+      text-decoration:
+        none;
+
+      font-size:
+        12px;
+    }
+
+
+    .health-list {
+
+      display:
+        grid;
+
+      gap: 11px;
+    }
+
+
+    .health-row {
+
+      display:
+        flex;
+
+      justify-content:
+        space-between;
+
+      gap: 15px;
+
+      padding:
+        12px 0;
+
+      border-bottom:
+        1px solid var(--line);
+    }
+
+
+    .health-row:last-child {
+
+      border-bottom:
+        0;
+    }
+
+
+    .health-row span {
+
+      color:
+        var(--muted);
+
+      font-size:
+        12px;
+    }
+
+
+    .health-row strong {
+
+      font-size:
+        12px;
+    }
+
+
+    .error {
+
+      border:
+        1px solid rgba(255,111,125,.25);
+
+      background:
+        rgba(255,111,125,.06);
+
+      color:
+        #ffb3bc;
+
+      padding:
+        12px;
+
+      border-radius:
+        11px;
+
+      font-size:
+        12px;
+
+      line-height:
+        1.5;
+
+      word-break:
+        break-word;
+    }
+
+
+    .footer {
+
+      margin-top:
+        18px;
+
+      color:
+        var(--muted);
+
+      font-size:
+        11px;
+
+      text-align:
+        right;
+    }
+
+
+    @media (max-width: 1000px) {
+
+      .stats {
+
+        grid-template-columns:
+          repeat(2, 1fr);
+      }
+
+      .main-grid {
+
+        grid-template-columns:
+          1fr;
+      }
+    }
+
+
+    @media (max-width: 600px) {
+
+      .shell {
+
+        width:
+          min(
+            100% - 22px,
+            1440px
+          );
+      }
+
+      .topbar {
+
+        align-items:
+          flex-start;
+
+        flex-direction:
+          column;
+      }
+
+      .environment {
+
+        text-align:
+          left;
+      }
+
+      .stats {
+
+        grid-template-columns:
+          1fr;
+      }
+
+      .stat-value {
+
+        font-size:
+          31px;
+      }
+    }
+
+  </style>
+
+</head>
+
+
+<body>
+
+<main class="shell">
+
+
+  <!-- ====================================================== -->
+  <!-- HEADER -->
+  <!-- ====================================================== -->
+
+  <header class="topbar">
+
+    <div>
+
+      <div class="eyebrow">
+        CloudMart · Operations
+      </div>
+
+      <h1>
+        Operations Command Center
+      </h1>
+
+      <div class="subtitle">
+        Live inventory, order activity and reporting visibility
+        in one place.
+      </div>
+
+    </div>
+
+
+    <div class="environment">
+
+      <span>
+        Environment
+      </span>
+
+      <strong>
+        {{ environment|upper }}
+      </strong>
+
+    </div>
+
+  </header>
+
+
+  <!-- ====================================================== -->
+  <!-- SUMMARY -->
+  <!-- ====================================================== -->
+
+  <section class="stats">
+
+
+    <article class="card stat">
+
+      <div class="stat-label">
+        Active Products
+      </div>
+
+      <div class="stat-value">
+        {{ stats.product_count }}
+      </div>
+
+      <div class="stat-note">
+        Current catalog inventory
+      </div>
+
+    </article>
+
+
+    <article class="card stat">
+
+      <div class="stat-label">
+        Low Stock
+      </div>
+
+      <div class="stat-value">
+        {{ stats.low_stock_count }}
+      </div>
+
+      <div class="stat-note">
+        At or below threshold
+      </div>
+
+    </article>
+
+
+    <article class="card stat">
+
+      <div class="stat-label">
+        Orders Today
+      </div>
+
+      <div class="stat-value">
+        {{ stats.today_orders }}
+      </div>
+
+      <div class="stat-note">
+        Created since midnight
+      </div>
+
+    </article>
+
+
+    <article class="card stat">
+
+      <div class="stat-label">
+        Failed Today
+      </div>
+
+      <div class="stat-value">
+        {{ stats.today_failed }}
+      </div>
+
+      <div class="stat-note">
+        Orders requiring attention
+      </div>
+
+    </article>
+
+  </section>
+
+
+  <!-- ====================================================== -->
+  <!-- MAIN -->
+  <!-- ====================================================== -->
+
+  <div class="main-grid">
+
+
+    <!-- ==================================================== -->
+    <!-- INVENTORY -->
+    <!-- ==================================================== -->
+
+    <section class="card section">
+
+      <div class="section-head">
+
+        <div>
+
+          <h2 class="section-title">
+            Current Product Inventory
+          </h2>
+
+          <div class="section-description">
+            Sorted with low-stock products first.
+          </div>
+
+        </div>
+
+
+        {% if database_ok %}
+
+          <div class="badge ok">
+
+            <span class="dot"></span>
+
+            Database connected
+
+          </div>
+
+        {% else %}
+
+          <div class="badge bad">
+
+            <span class="dot"></span>
+
+            Database unavailable
+
+          </div>
+
+        {% endif %}
+
+      </div>
+
+
+      {% if database_error %}
+
+        <div class="error">
+
+          The dashboard could not read RDS right now:
+
+          {{ database_error }}
+
+        </div>
+
+      {% else %}
+
+        <div class="table-wrap">
+
+          <table>
+
+            <thead>
+
+              <tr>
+
+                <th>
+                  Product
+                </th>
+
+                <th class="number">
+                  Price
+                </th>
+
+                <th class="number">
+                  Stock
+                </th>
+
+                <th class="number">
+                  Threshold
+                </th>
+
+                <th>
+                  Status
+                </th>
+
+              </tr>
+
+            </thead>
+
+
+            <tbody>
+
+              {% for product in products %}
+
+              <tr>
+
+                <td>
+
+                  <strong>
+                    {{ product.name }}
+                  </strong>
+
+                  <div
+                    style="
+                      color:#8fa4b8;
+                      margin-top:3px;
+                    "
+                  >
+                    #{{ product.id }}
+                  </div>
+
+                </td>
+
+
+                <td class="number">
+
+                  ₹{{ "{:,.2f}".format(
+                    product.price|float
+                  ) }}
+
+                </td>
+
+
+                <td class="number">
+
+                  <strong>
+                    {{ product.stock }}
+                  </strong>
+
+                </td>
+
+
+                <td class="number">
+
+                  {{ product.low_stock_threshold }}
+
+                </td>
+
+
+                <td>
+
+                  {% if
+                    product.inventory_status
+                    == "LOW"
+                  %}
+
+                    <span class="status low">
+                      LOW STOCK
+                    </span>
+
+                  {% else %}
+
+                    <span class="status healthy">
+                      HEALTHY
+                    </span>
+
+                  {% endif %}
+
+                </td>
+
+              </tr>
+
+              {% else %}
+
+              <tr>
+
+                <td colspan="5">
+                  No active products found.
+                </td>
+
+              </tr>
+
+              {% endfor %}
+
+            </tbody>
+
+          </table>
+
+        </div>
+
+      {% endif %}
+
+    </section>
+
+
+    <!-- ==================================================== -->
+    <!-- SIDE -->
+    <!-- ==================================================== -->
+
+    <div class="side-stack">
+
+
+      <!-- ================================================== -->
+      <!-- REPORT -->
+      <!-- ================================================== -->
+
+      <section class="card report-card">
+
+        <div class="report-icon">
+          ↗
+        </div>
+
+        <div class="eyebrow">
+          Latest S3 Report
+        </div>
+
+        <h2 class="section-title">
+          Daily Operations Report
+        </h2>
+
+
+        {% if latest_report %}
+
+          <div class="report-name">
+
+            {{ latest_report.name }}
+
+          </div>
+
+
+          <div class="report-time">
+
+            Generated
+
+            {{
+              latest_report.generated_at.strftime(
+                "%d %b %Y, %H:%M UTC"
+              )
+            }}
+
+          </div>
+
+
+          <a
+            class="button"
+            href="{{ latest_report.download_url }}"
+            target="_blank"
+            rel="noopener"
+          >
+            Open latest CSV report
+          </a>
+
+
+        {% else %}
+
+          <div class="report-time">
+
+            No report has been generated yet.
+
+            The EventBridge daily schedule will create
+            the first report.
+
+          </div>
+
+        {% endif %}
+
+      </section>
+
+
+      <!-- ================================================== -->
+      <!-- HEALTH -->
+      <!-- ================================================== -->
+
+      <section class="card section">
+
+        <div class="section-head">
+
+          <div>
+
+            <h2 class="section-title">
+              Service Health
+            </h2>
+
+            <div class="section-description">
+              Quick operational checks.
+            </div>
+
+          </div>
+
+        </div>
+
+
+        <div class="health-list">
+
+
+          <div class="health-row">
+
+            <span>
+              RDS connection
+            </span>
+
+            {% if database_ok %}
+
+              <strong
+                style="color:#50d890;"
+              >
+                ONLINE
+              </strong>
+
+            {% else %}
+
+              <strong
+                style="color:#ff6f7d;"
+              >
+                ERROR
+              </strong>
+
+            {% endif %}
+
+          </div>
+
+
+          <div class="health-row">
+
+            <span>
+              Report storage
+            </span>
+
+            {% if latest_report %}
+
+              <strong
+                style="color:#50d890;"
+              >
+                AVAILABLE
+              </strong>
+
+            {% else %}
+
+              <strong
+                style="color:#ffca63;"
+              >
+                WAITING
+              </strong>
+
+            {% endif %}
+
+          </div>
+
+
+          <div class="health-row">
+
+            <span>
+              Refresh cycle
+            </span>
+
+            <strong>
+              60 seconds
+            </strong>
+
+          </div>
+
+
+          <div class="health-row">
+
+            <span>
+              Dashboard host
+            </span>
+
+            <strong
+              style="color:#50d890;"
+            >
+              ONLINE
+            </strong>
+
+          </div>
+
+
+        </div>
+
+      </section>
+
+    </div>
+
+  </div>
+
+
+  <!-- ====================================================== -->
+  <!-- RECENT ORDERS -->
+  <!-- ====================================================== -->
+
+  <section
+    class="card section"
+    style="margin-top:18px;"
+  >
+
+    <div class="section-head">
+
+      <div>
+
+        <h2 class="section-title">
+          Recent Orders
+        </h2>
+
+        <div class="section-description">
+          Latest order activity from the CloudMart
+          RDS database.
+        </div>
+
+      </div>
+
+
+      <div class="badge">
+        Auto-refresh · 60s
+      </div>
+
+    </div>
+
+
+    {% if database_error %}
+
+      <div class="error">
+
+        {{ database_error }}
+
+      </div>
+
+    {% else %}
+
+      <div class="table-wrap">
+
+        <table>
+
+          <thead>
+
+            <tr>
+
+              <th>
+                Order
+              </th>
+
+              <th>
+                Customer
+              </th>
+
+              <th>
+                Status
+              </th>
+
+              <th class="number">
+                Amount
+              </th>
+
+              <th>
+                Created
+              </th>
+
+              <th>
+                Failure reason
+              </th>
+
+            </tr>
+
+          </thead>
+
+
+          <tbody>
+
+            {% for order in recent_orders %}
+
+            <tr>
+
+              <td>
+
+                <strong>
+                  #{{ order.order_id }}
+                </strong>
+
+              </td>
+
+
+              <td>
+                {{ order.customer_id }}
+              </td>
+
+
+              <td>
+
+                <span
+                  class="status
+                    {{ order.status|lower }}"
+                >
+
+                  {{ order.status }}
+
+                </span>
+
+              </td>
+
+
+              <td class="number">
+
+                ₹{{ "{:,.2f}".format(
+                  order.total_amount|float
+                ) }}
+
+              </td>
+
+
+              <td>
+
+                {{ order.created_at.strftime(
+                  "%d %b %H:%M"
+                ) }}
+
+              </td>
+
+
+              <td>
+
+                {% if order.failure_reason %}
+
+                  <span
+                    style="color:#ffb3bc;"
+                  >
+                    {{ order.failure_reason }}
+                  </span>
+
+                {% else %}
+
+                  <span
+                    style="color:#8fa4b8;"
+                  >
+                    —
+                  </span>
+
+                {% endif %}
+
+              </td>
+
+            </tr>
+
+
+            {% else %}
+
+            <tr>
+
+              <td colspan="6">
+                No orders found.
+              </td>
+
+            </tr>
+
+            {% endfor %}
+
+          </tbody>
+
+        </table>
+
+      </div>
+
+    {% endif %}
+
+  </section>
+
+
+  <!-- ====================================================== -->
+  <!-- FOOTER -->
+  <!-- ====================================================== -->
+
+  <div class="footer">
+
+    CloudMart {{ environment }}
+
+    ·
+
+    Last page refresh:
+
+    {{ updated_at.strftime(
+      "%d %b %Y %H:%M:%S UTC"
+    ) }}
+
+  </div>
+
+
+</main>
+
+</body>
+
+</html>
+

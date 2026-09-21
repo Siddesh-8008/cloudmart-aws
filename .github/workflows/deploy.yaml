@@ -788,3 +788,214 @@ jobs:
             --region "${AWS_REGION}" \
             --query "Stacks[0].Outputs" \
             --output table
+  # ============================================================
+  # JOB 7 - MILESTONE 5 MONITORING
+  # ============================================================
+
+  deploy-monitoring:
+    name: Deploy Monitoring and EC2 Dashboard
+    runs-on: ubuntu-latest
+
+    needs:
+      - deploy-eventbridge
+
+    steps:
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+
+      # ========================================================
+      # GET EXISTING ARTIFACT BUCKET
+      # ========================================================
+
+      - name: Get Lambda artifact bucket
+        id: bucket
+        shell: bash
+        run: |
+
+          set -e
+
+          BUCKET=$(aws cloudformation describe-stacks \
+            --stack-name "${DATA_STACK_NAME}" \
+            --region "${AWS_REGION}" \
+            --query "Stacks[0].Outputs[?OutputKey=='LambdaArtifactBucketName'].OutputValue | [0]" \
+            --output text)
+
+          test -n "${BUCKET}"
+          test "${BUCKET}" != "None"
+
+          echo "bucket=${BUCKET}" >> "$GITHUB_OUTPUT"
+
+
+      # ========================================================
+      # PACKAGE DASHBOARD
+      # ========================================================
+
+      - name: Package dashboard
+        shell: bash
+        run: |
+
+          set -e
+
+          rm -rf dashboard-build
+          rm -f dashboard.zip
+
+          mkdir -p \
+            dashboard-build/dashboard/templates
+
+          cp \
+            dashboard/app.py \
+            dashboard-build/dashboard/app.py
+
+          cp \
+            dashboard/templates/index.html \
+            dashboard-build/dashboard/templates/index.html
+
+          (
+            cd dashboard-build
+            zip -qr ../dashboard.zip dashboard
+          )
+
+          ls -lh dashboard.zip
+
+
+      # ========================================================
+      # PACKAGE DAILY REPORT LAMBDA
+      # ========================================================
+
+      - name: Package daily report Lambda
+        shell: bash
+        run: |
+
+          set -e
+
+          rm -rf daily-report-build
+          rm -f daily-report.zip
+
+          mkdir -p daily-report-build
+
+          cp \
+            lambda/daily_report/lambda_function.py \
+            daily-report-build/index.py
+
+          cp \
+            lambda/daily_report/requirements.txt \
+            daily-report-build/requirements.txt
+
+          pip install \
+            -r daily-report-build/requirements.txt \
+            -t daily-report-build
+
+          rm \
+            daily-report-build/requirements.txt
+
+          (
+            cd daily-report-build
+            zip -qr ../daily-report.zip .
+          )
+
+          ls -lh daily-report.zip
+
+
+      # ========================================================
+      # UPLOAD DASHBOARD
+      #
+      # SHA is used in the key so a changed dashboard
+      # creates a new object and forces the EC2 deployment
+      # to receive the new version.
+      # ========================================================
+
+      - name: Upload dashboard package
+        run: |
+
+          DASHBOARD_KEY="dashboard/dashboard-${GITHUB_SHA}.zip"
+
+          aws s3 cp \
+            dashboard.zip \
+            "s3://${{ steps.bucket.outputs.bucket }}/${DASHBOARD_KEY}" \
+            --region "${AWS_REGION}"
+
+          echo \
+            "DASHBOARD_KEY=${DASHBOARD_KEY}" \
+            >> "$GITHUB_ENV"
+
+
+      # ========================================================
+      # UPLOAD REPORT LAMBDA
+      # ========================================================
+
+      - name: Upload daily report Lambda
+        run: |
+
+          REPORT_KEY="daily-report/daily-report-${GITHUB_SHA}.zip"
+
+          aws s3 cp \
+            daily-report.zip \
+            "s3://${{ steps.bucket.outputs.bucket }}/${REPORT_KEY}" \
+            --region "${AWS_REGION}"
+
+          echo \
+            "REPORT_KEY=${REPORT_KEY}" \
+            >> "$GITHUB_ENV"
+
+
+      # ========================================================
+      # VALIDATE MONITORING TEMPLATE
+      # ========================================================
+
+      - name: Validate monitoring CloudFormation template
+        run: |
+
+          aws cloudformation validate-template \
+            --template-body \
+            file://cloudformation/monitoring/monitoring-stack.yaml \
+            --region "${AWS_REGION}"
+
+
+      # ========================================================
+      # DEPLOY MONITORING STACK
+      # ========================================================
+
+      - name: Deploy monitoring stack
+        run: |
+
+          aws cloudformation deploy \
+            --template-file \
+            cloudformation/monitoring/monitoring-stack.yaml \
+            --stack-name \
+            "cloudmart-${ENVIRONMENT}-monitoring" \
+            --parameter-overrides \
+              Environment="${ENVIRONMENT}" \
+              OperationsEmail="${{ secrets.OPERATIONS_EMAIL }}" \
+              DashboardArtifactBucketName="${{ steps.bucket.outputs.bucket }}" \
+              DashboardArtifactKey="${DASHBOARD_KEY}" \
+              ReportLambdaCodeBucket="${{ steps.bucket.outputs.bucket }}" \
+              ReportLambdaCodeKey="${REPORT_KEY}" \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --region "${AWS_REGION}" \
+            --no-fail-on-empty-changeset
+
+
+      # ========================================================
+      # SHOW MONITORING OUTPUTS
+      # ========================================================
+
+      - name: Show monitoring outputs
+        run: |
+
+          echo "================ MONITORING OUTPUTS ================"
+
+          aws cloudformation describe-stacks \
+            --stack-name \
+            "cloudmart-${ENVIRONMENT}-monitoring" \
+            --region "${AWS_REGION}" \
+            --query "Stacks[0].Outputs" \
+            --output table
