@@ -41,6 +41,20 @@ env:
   REPORTING_STACK_NAME: CloudMart-dev-reporting
   MONITORING_STACK_NAME: CloudMart-dev-monitoring
 
+  # ==========================================================
+  # EC2 DASHBOARD CONFIGURATION
+  #
+  # Repository variables can override these defaults.
+  #
+  # EC2_KEY_PAIR_NAME  -> cloudmart-dashboard-key
+  # EC2_AMI_ID         -> ami-0ee11497c4eac651d
+  # EC2_INSTANCE_TYPE   -> t3.micro
+  # ==========================================================
+
+  EC2_KEY_PAIR_NAME: ${{ vars.EC2_KEY_PAIR_NAME || 'cloudmart-dashboard-key' }}
+  EC2_AMI_ID: ${{ vars.EC2_AMI_ID || 'ami-0ee11497c4eac651d' }}
+  EC2_INSTANCE_TYPE: ${{ vars.EC2_INSTANCE_TYPE || 't3.micro' }}
+
 
 # ============================================================
 # JOBS
@@ -123,18 +137,6 @@ jobs:
 
       # ----------------------------------------------------------
       # Verify EC2 parameters
-      #
-      # These values come from:
-      #
-      # EC2_KEY_PAIR_NAME
-      # EC2_AMI_ID
-      # EC2_INSTANCE_TYPE
-      #
-      # Expected:
-      #
-      # EC2_KEY_PAIR_NAME = cloudmart-dashboard-key
-      # EC2_AMI_ID       = ami-0ee11497c4eac651d
-      # EC2_INSTANCE_TYPE = t3.micro
       # ----------------------------------------------------------
 
       - name: Verify EC2 parameters
@@ -142,25 +144,28 @@ jobs:
         run: |
           set -e
 
-          if [ -z "${{ vars.EC2_KEY_PAIR_NAME }}" ]; then
-            echo "ERROR: EC2_KEY_PAIR_NAME repository variable is not configured."
+          if [ -z "${EC2_KEY_PAIR_NAME}" ]; then
+            echo "ERROR: EC2 key pair name is empty."
             exit 1
           fi
 
-          if [ -z "${{ vars.EC2_AMI_ID }}" ]; then
-            echo "ERROR: EC2_AMI_ID repository variable is not configured."
+          if [ -z "${EC2_AMI_ID}" ]; then
+            echo "ERROR: EC2 AMI ID is empty."
             exit 1
           fi
 
-          EC2_INSTANCE_TYPE="${{ vars.EC2_INSTANCE_TYPE || 't3.micro' }}"
+          if [ -z "${EC2_INSTANCE_TYPE}" ]; then
+            echo "ERROR: EC2 instance type is empty."
+            exit 1
+          fi
 
           echo "=========================================="
           echo "EC2 Configuration"
           echo "=========================================="
-          echo "Key Pair       : ${{ vars.EC2_KEY_PAIR_NAME }}"
-          echo "AMI            : ${{ vars.EC2_AMI_ID }}"
-          echo "Instance Type  : ${EC2_INSTANCE_TYPE}"
-          echo "Region         : ${AWS_REGION}"
+          echo "Key Pair      : ${EC2_KEY_PAIR_NAME}"
+          echo "AMI           : ${EC2_AMI_ID}"
+          echo "Instance Type : ${EC2_INSTANCE_TYPE}"
+          echo "Region        : ${AWS_REGION}"
           echo "=========================================="
 
 
@@ -170,8 +175,12 @@ jobs:
 
       - name: Verify EC2 key pair
         run: |
+          set -e
+
+          echo "Checking EC2 key pair: ${EC2_KEY_PAIR_NAME}"
+
           aws ec2 describe-key-pairs \
-            --key-names "${{ vars.EC2_KEY_PAIR_NAME }}" \
+            --key-names "${EC2_KEY_PAIR_NAME}" \
             --region "${AWS_REGION}" \
             --query "KeyPairs[0].KeyName" \
             --output text
@@ -183,11 +192,67 @@ jobs:
 
       - name: Verify EC2 AMI
         run: |
+          set -e
+
+          echo "Checking EC2 AMI: ${EC2_AMI_ID}"
+
           aws ec2 describe-images \
-            --image-ids "${{ vars.EC2_AMI_ID }}" \
+            --image-ids "${EC2_AMI_ID}" \
             --region "${AWS_REGION}" \
             --query "Images[0].{ImageId:ImageId,Name:Name,Architecture:Architecture,State:State}" \
             --output table
+
+
+      # ----------------------------------------------------------
+      # Check current Network Stack state
+      #
+      # Prevent deployment while the stack is stuck in rollback.
+      # ----------------------------------------------------------
+
+      - name: Check Network Stack state
+        shell: bash
+        run: |
+          set -e
+
+          STATUS=$(aws cloudformation describe-stacks \
+            --stack-name "${NETWORK_STACK_NAME}" \
+            --region "${AWS_REGION}" \
+            --query "Stacks[0].StackStatus" \
+            --output text 2>/dev/null || echo "NOT_FOUND")
+
+          echo "Current Network Stack status: ${STATUS}"
+
+          case "${STATUS}" in
+            UPDATE_ROLLBACK_IN_PROGRESS)
+              echo "ERROR: ${NETWORK_STACK_NAME} is currently UPDATE_ROLLBACK_IN_PROGRESS."
+              echo "Wait until CloudFormation reaches UPDATE_ROLLBACK_COMPLETE before running this workflow again."
+              exit 1
+              ;;
+
+            UPDATE_ROLLBACK_FAILED)
+              echo "ERROR: ${NETWORK_STACK_NAME} is in UPDATE_ROLLBACK_FAILED."
+              echo "The stack must be recovered from CloudFormation before deployment."
+              exit 1
+              ;;
+
+            UPDATE_IN_PROGRESS)
+              echo "ERROR: ${NETWORK_STACK_NAME} is already being updated."
+              echo "Wait for the current update to finish."
+              exit 1
+              ;;
+
+            CREATE_IN_PROGRESS)
+              echo "ERROR: ${NETWORK_STACK_NAME} is currently being created."
+              echo "Wait for the current operation to finish."
+              exit 1
+              ;;
+
+            DELETE_IN_PROGRESS)
+              echo "ERROR: ${NETWORK_STACK_NAME} is currently being deleted."
+              echo "Wait for the deletion to finish."
+              exit 1
+              ;;
+          esac
 
 
       # ----------------------------------------------------------
@@ -202,9 +267,9 @@ jobs:
             --parameter-overrides \
               Environment="${ENVIRONMENT}" \
               OperationsCidr="${{ steps.cidr.outputs.operations_cidr }}" \
-              KeyPairName="${{ vars.EC2_KEY_PAIR_NAME }}" \
-              EC2AmiId="${{ vars.EC2_AMI_ID }}" \
-              EC2InstanceType="${{ vars.EC2_INSTANCE_TYPE || 't3.micro' }}" \
+              KeyPairName="${EC2_KEY_PAIR_NAME}" \
+              EC2AmiId="${EC2_AMI_ID}" \
+              EC2InstanceType="${EC2_INSTANCE_TYPE}" \
             --capabilities CAPABILITY_NAMED_IAM \
             --region "${AWS_REGION}" \
             --no-fail-on-empty-changeset

@@ -24,17 +24,12 @@ Parameters:
       - dev
       - prod
 
-  DashboardInstanceId:
-    Type: AWS::EC2::Instance::Id
-    Description: Dashboard EC2 instance created by the Network Stack
-
 
 # ==============================================================
 # RESOURCES
 # ==============================================================
 
 Resources:
-
 
   # ============================================================
   # AUTHORIZE LAMBDA ROLE
@@ -87,7 +82,7 @@ Resources:
                   - logs:CreateLogGroup
 
                 Resource:
-                  - !Sub 'arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/CloudMart-${Environment}-authorizer'
+                  - !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/CloudMart-${Environment}-authorizer
 
 
               - Effect: Allow
@@ -97,13 +92,11 @@ Resources:
                   - logs:PutLogEvents
 
                 Resource:
-                  - !Sub 'arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/CloudMart-${Environment}-authorizer:*'
+                  - !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/CloudMart-${Environment}-authorizer:*
 
 
         # --------------------------------------------------------
         # READ DATABASE PARAMETERS FROM SSM
-        #
-        # Database parameters are normal String parameters.
         # --------------------------------------------------------
 
         - PolicyName: AuthorizerReadDatabaseParameters
@@ -121,28 +114,19 @@ Resources:
 
                 Resource:
 
-                  # Database host
-                  - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/host'
+                  - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/host
 
-                  # Database port
-                  - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/port'
+                  - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/port
 
-                  # Database name
-                  - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/name'
+                  - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/name
 
-                  # Database username
-                  - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/username'
+                  - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/username
 
-                  # Database password
-                  - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/password'
+                  - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/password
 
 
         # --------------------------------------------------------
         # VPC ACCESS
-        #
-        # Lambda requires these permissions because the
-        # Authorizer Lambda runs inside the VPC and connects
-        # to RDS in the private subnet.
         # --------------------------------------------------------
 
         - PolicyName: AuthorizerVPCAccess
@@ -161,7 +145,6 @@ Resources:
                   - ec2:DeleteNetworkInterface
 
                 Resource: "*"
-
 
 
   # ============================================================
@@ -224,15 +207,14 @@ Resources:
                   - logs:PutLogEvents
 
                 Resource:
-                  - !Sub 'arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/CloudMart-${Environment}-product:*'
 
-                  - !Sub 'arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/CloudMart-${Environment}-schema:*'
+                  - !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/CloudMart-${Environment}-product:*
+
+                  - !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/CloudMart-${Environment}-schema:*
 
 
         # --------------------------------------------------------
         # READ DATABASE PARAMETERS FROM SSM
-        #
-        # All database parameters are normal String parameters.
         # --------------------------------------------------------
 
         - PolicyName: ProductAndSchemaReadSSM
@@ -250,15 +232,15 @@ Resources:
 
                 Resource:
 
-                  - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/host'
+                  - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/host
 
-                  - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/port'
+                  - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/port
 
-                  - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/name'
+                  - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/name
 
-                  - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/username'
+                  - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/username
 
-                  - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/password'
+                  - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/password
 
 
         # --------------------------------------------------------
@@ -296,13 +278,15 @@ Resources:
             Statement:
 
               - Effect: Allow
+
                 Action:
                   - cloudwatch:PutMetricData
+
                 Resource: "*"
+
                 Condition:
                   StringEquals:
                     cloudwatch:namespace: CloudMart/Operations
-
 
 
   # ============================================================
@@ -365,7 +349,7 @@ Resources:
                   - logs:PutLogEvents
 
                 Resource:
-                  - !Sub 'arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/CloudMart-${Environment}-order-processor:*'
+                  - !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/CloudMart-${Environment}-order-processor:*
 
 
         # --------------------------------------------------------
@@ -387,15 +371,15 @@ Resources:
 
                 Resource:
 
-                  - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/host'
+                  - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/host
 
-                  - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/port'
+                  - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/port
 
-                  - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/name'
+                  - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/name
 
-                  - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/username'
+                  - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/username
 
-                  - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/password'
+                  - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/password
 
 
         # --------------------------------------------------------
@@ -433,9 +417,12 @@ Resources:
             Statement:
 
               - Effect: Allow
+
                 Action:
                   - cloudwatch:PutMetricData
+
                 Resource: "*"
+
                 Condition:
                   StringEquals:
                     cloudwatch:namespace: CloudMart/Operations
@@ -443,8 +430,6 @@ Resources:
 
         # --------------------------------------------------------
         # EVENTBRIDGE
-        #
-        # Allows the Order Processor to publish order events.
         # --------------------------------------------------------
 
         - PolicyName: OrderProcessorEventBridge
@@ -461,8 +446,7 @@ Resources:
                   - events:PutEvents
 
                 Resource:
-                  - !Sub 'arn:${AWS::Partition}:events:${AWS::Region}:${AWS::AccountId}:event-bus/cloudmart-${Environment}-event-bus'
-
+                  - !Sub arn:${AWS::Partition}:events:${AWS::Region}:${AWS::AccountId}:event-bus/cloudmart-${Environment}-event-bus
 
 
   # ============================================================
@@ -473,6 +457,7 @@ Resources:
     Type: AWS::IAM::Role
 
     Properties:
+
       RoleName:
         !Sub CloudMart-${Environment}-reporting-lambda-role
 
@@ -480,141 +465,109 @@ Resources:
         Least-privilege execution role for the CloudMart daily report Lambda
 
       AssumeRolePolicyDocument:
+
         Version: '2012-10-17'
+
         Statement:
+
           - Effect: Allow
+
             Principal:
               Service:
                 - lambda.amazonaws.com
+
             Action:
               - sts:AssumeRole
+
 
       Policies:
 
         - PolicyName: ReportingCloudWatchLogs
+
           PolicyDocument:
+
             Version: '2012-10-17'
+
             Statement:
-              - Effect: Allow
-                Action:
-                  - logs:CreateLogGroup
-                Resource: !Sub 'arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/CloudMart-${Environment}-daily-report'
 
               - Effect: Allow
+
+                Action:
+                  - logs:CreateLogGroup
+
+                Resource:
+                  - !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/CloudMart-${Environment}-daily-report
+
+
+              - Effect: Allow
+
                 Action:
                   - logs:CreateLogStream
                   - logs:PutLogEvents
-                Resource: !Sub 'arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/CloudMart-${Environment}-daily-report:*'
+
+                Resource:
+                  - !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/CloudMart-${Environment}-daily-report:*
+
 
         - PolicyName: ReportingReadDatabaseParameters
+
           PolicyDocument:
+
             Version: '2012-10-17'
+
             Statement:
+
               - Effect: Allow
+
                 Action:
                   - ssm:GetParameter
+
                 Resource:
-                  - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/host'
-                  - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/port'
-                  - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/name'
-                  - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/username'
-                  - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/password'
+
+                  - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/host
+
+                  - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/port
+
+                  - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/name
+
+                  - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/username
+
+                  - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/password
+
 
         - PolicyName: ReportingWriteDailyReports
+
           PolicyDocument:
+
             Version: '2012-10-17'
+
             Statement:
+
               - Effect: Allow
+
                 Action:
                   - s3:PutObject
-                Resource: !Sub 'arn:${AWS::Partition}:s3:::cloudmart-${Environment}-lambda-artifacts-${AWS::AccountId}/reports/*'
+
+                Resource:
+                  - !Sub arn:${AWS::Partition}:s3:::cloudmart-${Environment}-lambda-artifacts-${AWS::AccountId}/reports/*
+
 
         - PolicyName: ReportingVPCAccess
+
           PolicyDocument:
+
             Version: '2012-10-17'
+
             Statement:
+
               - Effect: Allow
+
                 Action:
                   - ec2:CreateNetworkInterface
                   - ec2:DescribeNetworkInterfaces
                   - ec2:DeleteNetworkInterface
-                Resource: '*'
 
-
-  # ============================================================
-  # EC2 DASHBOARD ROLE
-  # ============================================================
-
-  DashboardEC2Role:
-    Type: AWS::IAM::Role
-
-    Properties:
-      RoleName:
-        !Sub CloudMart-${Environment}-dashboard-ec2-role
-
-      Description:
-        Least-privilege role for the CloudMart Flask operations dashboard
-
-      AssumeRolePolicyDocument:
-        Version: '2012-10-17'
-        Statement:
-          - Effect: Allow
-            Principal:
-              Service:
-                - ec2.amazonaws.com
-            Action:
-              - sts:AssumeRole
-
-      Policies:
-
-        - PolicyName: DashboardReadDatabaseParameters
-          PolicyDocument:
-            Version: '2012-10-17'
-            Statement:
-              - Effect: Allow
-                Action:
-                  - ssm:GetParameter
-                Resource:
-                  - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/host'
-                  - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/port'
-                  - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/name'
-                  - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/username'
-                  - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/password'
-
-        - PolicyName: DashboardReadReports
-          PolicyDocument:
-            Version: '2012-10-17'
-            Statement:
-              - Effect: Allow
-                Action:
-                  - s3:ListBucket
-                Resource: !Sub 'arn:${AWS::Partition}:s3:::cloudmart-${Environment}-lambda-artifacts-${AWS::AccountId}'
-                Condition:
-                  StringLike:
-                    s3:prefix:
-                      - reports/
-                      - reports/*
-
-              - Effect: Allow
-                Action:
-                  - s3:GetObject
-                Resource: !Sub 'arn:${AWS::Partition}:s3:::cloudmart-${Environment}-lambda-artifacts-${AWS::AccountId}/reports/*'
-
-
-  DashboardEC2InstanceProfile:
-    Type: AWS::IAM::InstanceProfile
-    Properties:
-      InstanceProfileName:
-        !Sub CloudMart-${Environment}-dashboard-ec2-profile
-      Roles:
-        - !Ref DashboardEC2Role
-
-
-  DashboardEC2InstanceProfileAssociation:
-    Type: AWS::EC2::IamInstanceProfileAssociation
-    Properties:
-      InstanceId: !Ref DashboardInstanceId
-      IamInstanceProfile: !Ref DashboardEC2InstanceProfile
+                Resource: "*"
 
 
 # ==============================================================
@@ -674,20 +627,39 @@ Outputs:
         !Sub CloudMart-${Environment}-OrderProcessorLambdaRoleArn
 
 
+  # ============================================================
+  # REPORTING ROLE ARN
+  # ============================================================
+
   ReportingLambdaRoleArn:
+
     Description:
       ARN of the daily reporting Lambda execution role
+
     Value:
       !GetAtt ReportingLambdaRole.Arn
+
     Export:
       Name:
         !Sub CloudMart-${Environment}-ReportingLambdaRoleArn
 
+
+  # ============================================================
+  # DASHBOARD ROLE ARN
+  #
+  # The actual role is now owned by the Network Stack because
+  # the EC2 instance is also created there.
+  # ============================================================
+
   DashboardEC2RoleArn:
+
     Description:
-      ARN of the EC2 dashboard role
+      ARN of the EC2 dashboard role created by the Network Stack
+
     Value:
-      !GetAtt DashboardEC2Role.Arn
+      Fn::ImportValue:
+        !Sub CloudMart-${Environment}-DashboardEC2RoleArn
+
     Export:
       Name:
-        !Sub CloudMart-${Environment}-DashboardEC2RoleArn
+        !Sub CloudMart-${Environment}-IAMDashboardEC2RoleArn

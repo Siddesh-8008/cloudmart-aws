@@ -21,7 +21,7 @@ Parameters:
 
   EC2AmiId:
     Type: AWS::EC2::Image::Id
-    Description: Amazon Linux AMI ID for the dashboard EC2 instance
+    Description: Amazon Linux AMI ID for the CloudMart dashboard EC2 instance
 
   EC2InstanceType:
     Type: String
@@ -295,16 +295,6 @@ Resources:
       Description: Lambda to interface VPC endpoints
 
 
-  # ------------------------------------------------------------
-  # Lambda HTTPS access for AWS services
-  #
-  # The Lambda is in a private subnet.
-  # The private route table contains the S3 Gateway Endpoint.
-  #
-  # This allows HTTPS traffic required by the AWS SDK while the
-  # route table determines that S3 traffic uses the S3 endpoint.
-  # ------------------------------------------------------------
-
   LambdaToS3:
     Type: AWS::EC2::SecurityGroupEgress
     Properties:
@@ -352,6 +342,7 @@ Resources:
       CidrIp: !Ref OperationsCidr
       Description: Operations team HTTPS access
 
+
   EC2FromOperationsHTTPIngress:
     Type: AWS::EC2::SecurityGroupIngress
     Properties:
@@ -362,6 +353,7 @@ Resources:
       CidrIp: !Ref OperationsCidr
       Description: Operations team dashboard HTTP access
 
+
   EC2FromOperationsSSHIngress:
     Type: AWS::EC2::SecurityGroupIngress
     Properties:
@@ -371,6 +363,7 @@ Resources:
       ToPort: 22
       CidrIp: !Ref OperationsCidr
       Description: Operations team SSH access
+
 
   # ============================================================
   # RDS SECURITY GROUP RULES
@@ -408,30 +401,122 @@ Resources:
 
 
   # ============================================================
-  # DASHBOARD EC2
+  # DASHBOARD EC2 IAM ROLE
   #
-  # The EC2 instance is created by this Network Stack.
-  # The existing EC2SecurityGroup is attached at launch.
-  # The IAM instance profile is associated later by the IAM Stack
-  # to avoid a circular CloudFormation dependency.
+  # NEW:
+  # The role is created in the same stack as the EC2.
+  # This avoids a circular dependency between Network and IAM.
+  # ============================================================
+
+  DashboardEC2Role:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub CloudMart-${Environment}-dashboard-ec2-role
+
+      Description: Least-privilege role for the CloudMart Flask operations dashboard
+
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+            Action:
+              - sts:AssumeRole
+
+      Policies:
+
+        # --------------------------------------------------------
+        # READ DATABASE PARAMETERS
+        # --------------------------------------------------------
+
+        - PolicyName: DashboardReadDatabaseParameters
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ssm:GetParameter
+                Resource:
+                  - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/host
+                  - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/port
+                  - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/name
+                  - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/username
+                  - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/db/password
+
+
+        # --------------------------------------------------------
+        # READ REPORTS FROM S3
+        # --------------------------------------------------------
+
+        - PolicyName: DashboardReadReports
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+
+              - Effect: Allow
+                Action:
+                  - s3:ListBucket
+                Resource:
+                  - !Sub arn:${AWS::Partition}:s3:::cloudmart-${Environment}-lambda-artifacts-${AWS::AccountId}
+                Condition:
+                  StringLike:
+                    s3:prefix:
+                      - reports/
+                      - reports/*
+
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                Resource:
+                  - !Sub arn:${AWS::Partition}:s3:::cloudmart-${Environment}-lambda-artifacts-${AWS::AccountId}/reports/*
+
+
+  # ============================================================
+  # DASHBOARD EC2 INSTANCE PROFILE
+  # ============================================================
+
+  DashboardEC2InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: !Sub CloudMart-${Environment}-dashboard-ec2-profile
+      Roles:
+        - !Ref DashboardEC2Role
+
+
+  # ============================================================
+  # DASHBOARD EC2
   # ============================================================
 
   DashboardEC2:
     Type: AWS::EC2::Instance
 
+    DependsOn:
+      - DashboardEC2InstanceProfile
+
     Properties:
       ImageId: !Ref EC2AmiId
       InstanceType: !Ref EC2InstanceType
       KeyName: !Ref KeyPairName
+
+      # ----------------------------------------------------------
+      # IAM INSTANCE PROFILE
+      # ----------------------------------------------------------
+      IamInstanceProfile: !Ref DashboardEC2InstanceProfile
+
       SubnetId: !Ref PublicSubnetA
+
       SecurityGroupIds:
         - !Ref EC2SecurityGroup
 
       Tags:
         - Key: Name
           Value: !Sub CloudMart-${Environment}-dashboard
+
         - Key: Environment
           Value: !Ref Environment
+
         - Key: Project
           Value: CloudMart
 
@@ -524,8 +609,6 @@ Resources:
 
   # ============================================================
   # KMS INTERFACE ENDPOINT
-  # Required for private Lambda access to KMS
-  # when decrypting SecureString SSM parameters.
   # ============================================================
 
   KMSEndpoint:
@@ -621,8 +704,31 @@ Outputs:
     Export:
       Name: !Sub CloudMart-${Environment}-EndpointSecurityGroupId
 
+
   DashboardInstanceId:
     Description: CloudMart dashboard EC2 instance ID
     Value: !Ref DashboardEC2
     Export:
       Name: !Sub CloudMart-${Environment}-DashboardInstanceId
+
+
+  # ============================================================
+  # NEW: DASHBOARD ROLE OUTPUT
+  # ============================================================
+
+  DashboardEC2RoleArn:
+    Description: ARN of the CloudMart dashboard EC2 IAM role
+    Value: !GetAtt DashboardEC2Role.Arn
+    Export:
+      Name: !Sub CloudMart-${Environment}-DashboardEC2RoleArn
+
+
+  # ============================================================
+  # NEW: DASHBOARD INSTANCE PROFILE OUTPUT
+  # ============================================================
+
+  DashboardEC2InstanceProfileArn:
+    Description: ARN of the CloudMart dashboard EC2 instance profile
+    Value: !GetAtt DashboardEC2InstanceProfile.Arn
+    Export:
+      Name: !Sub CloudMart-${Environment}-DashboardEC2InstanceProfileArn
