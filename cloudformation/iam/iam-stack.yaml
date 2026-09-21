@@ -24,6 +24,9 @@ Parameters:
       - dev
       - prod
 
+  DashboardInstanceId:
+    Type: AWS::EC2::Instance::Id
+    Description: Dashboard EC2 instance created by the Network Stack
 
 
 # ==============================================================
@@ -95,33 +98,6 @@ Resources:
 
                 Resource:
                   - !Sub 'arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/CloudMart-${Environment}-authorizer:*'
-
-
-        # --------------------------------------------------------
-        # READ ADMIN AUTH TOKEN FROM SSM
-        #
-        # Admin token is stored as a normal String.
-        # No KMS decrypt permission is required.
-        #
-        # Customer token is NOT stored in SSM.
-        # Customer tokens are validated using RDS.
-        # --------------------------------------------------------
-
-        - PolicyName: AuthorizerReadAdminAuthToken
-
-          PolicyDocument:
-
-            Version: '2012-10-17'
-
-            Statement:
-
-              - Effect: Allow
-
-                Action:
-                  - ssm:GetParameter
-
-                Resource:
-                  - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${Environment}/auth/admin-token'
 
 
         # --------------------------------------------------------
@@ -632,6 +608,13 @@ Resources:
         !Sub CloudMart-${Environment}-dashboard-ec2-profile
       Roles:
         - !Ref DashboardEC2Role
+
+
+  DashboardEC2InstanceProfileAssociation:
+    Type: AWS::EC2::IamInstanceProfileAssociation
+    Properties:
+      InstanceId: !Ref DashboardInstanceId
+      IamInstanceProfile: !Ref DashboardEC2InstanceProfile
 
 
 # ==============================================================

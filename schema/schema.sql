@@ -388,15 +388,12 @@ ON DUPLICATE KEY UPDATE
 -- ============================================================
 -- CUSTOMER AUTH TOKENS
 --
--- token_hash is intentionally NOT UNIQUE.
---
--- Duplicate token hashes are allowed.
---
--- role:
---     customer
---     admin
---
--- Admin rows use NULL customer_id.
+-- customer_id is mandatory for customer rows.
+-- admin_id is mandatory for admin rows.
+-- role is either customer or admin.
+-- Only SHA-256 token hashes are stored.
+-- The plaintext admin token is injected by the deployment workflow
+-- and is never stored in this SQL file.
 -- ============================================================
 
 CREATE TABLE IF NOT EXISTS customer_auth_tokens
@@ -404,6 +401,8 @@ CREATE TABLE IF NOT EXISTS customer_auth_tokens
     token_id BIGINT NOT NULL AUTO_INCREMENT,
 
     customer_id VARCHAR(100) NULL,
+
+    admin_id VARCHAR(100) NULL,
 
     token_hash CHAR(64) NOT NULL,
 
@@ -424,13 +423,30 @@ CREATE TABLE IF NOT EXISTS customer_auth_tokens
     KEY idx_customer_auth_customer
         (customer_id),
 
+    KEY idx_customer_auth_admin
+        (admin_id),
+
     KEY idx_customer_auth_token_hash
         (token_hash),
+
+    KEY idx_customer_auth_customer_token
+        (customer_id, token_hash),
 
     CONSTRAINT fk_customer_auth_customer
         FOREIGN KEY (customer_id)
         REFERENCES customers(customer_id)
-        ON DELETE CASCADE
+        ON DELETE CASCADE,
+
+    CONSTRAINT chk_customer_auth_identity_role
+        CHECK (
+            (role = 'customer'
+                AND customer_id IS NOT NULL
+                AND admin_id IS NULL)
+            OR
+            (role = 'admin'
+                AND admin_id IS NOT NULL
+                AND customer_id IS NULL)
+        )
 
 )
 ENGINE=InnoDB
@@ -438,13 +454,13 @@ DEFAULT CHARSET=utf8mb4
 COLLATE=utf8mb4_unicode_ci;
 
 
--- ============================================================
 -- CUSTOMER AUTH TOKEN SEEDS
 -- ============================================================
 
 INSERT INTO customer_auth_tokens
 (
     customer_id,
+    admin_id,
     token_hash,
     role,
     is_active
@@ -452,6 +468,7 @@ INSERT INTO customer_auth_tokens
 
 SELECT
     'CUST001',
+    NULL,
     SHA2(
         '6A0JLpPl3uM7pb_Uv73FaxC2LuI_WhKbFNEXUddy_VM',
         256
@@ -476,6 +493,7 @@ WHERE NOT EXISTS
 INSERT INTO customer_auth_tokens
 (
     customer_id,
+    admin_id,
     token_hash,
     role,
     is_active
@@ -483,6 +501,7 @@ INSERT INTO customer_auth_tokens
 
 SELECT
     'CUST002',
+    NULL,
     SHA2(
         'txk-wMbwQziK1TDu4HB4R7Nu7lj8wF1kASxkgQtHWa0',
         256
@@ -507,6 +526,7 @@ WHERE NOT EXISTS
 INSERT INTO customer_auth_tokens
 (
     customer_id,
+    admin_id,
     token_hash,
     role,
     is_active
@@ -514,6 +534,7 @@ INSERT INTO customer_auth_tokens
 
 SELECT
     'CUST003',
+    NULL,
     SHA2(
         'bVIS4olBt9xVuvKS-Fxw1nOf1tXmgN7AhG59qYB2-9k',
         256
@@ -538,37 +559,10 @@ WHERE NOT EXISTS
 -- ============================================================
 -- ADMIN AUTH TOKEN
 --
--- The plaintext token is used only during seeding.
--- RDS stores SHA-256(token), not the plaintext.
---
--- No admin token is stored in SSM.
+-- The admin token is NOT hard-coded in this SQL file.
+-- GitHub Actions passes the token to the Schema Lambda.
+-- The Schema Lambda stores SHA-256(token) in RDS with:
+--     admin_id = ADMIN001
+--     role     = admin
 -- ============================================================
 
-INSERT INTO customer_auth_tokens
-(
-    customer_id,
-    token_hash,
-    role,
-    is_active
-)
-
-SELECT
-    NULL,
-    SHA2(
-        'CloudMartAdmin@2026!',
-        256
-    ),
-    'admin',
-    TRUE
-
-WHERE NOT EXISTS
-(
-    SELECT 1
-    FROM customer_auth_tokens
-    WHERE token_hash =
-          SHA2(
-              'CloudMartAdmin@2026!',
-              256
-          )
-      AND role = 'admin'
-);

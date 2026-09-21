@@ -13,7 +13,20 @@ Parameters:
 
   OperationsCidr:
     Type: String
-    Description: CIDR allowed to access the public dashboard on TCP 443
+    Description: CIDR allowed to access the public dashboard and SSH
+
+  KeyPairName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: Existing EC2 key pair used for SSH access to the CloudMart dashboard instance
+
+  EC2AmiId:
+    Type: AWS::EC2::Image::Id
+    Description: Amazon Linux AMI ID for the dashboard EC2 instance
+
+  EC2InstanceType:
+    Type: String
+    Default: t3.micro
+    Description: EC2 instance type for the CloudMart dashboard
 
 
 Resources:
@@ -329,7 +342,7 @@ Resources:
       Description: Dashboard to VPC endpoints
 
 
-  EC2FromOperationsIngress:
+  EC2FromOperationsHTTPSIngress:
     Type: AWS::EC2::SecurityGroupIngress
     Properties:
       GroupId: !Ref EC2SecurityGroup
@@ -339,6 +352,25 @@ Resources:
       CidrIp: !Ref OperationsCidr
       Description: Operations team HTTPS access
 
+  EC2FromOperationsHTTPIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref EC2SecurityGroup
+      IpProtocol: tcp
+      FromPort: 80
+      ToPort: 80
+      CidrIp: !Ref OperationsCidr
+      Description: Operations team dashboard HTTP access
+
+  EC2FromOperationsSSHIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref EC2SecurityGroup
+      IpProtocol: tcp
+      FromPort: 22
+      ToPort: 22
+      CidrIp: !Ref OperationsCidr
+      Description: Operations team SSH access
 
   # ============================================================
   # RDS SECURITY GROUP RULES
@@ -373,6 +405,35 @@ Resources:
       IpProtocol: -1
       CidrIp: 0.0.0.0/0
       Description: RDS outbound traffic
+
+
+  # ============================================================
+  # DASHBOARD EC2
+  #
+  # The EC2 instance is created by this Network Stack.
+  # The existing EC2SecurityGroup is attached at launch.
+  # The IAM instance profile is associated later by the IAM Stack
+  # to avoid a circular CloudFormation dependency.
+  # ============================================================
+
+  DashboardEC2:
+    Type: AWS::EC2::Instance
+
+    Properties:
+      ImageId: !Ref EC2AmiId
+      InstanceType: !Ref EC2InstanceType
+      KeyName: !Ref KeyPairName
+      SubnetId: !Ref PublicSubnetA
+      SecurityGroupIds:
+        - !Ref EC2SecurityGroup
+
+      Tags:
+        - Key: Name
+          Value: !Sub CloudMart-${Environment}-dashboard
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: CloudMart
 
 
   # ============================================================
@@ -559,3 +620,9 @@ Outputs:
     Value: !Ref EndpointSecurityGroup
     Export:
       Name: !Sub CloudMart-${Environment}-EndpointSecurityGroupId
+
+  DashboardInstanceId:
+    Description: CloudMart dashboard EC2 instance ID
+    Value: !Ref DashboardEC2
+    Export:
+      Name: !Sub CloudMart-${Environment}-DashboardInstanceId

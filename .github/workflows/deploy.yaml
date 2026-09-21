@@ -39,7 +39,6 @@ env:
   EVENTBRIDGE_STACK_NAME: CloudMart-dev-eventbridge
   REPORTING_STACK_NAME: CloudMart-dev-reporting
   MONITORING_STACK_NAME: CloudMart-dev-monitoring
-  DASHBOARD_EC2_INSTANCE_ID: i-031a315ec368edbd9
 
 
 # ============================================================
@@ -123,6 +122,9 @@ jobs:
             --parameter-overrides \
               Environment="${ENVIRONMENT}" \
               OperationsCidr="${{ steps.cidr.outputs.operations_cidr }}" \
+              KeyPairName="${{ vars.EC2_KEY_PAIR_NAME }}" \
+              EC2AmiId="${{ vars.EC2_AMI_ID }}" \
+              EC2InstanceType="${{ vars.EC2_INSTANCE_TYPE || 't3.micro' }}" \
             --region "${AWS_REGION}" \
             --no-fail-on-empty-changeset
 
@@ -251,6 +253,19 @@ jobs:
             --region "${AWS_REGION}"
 
 
+      - name: Get Dashboard EC2 instance ID
+        id: dashboard
+        shell: bash
+        run: |
+          set -e
+          INSTANCE_ID=$(aws cloudformation describe-stacks \
+            --stack-name "${NETWORK_STACK_NAME}" \
+            --region "${AWS_REGION}" \
+            --query "Stacks[0].Outputs[?OutputKey=='DashboardInstanceId'].OutputValue | [0]" \
+            --output text)
+          test -n "${INSTANCE_ID}" && test "${INSTANCE_ID}" != "None"
+          echo "instance_id=${INSTANCE_ID}" >> "$GITHUB_OUTPUT"
+
       - name: Deploy IAM Stack
         run: |
           aws cloudformation deploy \
@@ -258,6 +273,7 @@ jobs:
             --stack-name "${IAM_STACK_NAME}" \
             --parameter-overrides \
               Environment="${ENVIRONMENT}" \
+              DashboardInstanceId="${{ steps.dashboard.outputs.instance_id }}" \
             --capabilities CAPABILITY_NAMED_IAM \
             --region "${AWS_REGION}" \
             --no-fail-on-empty-changeset
@@ -288,76 +304,6 @@ jobs:
 
             echo "${OUTPUT}: ${VALUE}"
           done
-
-
-      - name: Attach dashboard IAM instance profile to existing EC2
-        shell: bash
-        run: |
-          set -e
-
-          INSTANCE_ID="${DASHBOARD_EC2_INSTANCE_ID}"
-          PROFILE_NAME="CloudMart-${ENVIRONMENT}-dashboard-ec2-profile"
-
-          echo "Checking current IAM instance profile association..."
-
-          ASSOCIATION_ID=$(aws ec2 describe-iam-instance-profile-associations \
-            --filters "Name=instance-id,Values=${INSTANCE_ID}" \
-            --region "${AWS_REGION}" \
-            --query "IamInstanceProfileAssociations[?State=='associated'] | [0].AssociationId" \
-            --output text)
-
-          CURRENT_PROFILE_ID=$(aws ec2 describe-iam-instance-profile-associations \
-            --filters "Name=instance-id,Values=${INSTANCE_ID}" \
-            --region "${AWS_REGION}" \
-            --query "IamInstanceProfileAssociations[?State=='associated'] | [0].IamInstanceProfile.Id" \
-            --output text)
-
-          TARGET_PROFILE_ID=$(aws iam get-instance-profile \
-            --instance-profile-name "${PROFILE_NAME}" \
-            --query "InstanceProfile.InstanceProfileId" \
-            --output text)
-
-          echo "Current association: ${ASSOCIATION_ID}"
-          echo "Current profile ID: ${CURRENT_PROFILE_ID}"
-          echo "Target profile ID: ${TARGET_PROFILE_ID}"
-
-          if [ "${CURRENT_PROFILE_ID}" = "${TARGET_PROFILE_ID}" ]; then
-            echo "Correct dashboard IAM instance profile is already attached."
-          elif [ -n "${ASSOCIATION_ID}" ] && [ "${ASSOCIATION_ID}" != "None" ]; then
-            echo "Replacing existing IAM instance profile association..."
-
-            aws ec2 replace-iam-instance-profile-association \
-              --association-id "${ASSOCIATION_ID}" \
-              --iam-instance-profile Name="${PROFILE_NAME}" \
-              --region "${AWS_REGION}"
-          else
-            echo "Associating dashboard IAM instance profile..."
-
-            aws ec2 associate-iam-instance-profile \
-              --instance-id "${INSTANCE_ID}" \
-              --iam-instance-profile Name="${PROFILE_NAME}" \
-              --region "${AWS_REGION}"
-          fi
-
-          echo "Waiting for IAM instance profile association..."
-
-          for attempt in {1..12}; do
-            ASSOCIATED_PROFILE_ID=$(aws ec2 describe-iam-instance-profile-associations \
-              --filters "Name=instance-id,Values=${INSTANCE_ID}" \
-              --region "${AWS_REGION}" \
-              --query "IamInstanceProfileAssociations[?State=='associated'] | [0].IamInstanceProfile.Id" \
-              --output text)
-
-            if [ "${ASSOCIATED_PROFILE_ID}" = "${TARGET_PROFILE_ID}" ]; then
-              echo "Dashboard IAM instance profile successfully associated."
-              exit 0
-            fi
-
-            sleep 5
-          done
-
-          echo "ERROR: Dashboard IAM instance profile was not associated."
-          exit 1
 
 
   # ============================================================
@@ -442,39 +388,6 @@ jobs:
             --region "${AWS_REGION}"
 
 
-      # ----------------------------------------------------------
-      # ADMIN TOKEN
-      #
-      # Stored as normal SSM String.
-      # NOT SecureString.
-      # ----------------------------------------------------------
-
-      - name: Create or update admin authentication token
-        run: |
-          aws ssm put-parameter \
-            --name "/cloudmart/${ENVIRONMENT}/auth/admin-token" \
-            --type "String" \
-            --value "${{ secrets.AUTH_TOKEN }}" \
-            --overwrite \
-            --region "${AWS_REGION}"
-
-
-      - name: Verify admin authentication parameter is String
-        run: |
-          TYPE=$(aws ssm get-parameter \
-            --name "/cloudmart/${ENVIRONMENT}/auth/admin-token" \
-            --region "${AWS_REGION}" \
-            --query "Parameter.Type" \
-            --output text)
-
-          echo "Admin authentication parameter type: ${TYPE}"
-
-          if [ "${TYPE}" != "String" ]; then
-            echo "ERROR: Admin authentication parameter is not an SSM String."
-            exit 1
-          fi
-
-
       - name: Verify database SSM parameters
         run: |
           for PARAMETER in \
@@ -522,7 +435,6 @@ jobs:
             --parameter-overrides \
               Environment="${ENVIRONMENT}" \
               LambdaSecurityGroupId="${{ steps.network.outputs.security_group }}" \
-              AdminAuthTokenParameterName="/cloudmart/${ENVIRONMENT}/auth/admin-token" \
               DBHostParameter="/cloudmart/${ENVIRONMENT}/db/host" \
               DBPortParameter="/cloudmart/${ENVIRONMENT}/db/port" \
               DBNameParameter="/cloudmart/${ENVIRONMENT}/db/name" \
@@ -774,15 +686,33 @@ jobs:
             --no-fail-on-empty-changeset
 
 
-      - name: Initialize or migrate database schema
+      - name: Initialize or migrate database schema and seed admin token
         shell: bash
+        env:
+          ADMIN_ID: ${{ vars.ADMIN_ID || 'ADMIN001' }}
+          ADMIN_TOKEN: ${{ secrets.AUTH_TOKEN }}
         run: |
           rm -f schema-response.json
+
+          if [ -z "${ADMIN_TOKEN}" ]; then
+            echo "ERROR: AUTH_TOKEN GitHub secret is not configured."
+            exit 1
+          fi
+
+          PAYLOAD=$(python - <<'PY'
+          import json, os
+          print(json.dumps({
+              "admin_id": os.environ["ADMIN_ID"],
+              "admin_token": os.environ["ADMIN_TOKEN"]
+          }))
+          PY
+          )
 
           FUNCTION_ERROR=$(aws lambda invoke \
             --function-name "CloudMart-${ENVIRONMENT}-schema" \
             --region "${AWS_REGION}" \
             --cli-binary-format raw-in-base64-out \
+            --payload "${PAYLOAD}" \
             --query 'FunctionError' \
             --output text \
             schema-response.json)
@@ -1102,11 +1032,11 @@ jobs:
 
 
   # ============================================================
-  # JOB 9 - EXISTING EC2 DASHBOARD
+  # JOB 9 - CLOUDFORMATION EC2 DASHBOARD
   # ============================================================
 
   deploy-dashboard:
-    name: Deploy Flask Dashboard to Existing EC2
+    name: Deploy Flask Dashboard to CloudFormation EC2
     runs-on: ubuntu-latest
     needs:
       - deploy-reporting
@@ -1123,22 +1053,22 @@ jobs:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Get EC2 details
+      - name: Get CloudFormation Dashboard EC2 details
         id: ec2
         shell: bash
         run: |
           set -e
 
-          PUBLIC_IP=$(aws ec2 describe-instances \
-            --instance-ids "${DASHBOARD_EC2_INSTANCE_ID}" \
-            --region "${AWS_REGION}" \
-            --query "Reservations[0].Instances[0].PublicIpAddress" \
-            --output text)
-
-          DASHBOARD_SG=$(aws cloudformation describe-stacks \
+          INSTANCE_ID=$(aws cloudformation describe-stacks \
             --stack-name "${NETWORK_STACK_NAME}" \
             --region "${AWS_REGION}" \
-            --query "Stacks[0].Outputs[?OutputKey=='EC2SecurityGroupId'].OutputValue | [0]" \
+            --query "Stacks[0].Outputs[?OutputKey=='DashboardInstanceId'].OutputValue | [0]" \
+            --output text)
+
+          PUBLIC_IP=$(aws ec2 describe-instances \
+            --instance-ids "${INSTANCE_ID}" \
+            --region "${AWS_REGION}" \
+            --query "Reservations[0].Instances[0].PublicIpAddress" \
             --output text)
 
           BUCKET=$(aws cloudformation describe-stacks \
@@ -1147,50 +1077,13 @@ jobs:
             --query "Stacks[0].Outputs[?OutputKey=='LambdaArtifactBucketName'].OutputValue | [0]" \
             --output text)
 
+          test -n "${INSTANCE_ID}" && test "${INSTANCE_ID}" != "None"
           test -n "${PUBLIC_IP}" && test "${PUBLIC_IP}" != "None"
-          test -n "${DASHBOARD_SG}" && test "${DASHBOARD_SG}" != "None"
+          test -n "${BUCKET}" && test "${BUCKET}" != "None"
 
+          echo "instance_id=${INSTANCE_ID}" >> "$GITHUB_OUTPUT"
           echo "public_ip=${PUBLIC_IP}" >> "$GITHUB_OUTPUT"
-          echo "dashboard_sg=${DASHBOARD_SG}" >> "$GITHUB_OUTPUT"
           echo "bucket=${BUCKET}" >> "$GITHUB_OUTPUT"
-
-      - name: Attach CloudFormation dashboard security group to existing EC2
-        shell: bash
-        run: |
-          set -e
-
-          CURRENT_GROUPS=$(aws ec2 describe-instances \
-            --instance-ids "${DASHBOARD_EC2_INSTANCE_ID}" \
-            --region "${AWS_REGION}" \
-            --query "Reservations[0].Instances[0].SecurityGroups[].GroupId" \
-            --output text | tr '\t' '\n' | sort -u | tr '\n' ' ')
-
-          case " ${CURRENT_GROUPS} " in
-            *" ${{ steps.ec2.outputs.dashboard_sg }} "*)
-              echo "Dashboard security group already attached."
-              ;;
-            *)
-              aws ec2 modify-instance-attribute \
-                --instance-id "${DASHBOARD_EC2_INSTANCE_ID}" \
-                --groups ${CURRENT_GROUPS} "${{ steps.ec2.outputs.dashboard_sg }}"
-              ;;
-          esac
-
-      - name: Temporarily allow GitHub runner SSH access
-        id: ssh_rule
-        shell: bash
-        run: |
-          set -e
-
-          RUNNER_IP=$(curl -fsS https://checkip.amazonaws.com | tr -d '\r\n')
-          RUNNER_CIDR="${RUNNER_IP}/32"
-
-          aws ec2 authorize-security-group-ingress \
-            --group-id "${{ steps.ec2.outputs.dashboard_sg }}" \
-            --ip-permissions "IpProtocol=tcp,FromPort=22,ToPort=22,IpRanges=[{CidrIp=${RUNNER_CIDR},Description='Temporary GitHub Actions SSH access'}]" \
-            --region "${AWS_REGION}" || true
-
-          echo "runner_cidr=${RUNNER_CIDR}" >> "$GITHUB_OUTPUT"
 
       - name: Prepare SSH key
         shell: bash
@@ -1235,16 +1128,6 @@ jobs:
             -i /tmp/cloudmart-ec2-key.pem \
             ec2-user@"${{ steps.ec2.outputs.public_ip }}" \
             "cd /tmp/cloudmart-dashboard && sudo env REPORT_BUCKET='${{ steps.ec2.outputs.bucket }}' bash install.sh"
-
-      - name: Remove temporary GitHub runner SSH access
-        if: always()
-        run: |
-          if [ -n "${{ steps.ssh_rule.outputs.runner_cidr }}" ]; then
-            aws ec2 revoke-security-group-ingress \
-              --group-id "${{ steps.ec2.outputs.dashboard_sg }}" \
-              --ip-permissions "IpProtocol=tcp,FromPort=22,ToPort=22,IpRanges=[{CidrIp=${{ steps.ssh_rule.outputs.runner_cidr }}}]" \
-              --region "${AWS_REGION}" || true
-          fi
 
       - name: Clean SSH key
         if: always()

@@ -179,10 +179,11 @@ def lambda_handler(event, context):
             # =================================================
             # CUSTOMER AUTH TOKENS TABLE
             #
-            # IMPORTANT:
-            # Only SHA-256 token hashes are stored here.
-            # The actual customer token is never stored.
-            # =================================================
+            # customer_id is required for customer rows.
+            # admin_id is required for admin rows.
+            # role identifies customer/admin.
+            # Only SHA-256 token hashes are stored.
+            #
 
             cursor.execute(
                 """
@@ -190,9 +191,14 @@ def lambda_handler(event, context):
 
                     token_id BIGINT NOT NULL AUTO_INCREMENT,
 
-                    customer_id VARCHAR(100) NOT NULL,
+                    customer_id VARCHAR(100) NULL,
+
+                    admin_id VARCHAR(100) NULL,
 
                     token_hash CHAR(64) NOT NULL,
+
+                    role ENUM('customer', 'admin')
+                        NOT NULL DEFAULT 'customer',
 
                     is_active BOOLEAN NOT NULL DEFAULT TRUE,
 
@@ -203,29 +209,29 @@ def lambda_handler(event, context):
 
                     last_used_at TIMESTAMP NULL,
 
-                    PRIMARY KEY (
-                        token_id
-                    ),
+                    PRIMARY KEY (token_id),
 
-                    UNIQUE KEY uq_customer_token_hash (
-                        token_hash
-                    ),
+                    KEY idx_customer_auth_customer (customer_id),
 
-                    KEY idx_customer_auth_customer (
-                        customer_id
-                    ),
+                    KEY idx_customer_auth_admin (admin_id),
+
+                    KEY idx_customer_auth_token_hash (token_hash),
 
                     CONSTRAINT fk_customer_auth_customer
+                        FOREIGN KEY (customer_id)
+                        REFERENCES customers(customer_id)
+                        ON DELETE CASCADE,
 
-                        FOREIGN KEY (
-                            customer_id
+                    CONSTRAINT chk_customer_auth_identity_role
+                        CHECK (
+                            (role = 'customer'
+                                AND customer_id IS NOT NULL
+                                AND admin_id IS NULL)
+                            OR
+                            (role = 'admin'
+                                AND admin_id IS NOT NULL
+                                AND customer_id IS NULL)
                         )
-
-                        REFERENCES customers(
-                            customer_id
-                        )
-
-                        ON DELETE CASCADE
 
                 )
                 ENGINE=InnoDB
@@ -233,6 +239,105 @@ def lambda_handler(event, context):
                 COLLATE=utf8mb4_unicode_ci
                 """
             )
+
+
+            # MIGRATE AN EXISTING AUTH TABLE
+
+            cursor.execute(
+                """
+                SELECT COUNT(*) AS column_count
+                FROM information_schema.columns
+                WHERE table_schema = DATABASE()
+                  AND table_name = 'customer_auth_tokens'
+                  AND column_name = 'admin_id'
+                """
+            )
+
+            if cursor.fetchone()["column_count"] == 0:
+                cursor.execute(
+                    """
+                    ALTER TABLE customer_auth_tokens
+                    ADD COLUMN admin_id VARCHAR(100) NULL
+                    AFTER customer_id
+                    """
+                )
+
+            cursor.execute(
+                """
+                SELECT COUNT(*) AS column_count
+                FROM information_schema.columns
+                WHERE table_schema = DATABASE()
+                  AND table_name = 'customer_auth_tokens'
+                  AND column_name = 'role'
+                """
+            )
+
+            if cursor.fetchone()["column_count"] == 0:
+                cursor.execute(
+                    """
+                    ALTER TABLE customer_auth_tokens
+                    ADD COLUMN role ENUM('customer', 'admin')
+                    NOT NULL DEFAULT 'customer'
+                    AFTER token_hash
+                    """
+                )
+
+            cursor.execute(
+                """
+                ALTER TABLE customer_auth_tokens
+                MODIFY customer_id VARCHAR(100) NULL
+                """
+            )
+
+            cursor.execute(
+                '''
+                SELECT COUNT(*) AS constraint_count
+                FROM information_schema.table_constraints
+                WHERE table_schema = DATABASE()
+                  AND table_name = 'customer_auth_tokens'
+                  AND constraint_name = 'chk_customer_auth_identity_role'
+                  AND constraint_type = 'CHECK'
+                '''
+            )
+
+            if cursor.fetchone()["constraint_count"] == 0:
+                cursor.execute(
+                    '''
+                    ALTER TABLE customer_auth_tokens
+                    ADD CONSTRAINT chk_customer_auth_identity_role
+                    CHECK (
+                        (role = 'customer'
+                            AND customer_id IS NOT NULL
+                            AND admin_id IS NULL)
+                        OR
+                        (role = 'admin'
+                            AND admin_id IS NOT NULL
+                            AND customer_id IS NULL)
+                    )
+                    '''
+                )
+
+
+            # Composite lookup index used by customer authentication.
+
+            cursor.execute(
+                """
+                SELECT COUNT(*) AS index_count
+                FROM information_schema.statistics
+                WHERE table_schema = DATABASE()
+                  AND table_name = 'customer_auth_tokens'
+                  AND index_name = 'idx_customer_auth_customer_token'
+                """
+            )
+
+            if cursor.fetchone()["index_count"] == 0:
+                cursor.execute(
+                    """
+                    ALTER TABLE customer_auth_tokens
+                    ADD INDEX idx_customer_auth_customer_token
+                    (customer_id, token_hash)
+                    """
+                )
 
 
             # =================================================
@@ -281,90 +386,200 @@ def lambda_handler(event, context):
 
 
             # =================================================
-            # CUSTOMER AUTH TOKEN INDEX
-            # =================================================
-            # Customer authentication searches by customer_id + token_hash.
-            # The information_schema check makes this safe for an existing table.
-
-            cursor.execute(
-                """
-                SELECT COUNT(*) AS index_count
-                FROM information_schema.statistics
-                WHERE table_schema = DATABASE()
-                  AND table_name = 'customer_auth_tokens'
-                  AND index_name = 'idx_customer_auth_customer_token'
-                """
-            )
-
-            token_index = cursor.fetchone()
-
-            if not token_index or token_index["index_count"] == 0:
-
-                cursor.execute(
-                    """
-                    ALTER TABLE customer_auth_tokens
-                    ADD INDEX idx_customer_auth_customer_token
-                    (customer_id, token_hash)
-                    """
-                )
-
-
-            # =================================================
             # SEED CUSTOMER AUTH TOKENS
-            # =================================================
-            # Development/test credentials.
             #
-            # The actual customer tokens are NOT stored in MySQL.
-            # SHA-256 is calculated from each token and only the
-            # resulting 64-character hash is stored.
+            # Only SHA-256 hashes are stored in RDS.
             #
-            # These three tokens are the credentials used by Postman:
-            #
-            # CUST001 -> 6A0JLpPl3uM7pb_Uv73FaxC2LuI_WhKbFNEXUddy_VM
-            # CUST002 -> txk-wMbwQziK1TDu4HB4R7Nu7lj8wF1kASxkgQtHWa0
-            # CUST003 -> bVIS4olBt9xVuvKS-Fxw1nOf1tXmgN7AhG59qYB2-9k
-            #
-            # SHA-256 is deterministic:
-            # the same token always produces the same hash.
 
             cursor.execute(
-                """
+                '''
                 INSERT INTO customer_auth_tokens
                 (
                     customer_id,
+                    admin_id,
                     token_hash,
+                    role,
                     is_active
                 )
-                VALUES
-                (
+                SELECT
                     'CUST001',
+                    NULL,
                     SHA2(
                         '6A0JLpPl3uM7pb_Uv73FaxC2LuI_WhKbFNEXUddy_VM',
                         256
                     ),
+                    'customer',
                     TRUE
-                ),
+                WHERE NOT EXISTS (
+                    SELECT 1
+                    FROM customer_auth_tokens
+                    WHERE customer_id = 'CUST001'
+                      AND role = 'customer'
+                )
+                '''
+            )
+
+            cursor.execute(
+                '''
+                INSERT INTO customer_auth_tokens
                 (
+                    customer_id,
+                    admin_id,
+                    token_hash,
+                    role,
+                    is_active
+                )
+                SELECT
                     'CUST002',
+                    NULL,
                     SHA2(
                         'txk-wMbwQziK1TDu4HB4R7Nu7lj8wF1kASxkgQtHWa0',
                         256
                     ),
+                    'customer',
                     TRUE
-                ),
+                WHERE NOT EXISTS (
+                    SELECT 1
+                    FROM customer_auth_tokens
+                    WHERE customer_id = 'CUST002'
+                      AND role = 'customer'
+                )
+                '''
+            )
+
+            cursor.execute(
+                '''
+                INSERT INTO customer_auth_tokens
                 (
+                    customer_id,
+                    admin_id,
+                    token_hash,
+                    role,
+                    is_active
+                )
+                SELECT
                     'CUST003',
+                    NULL,
                     SHA2(
                         'bVIS4olBt9xVuvKS-Fxw1nOf1tXmgN7AhG59qYB2-9k',
                         256
                     ),
+                    'customer',
                     TRUE
+                WHERE NOT EXISTS (
+                    SELECT 1
+                    FROM customer_auth_tokens
+                    WHERE customer_id = 'CUST003'
+                      AND role = 'customer'
                 )
-                ON DUPLICATE KEY UPDATE
-                    customer_id = VALUES(customer_id),
-                    is_active = TRUE
-                """
+                '''
             )
+
+
+            # =================================================
+            # ADMIN TOKEN
+            #
+            # GitHub Actions supplies the plaintext token only
+            # in the Lambda invocation payload. RDS stores only
+            # its SHA-256 hash.
+            # =================================================
+
+            event_admin_id = str(
+                event.get("admin_id", "")
+            ).strip()
+
+            event_admin_token = str(
+                event.get("admin_token", "")
+            ).strip()
+
+            if event_admin_id and event_admin_token:
+
+                import hashlib
+
+                admin_token_hash = hashlib.sha256(
+                    event_admin_token.encode("utf-8")
+                ).hexdigest()
+
+                cursor.execute(
+                    '''
+                    SELECT token_id
+                    FROM customer_auth_tokens
+                    WHERE admin_id = %s
+                      AND role = 'admin'
+                    ORDER BY token_id
+                    LIMIT 1
+                    ''',
+                    (event_admin_id,)
+                )
+
+                existing_admin = cursor.fetchone()
+
+                if existing_admin:
+                    cursor.execute(
+                        '''
+                        UPDATE customer_auth_tokens
+                        SET customer_id = NULL,
+                            token_hash = %s,
+                            role = 'admin',
+                            is_active = TRUE,
+                            last_used_at = NULL
+                        WHERE token_id = %s
+                        ''',
+                        (
+                            admin_token_hash,
+                            existing_admin["token_id"]
+                        )
+                    )
+                else:
+                    cursor.execute(
+                        '''
+                        INSERT INTO customer_auth_tokens
+                        (
+                            customer_id,
+                            admin_id,
+                            token_hash,
+                            role,
+                            is_active
+                        )
+                        VALUES
+                        (
+                            NULL,
+                            %s,
+                            %s,
+                            'admin',
+                            TRUE
+                        )
+                        ''',
+                        (
+                            event_admin_id,
+                            admin_token_hash
+                        )
+                    )
+
+                # There must be only one active admin record for
+                # the configured admin ID.
+                cursor.execute(
+                    '''
+                    UPDATE customer_auth_tokens
+                    SET is_active = FALSE
+                    WHERE role = 'admin'
+                      AND admin_id = %s
+                      AND token_hash <> %s
+                    ''',
+                    (
+                        event_admin_id,
+                        admin_token_hash
+                    )
+                )
+
+                print(
+                    json.dumps({
+                        "message": "Admin authentication record updated",
+                        "admin_id": event_admin_id,
+                        "role": "admin"
+                    })
+                )
+
 
 
             # =================================================
