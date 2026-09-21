@@ -1,36 +1,19 @@
-name: CloudMart Infrastructure
+name: CloudMart Deployment
 
 on:
   push:
     branches:
-      - main
+      - milestone-3
       - orders
-      - dashboard
-
-  workflow_dispatch:
-    inputs:
-      operations_cidr:
-        description: Public IP/CIDR allowed to access the CloudMart dashboard
-        required: true
-        type: string
-
-
-# ============================================================
-# PERMISSIONS
-# ============================================================
+      - main
 
 permissions:
-  id-token: write
   contents: read
-
-
-# ============================================================
-# GLOBAL ENVIRONMENT
-# ============================================================
 
 env:
   AWS_REGION: ap-south-1
   ENVIRONMENT: dev
+
   NETWORK_STACK_NAME: cloudmart-dev-network
   DATA_STACK_NAME: cloudmart-dev-data
   IAM_STACK_NAME: cloudmart-dev-iam
@@ -40,38 +23,65 @@ env:
   REPORTING_STACK_NAME: CloudMart-dev-reporting
   MONITORING_STACK_NAME: CloudMart-dev-monitoring
 
-
-# ============================================================
-# JOBS
-# ============================================================
-
 jobs:
 
   # ============================================================
-  # JOB 1 - NETWORK
+  # 1. DEPLOY NETWORK
+  # VPC
+  # Public subnet
+  # Private subnets
+  # Route tables
+  # Internet Gateway
+  # Security Groups
+  # EC2 Dashboard instance
   # ============================================================
 
   deploy-network:
-    name: Deploy Network Stack
+
     runs-on: ubuntu-latest
+
+    outputs:
+      dashboard_instance_id: ${{ steps.dashboard.outputs.instance_id }}
+      dashboard_public_ip: ${{ steps.dashboard.outputs.public_ip }}
 
     steps:
 
       - name: Checkout repository
         uses: actions/checkout@v4
 
-
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
+      # ----------------------------------------------------------
+      # Validate EC2 parameters
+      # ----------------------------------------------------------
 
-      - name: Verify AWS access
+      - name: Verify EC2 parameters
+        shell: bash
         run: |
-          aws sts get-caller-identity
+          set -e
 
+          if [ -z "${{ vars.EC2_KEY_PAIR_NAME }}" ]; then
+            echo "ERROR: EC2_KEY_PAIR_NAME GitHub repository variable is not configured."
+            exit 1
+          fi
+
+          if [ -z "${{ vars.EC2_AMI_ID }}" ]; then
+            echo "ERROR: EC2_AMI_ID GitHub repository variable is not configured."
+            exit 1
+          fi
+
+          echo "EC2 Key Pair: ${{ vars.EC2_KEY_PAIR_NAME }}"
+          echo "EC2 AMI: ${{ vars.EC2_AMI_ID }}"
+          echo "EC2 Instance Type: ${{ vars.EC2_INSTANCE_TYPE || 't3.micro' }}"
+
+      # ----------------------------------------------------------
+      # Validate CloudFormation template
+      # ----------------------------------------------------------
 
       - name: Validate Network CloudFormation template
         run: |
@@ -79,40 +89,23 @@ jobs:
             --template-body file://cloudformation/network/network-stack.yaml \
             --region "${AWS_REGION}"
 
-
       # ----------------------------------------------------------
-      # Determine Operations CIDR
-      #
-      # For automatic push:
-      #   use GitHub repository variable OPERATIONS_CIDR
-      #
-      # For manual workflow:
-      #   use workflow_dispatch input operations_cidr
+      # Get Operations CIDR
       # ----------------------------------------------------------
 
-      - name: Determine Operations CIDR
+      - name: Set Operations CIDR
         id: cidr
         shell: bash
         run: |
-          set -e
-
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            OPERATIONS_CIDR="${{ inputs.operations_cidr }}"
+          if [ -n "${{ vars.OPERATIONS_CIDR }}" ]; then
+            echo "operations_cidr=${{ vars.OPERATIONS_CIDR }}" >> "$GITHUB_OUTPUT"
           else
-            OPERATIONS_CIDR="${{ vars.OPERATIONS_CIDR }}"
+            echo "operations_cidr=0.0.0.0/0" >> "$GITHUB_OUTPUT"
           fi
 
-          if [ -z "${OPERATIONS_CIDR}" ]; then
-            echo "ERROR: Operations CIDR is not configured."
-            echo "For push deployments, create repository variable OPERATIONS_CIDR."
-            echo "For manual deployments, provide operations_cidr input."
-            exit 1
-          fi
-
-          echo "Using Operations CIDR: ${OPERATIONS_CIDR}"
-
-          echo "operations_cidr=${OPERATIONS_CIDR}" >> "$GITHUB_OUTPUT"
-
+      # ----------------------------------------------------------
+      # Deploy Network Stack
+      # ----------------------------------------------------------
 
       - name: Deploy Network Stack
         run: |
@@ -126,145 +119,176 @@ jobs:
               EC2AmiId="${{ vars.EC2_AMI_ID }}" \
               EC2InstanceType="${{ vars.EC2_INSTANCE_TYPE || 't3.micro' }}" \
             --region "${AWS_REGION}" \
+            --capabilities CAPABILITY_NAMED_IAM \
             --no-fail-on-empty-changeset
 
+      # ----------------------------------------------------------
+      # Get Dashboard EC2 information
+      # ----------------------------------------------------------
 
-      - name: Check Network Stack
+      - name: Get Dashboard EC2 Instance
+        id: dashboard
+        shell: bash
         run: |
-          aws cloudformation describe-stacks \
+          set -e
+
+          echo "Waiting for CloudFormation stack..."
+
+          aws cloudformation wait stack-update-complete \
+            --stack-name "${NETWORK_STACK_NAME}" \
+            --region "${AWS_REGION}" || true
+
+          INSTANCE_ID=$(aws cloudformation describe-stacks \
             --stack-name "${NETWORK_STACK_NAME}" \
             --region "${AWS_REGION}" \
-            --query "Stacks[0].StackStatus" \
-            --output text
+            --query "Stacks[0].Outputs[?OutputKey=='DashboardInstanceId'].OutputValue | [0]" \
+            --output text)
+
+          if [ -z "$INSTANCE_ID" ] || [ "$INSTANCE_ID" = "None" ]; then
+            echo "ERROR: DashboardInstanceId was not found in network stack outputs."
+            exit 1
+          fi
+
+          echo "Dashboard Instance ID: $INSTANCE_ID"
+
+          echo "Waiting for EC2 instance to become running..."
+
+          aws ec2 wait instance-running \
+            --instance-ids "$INSTANCE_ID" \
+            --region "${AWS_REGION}"
+
+          PUBLIC_IP=$(aws ec2 describe-instances \
+            --instance-ids "$INSTANCE_ID" \
+            --region "${AWS_REGION}" \
+            --query "Reservations[0].Instances[0].PublicIpAddress" \
+            --output text)
+
+          if [ -z "$PUBLIC_IP" ] || [ "$PUBLIC_IP" = "None" ]; then
+            echo "ERROR: Dashboard EC2 does not have a public IP."
+            exit 1
+          fi
+
+          echo "Dashboard Public IP: $PUBLIC_IP"
+
+          echo "instance_id=$INSTANCE_ID" >> "$GITHUB_OUTPUT"
+          echo "public_ip=$PUBLIC_IP" >> "$GITHUB_OUTPUT"
 
 
   # ============================================================
-  # JOB 2 - DATA / RDS
+  # 2. DEPLOY DATA
+  # RDS MySQL
+  # S3
   # ============================================================
 
   deploy-data:
-    name: Deploy Data Stack
-    runs-on: ubuntu-latest
+
     needs: deploy-network
+
+    runs-on: ubuntu-latest
 
     steps:
 
       - name: Checkout repository
         uses: actions/checkout@v4
 
-
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-
-      - name: Verify required RDS password secret
-        shell: bash
-        run: |
-          if [ -z "${{ secrets.RDS_MASTER_PASSWORD }}" ]; then
-            echo "ERROR: RDS_MASTER_PASSWORD GitHub secret is not configured."
-            exit 1
-          fi
-
-
-      - name: Validate Data CloudFormation template
+      - name: Validate Data Stack
         run: |
           aws cloudformation validate-template \
             --template-body file://cloudformation/data/data-stack.yaml \
             --region "${AWS_REGION}"
 
-
       - name: Deploy Data Stack
-        env:
-          DB_PASSWORD: ${{ secrets.RDS_MASTER_PASSWORD }}
         run: |
           aws cloudformation deploy \
             --template-file cloudformation/data/data-stack.yaml \
             --stack-name "${DATA_STACK_NAME}" \
             --parameter-overrides \
               Environment="${ENVIRONMENT}" \
-              DBName="cloudmart" \
-              DBUsername="cloudmartadmin" \
-              DBPassword="${DB_PASSWORD}" \
-              DBInstanceClass="db.t3.micro" \
-              AllocatedStorage="20" \
             --region "${AWS_REGION}" \
+            --capabilities CAPABILITY_NAMED_IAM \
             --no-fail-on-empty-changeset
 
+      # ----------------------------------------------------------
+      # Get RDS information
+      # ----------------------------------------------------------
 
-      - name: Verify database SSM parameters are String
+      - name: Get RDS Stack Outputs
+        id: rds
+        shell: bash
         run: |
-          for PARAMETER in \
-            "/cloudmart/${ENVIRONMENT}/db/username" \
-            "/cloudmart/${ENVIRONMENT}/db/password"; do
 
-            TYPE=$(aws ssm get-parameter \
-              --name "${PARAMETER}" \
-              --region "${AWS_REGION}" \
-              --query "Parameter.Type" \
-              --output text)
-
-            echo "${PARAMETER}: ${TYPE}"
-
-            if [ "${TYPE}" != "String" ]; then
-              echo "ERROR: ${PARAMETER} is not an SSM String parameter."
-              exit 1
-            fi
-          done
-
-
-      - name: Check Data Stack
-        run: |
-          aws cloudformation describe-stacks \
+          DB_HOST=$(aws cloudformation describe-stacks \
             --stack-name "${DATA_STACK_NAME}" \
             --region "${AWS_REGION}" \
-            --query "Stacks[0].StackStatus" \
-            --output text
+            --query "Stacks[0].Outputs[?OutputKey=='DBEndpoint'].OutputValue | [0]" \
+            --output text)
+
+          DB_PORT=$(aws cloudformation describe-stacks \
+            --stack-name "${DATA_STACK_NAME}" \
+            --region "${AWS_REGION}" \
+            --query "Stacks[0].Outputs[?OutputKey=='DBPort'].OutputValue | [0]" \
+            --output text)
+
+          DB_NAME=$(aws cloudformation describe-stacks \
+            --stack-name "${DATA_STACK_NAME}" \
+            --region "${AWS_REGION}" \
+            --query "Stacks[0].Outputs[?OutputKey=='DatabaseName'].OutputValue | [0]" \
+            --output text)
+
+          echo "RDS Host: $DB_HOST"
+          echo "RDS Port: $DB_PORT"
+          echo "Database: $DB_NAME"
 
 
   # ============================================================
-  # JOB 3 - IAM
+  # 3. DEPLOY IAM
   # ============================================================
 
   deploy-iam:
-    name: Deploy IAM Stack
+
+    needs:
+      - deploy-network
+      - deploy-data
+
     runs-on: ubuntu-latest
-    needs: deploy-data
 
     steps:
 
       - name: Checkout repository
         uses: actions/checkout@v4
 
-
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-
-      - name: Validate IAM CloudFormation template
-        run: |
-          aws cloudformation validate-template \
-            --template-body file://cloudformation/iam/iam-stack.yaml \
-            --region "${AWS_REGION}"
-
-
-      - name: Get Dashboard EC2 instance ID
+      - name: Get Dashboard Instance ID
         id: dashboard
         shell: bash
         run: |
-          set -e
+
           INSTANCE_ID=$(aws cloudformation describe-stacks \
             --stack-name "${NETWORK_STACK_NAME}" \
             --region "${AWS_REGION}" \
             --query "Stacks[0].Outputs[?OutputKey=='DashboardInstanceId'].OutputValue | [0]" \
             --output text)
-          test -n "${INSTANCE_ID}" && test "${INSTANCE_ID}" != "None"
-          echo "instance_id=${INSTANCE_ID}" >> "$GITHUB_OUTPUT"
+
+          echo "instance_id=$INSTANCE_ID" >> "$GITHUB_OUTPUT"
+
+      - name: Validate IAM Stack
+        run: |
+          aws cloudformation validate-template \
+            --template-body file://cloudformation/iam/iam-stack.yaml \
+            --region "${AWS_REGION}"
 
       - name: Deploy IAM Stack
         run: |
@@ -274,158 +298,49 @@ jobs:
             --parameter-overrides \
               Environment="${ENVIRONMENT}" \
               DashboardInstanceId="${{ steps.dashboard.outputs.instance_id }}" \
-            --capabilities CAPABILITY_NAMED_IAM \
             --region "${AWS_REGION}" \
+            --capabilities CAPABILITY_NAMED_IAM \
             --no-fail-on-empty-changeset
 
 
-      - name: Verify IAM outputs
-        shell: bash
-        run: |
-          set -e
-
-          for OUTPUT in \
-            "AuthorizerLambdaRoleArn" \
-            "ProductLambdaRoleArn" \
-            "OrderProcessorLambdaRoleArn" \
-            "ReportingLambdaRoleArn" \
-            "DashboardEC2RoleArn"; do
-
-            VALUE=$(aws cloudformation describe-stacks \
-              --stack-name "${IAM_STACK_NAME}" \
-              --region "${AWS_REGION}" \
-              --query "Stacks[0].Outputs[?OutputKey=='${OUTPUT}'].OutputValue | [0]" \
-              --output text)
-
-            if [ -z "${VALUE}" ] || [ "${VALUE}" = "None" ]; then
-              echo "ERROR: Missing IAM output ${OUTPUT}"
-              exit 1
-            fi
-
-            echo "${OUTPUT}: ${VALUE}"
-          done
-
-
   # ============================================================
-  # JOB 4 - AUTHENTICATION
+  # 4. DEPLOY AUTHENTICATION
   # ============================================================
 
   deploy-auth:
-    name: Deploy Authentication Stack
-    runs-on: ubuntu-latest
 
     needs:
       - deploy-network
       - deploy-data
       - deploy-iam
 
+    runs-on: ubuntu-latest
+
     steps:
 
       - name: Checkout repository
         uses: actions/checkout@v4
 
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-
-
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
+      # ----------------------------------------------------------
+      # Validate Authentication Stack
+      # ----------------------------------------------------------
 
-      - name: Verify required authentication secret
-        shell: bash
-        run: |
-          if [ -z "${{ secrets.AUTH_TOKEN }}" ]; then
-            echo "ERROR: AUTH_TOKEN GitHub secret is not configured."
-            exit 1
-          fi
-
-
-      - name: Get Lambda artifact bucket
-        id: bucket
-        shell: bash
-        run: |
-          set -e
-
-          BUCKET=$(aws cloudformation describe-stacks \
-            --stack-name "${DATA_STACK_NAME}" \
-            --region "${AWS_REGION}" \
-            --query "Stacks[0].Outputs[?OutputKey=='LambdaArtifactBucketName'].OutputValue | [0]" \
-            --output text)
-
-          test -n "${BUCKET}" && test "${BUCKET}" != "None"
-
-          echo "bucket=${BUCKET}" >> "$GITHUB_OUTPUT"
-
-
-      - name: Package Authorizer Lambda
-        run: |
-          rm -rf authorizer-package authorizer.zip
-          mkdir -p authorizer-package
-
-          cp lambda/authorizer/lambda_function.py authorizer-package/index.py
-
-          pip install \
-            -r lambda/authorizer/requirements.txt \
-            -t authorizer-package
-
-          (cd authorizer-package && zip -qr ../authorizer.zip .)
-
-          ls -lh authorizer.zip
-
-
-      - name: Upload Authorizer package
-        run: |
-          aws s3 cp \
-            authorizer.zip \
-            "s3://${{ steps.bucket.outputs.bucket }}/authorizer/authorizer.zip" \
-            --region "${AWS_REGION}"
-
-
-      - name: Verify database SSM parameters
-        run: |
-          for PARAMETER in \
-            "/cloudmart/${ENVIRONMENT}/db/host" \
-            "/cloudmart/${ENVIRONMENT}/db/port" \
-            "/cloudmart/${ENVIRONMENT}/db/name" \
-            "/cloudmart/${ENVIRONMENT}/db/username" \
-            "/cloudmart/${ENVIRONMENT}/db/password"; do
-
-            aws ssm get-parameter \
-              --name "${PARAMETER}" \
-              --region "${AWS_REGION}" \
-              --query "Parameter.Name" \
-              --output text
-          done
-
-
-      - name: Validate Auth CloudFormation template
+      - name: Validate Auth Stack
         run: |
           aws cloudformation validate-template \
             --template-body file://cloudformation/auth/auth-stack.yaml \
             --region "${AWS_REGION}"
 
-
-      - name: Get Lambda Security Group
-        id: network
-        shell: bash
-        run: |
-          SG=$(aws cloudformation describe-stacks \
-            --stack-name "${NETWORK_STACK_NAME}" \
-            --region "${AWS_REGION}" \
-            --query "Stacks[0].Outputs[?OutputKey=='LambdaSecurityGroupId'].OutputValue | [0]" \
-            --output text)
-
-          test -n "${SG}" && test "${SG}" != "None"
-
-          echo "security_group=${SG}" >> "$GITHUB_OUTPUT"
-
+      # ----------------------------------------------------------
+      # Deploy Authentication Stack
+      # ----------------------------------------------------------
 
       - name: Deploy Auth Stack
         run: |
@@ -434,273 +349,35 @@ jobs:
             --stack-name "${AUTH_STACK_NAME}" \
             --parameter-overrides \
               Environment="${ENVIRONMENT}" \
-              LambdaSecurityGroupId="${{ steps.network.outputs.security_group }}" \
-              DBHostParameter="/cloudmart/${ENVIRONMENT}/db/host" \
-              DBPortParameter="/cloudmart/${ENVIRONMENT}/db/port" \
-              DBNameParameter="/cloudmart/${ENVIRONMENT}/db/name" \
-              DBUsernameParameter="/cloudmart/${ENVIRONMENT}/db/username" \
-              DBPasswordParameter="/cloudmart/${ENVIRONMENT}/db/password" \
-              LambdaArtifactBucketName="${{ steps.bucket.outputs.bucket }}" \
-              LambdaArtifactKey="authorizer/authorizer.zip" \
-            --capabilities CAPABILITY_NAMED_IAM \
-            --region "${AWS_REGION}" \
-            --no-fail-on-empty-changeset
-
-
-      - name: Check Auth Stack
-        run: |
-          aws cloudformation describe-stacks \
-            --stack-name "${AUTH_STACK_NAME}" \
-            --region "${AWS_REGION}" \
-            --query "Stacks[0].StackStatus" \
-            --output text
-
-
-  # ============================================================
-  # JOB 5 - API / ORDER LAMBDAS
-  # ============================================================
-
-  deploy-api:
-    name: Deploy API and Order Processing
-    runs-on: ubuntu-latest
-
-    needs:
-      - deploy-network
-      - deploy-data
-      - deploy-iam
-      - deploy-auth
-
-    steps:
-
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-
-
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
-          aws-region: ${{ env.AWS_REGION }}
-
-
-      - name: Get network outputs
-        id: network
-        shell: bash
-        run: |
-          SUBNET_A=$(aws cloudformation describe-stacks \
-            --stack-name "${NETWORK_STACK_NAME}" \
-            --region "${AWS_REGION}" \
-            --query "Stacks[0].Outputs[?OutputKey=='PrivateSubnetAId'].OutputValue | [0]" \
-            --output text)
-
-          SUBNET_B=$(aws cloudformation describe-stacks \
-            --stack-name "${NETWORK_STACK_NAME}" \
-            --region "${AWS_REGION}" \
-            --query "Stacks[0].Outputs[?OutputKey=='PrivateSubnetBId'].OutputValue | [0]" \
-            --output text)
-
-          SG=$(aws cloudformation describe-stacks \
-            --stack-name "${NETWORK_STACK_NAME}" \
-            --region "${AWS_REGION}" \
-            --query "Stacks[0].Outputs[?OutputKey=='LambdaSecurityGroupId'].OutputValue | [0]" \
-            --output text)
-
-          test -n "${SUBNET_A}" && test "${SUBNET_A}" != "None"
-          test -n "${SUBNET_B}" && test "${SUBNET_B}" != "None"
-          test -n "${SG}" && test "${SG}" != "None"
-
-          echo "subnets=${SUBNET_A},${SUBNET_B}" >> "$GITHUB_OUTPUT"
-          echo "security_group=${SG}" >> "$GITHUB_OUTPUT"
-
-
-      - name: Get Lambda artifact bucket
-        id: bucket
-        shell: bash
-        run: |
-          BUCKET=$(aws cloudformation describe-stacks \
-            --stack-name "${DATA_STACK_NAME}" \
-            --region "${AWS_REGION}" \
-            --query "Stacks[0].Outputs[?OutputKey=='LambdaArtifactBucketName'].OutputValue | [0]" \
-            --output text)
-
-          test -n "${BUCKET}" && test "${BUCKET}" != "None"
-
-          echo "bucket=${BUCKET}" >> "$GITHUB_OUTPUT"
-
-
-      - name: Get authorizer Lambda ARN
-        id: auth
-        shell: bash
-        run: |
-          ARN=$(aws cloudformation describe-stacks \
-            --stack-name "${AUTH_STACK_NAME}" \
-            --region "${AWS_REGION}" \
-            --query "Stacks[0].Outputs[?OutputKey=='AuthorizerLambdaArn'].OutputValue | [0]" \
-            --output text)
-
-          test -n "${ARN}" && test "${ARN}" != "None"
-
-          echo "arn=${ARN}" >> "$GITHUB_OUTPUT"
-
-
-      - name: Get IAM role ARNs
-        id: roles
-        shell: bash
-        run: |
-          PRODUCT=$(aws cloudformation describe-stacks \
-            --stack-name "${IAM_STACK_NAME}" \
-            --region "${AWS_REGION}" \
-            --query "Stacks[0].Outputs[?OutputKey=='ProductLambdaRoleArn'].OutputValue | [0]" \
-            --output text)
-
-          PROCESSOR=$(aws cloudformation describe-stacks \
-            --stack-name "${IAM_STACK_NAME}" \
-            --region "${AWS_REGION}" \
-            --query "Stacks[0].Outputs[?OutputKey=='OrderProcessorLambdaRoleArn'].OutputValue | [0]" \
-            --output text)
-
-          test -n "${PRODUCT}" && test "${PRODUCT}" != "None"
-          test -n "${PROCESSOR}" && test "${PROCESSOR}" != "None"
-
-          echo "product=${PRODUCT}" >> "$GITHUB_OUTPUT"
-          echo "processor=${PROCESSOR}" >> "$GITHUB_OUTPUT"
-
-
-      - name: Prepare Lambda build directories
-        run: |
-          rm -rf build
-          mkdir -p build/product build/schema build/order-processor
-
-
-      - name: Package Product Lambda
-        run: |
-          cp lambda/product/lambda_function.py build/product/
-          cp lambda/product/requirements.txt build/product/
-
-          pip install \
-            -r build/product/requirements.txt \
-            -t build/product
-
-          rm build/product/requirements.txt
-
-          (cd build/product && zip -qr ../../product.zip .)
-
-
-      - name: Package Schema Lambda
-        run: |
-          cp lambda/schema/lambda_function.py build/schema/
-          cp lambda/schema/requirements.txt build/schema/
-
-          pip install \
-            -r build/schema/requirements.txt \
-            -t build/schema
-
-          rm build/schema/requirements.txt
-
-          (cd build/schema && zip -qr ../../schema.zip .)
-
-
-      - name: Package Order Processor Lambda
-        run: |
-          cp lambda/order_processor/lambda_function.py build/order-processor/
-          cp lambda/order_processor/requirements.txt build/order-processor/
-
-          pip install \
-            -r build/order-processor/requirements.txt \
-            -t build/order-processor
-
-          rm build/order-processor/requirements.txt
-
-          (cd build/order-processor && zip -qr ../../order-processor.zip .)
-
-
-      - name: Upload Lambda packages to S3
-        run: |
-          BUCKET="${{ steps.bucket.outputs.bucket }}"
-
-          aws s3 cp \
-            product.zip \
-            "s3://${BUCKET}/product/product.zip"
-
-          aws s3 cp \
-            schema.zip \
-            "s3://${BUCKET}/schema/schema.zip"
-
-          aws s3 cp \
-            order-processor.zip \
-            "s3://${BUCKET}/order-processor/order-processor.zip"
-
-
-          aws s3api head-object \
-            --bucket "${BUCKET}" \
-            --key product/product.zip
-
-          aws s3api head-object \
-            --bucket "${BUCKET}" \
-            --key schema/schema.zip
-
-          aws s3api head-object \
-            --bucket "${BUCKET}" \
-            --key order-processor/order-processor.zip
-
-
-      - name: Validate API CloudFormation template
-        run: |
-          aws cloudformation validate-template \
-            --template-body file://cloudformation/api/api-stack.yaml \
-            --region "${AWS_REGION}"
-
-
-      - name: Deploy API Stack
-        run: |
-          aws cloudformation deploy \
-            --template-file cloudformation/api/api-stack.yaml \
-            --stack-name "${API_STACK_NAME}" \
             --region "${AWS_REGION}" \
             --capabilities CAPABILITY_NAMED_IAM \
-            --parameter-overrides \
-              Environment="${ENVIRONMENT}" \
-              PrivateSubnetIds="${{ steps.network.outputs.subnets }}" \
-              LambdaSecurityGroupId="${{ steps.network.outputs.security_group }}" \
-              ProductLambdaExecutionRoleArn="${{ steps.roles.outputs.product }}" \
-              OrderProcessorLambdaExecutionRoleArn="${{ steps.roles.outputs.processor }}" \
-              AuthorizerLambdaArn="${{ steps.auth.outputs.arn }}" \
-              ProductLambdaCodeBucket="${{ steps.bucket.outputs.bucket }}" \
-              ProductLambdaCodeKey="product/product.zip" \
-              SchemaLambdaCodeKey="schema/schema.zip" \
-              OrderProcessorLambdaCodeKey="order-processor/order-processor.zip" \
-              DBHostParameter="/cloudmart/${ENVIRONMENT}/db/host" \
-              DBPortParameter="/cloudmart/${ENVIRONMENT}/db/port" \
-              DBNameParameter="/cloudmart/${ENVIRONMENT}/db/name" \
-              DBUsernameParameter="/cloudmart/${ENVIRONMENT}/db/username" \
-              DBPasswordParameter="/cloudmart/${ENVIRONMENT}/db/password" \
-              AuthorizerCacheTTL="0" \
-              EventBusName="cloudmart-${ENVIRONMENT}-event-bus" \
-              LowStockEmail="${{ secrets.LOW_STOCK_EMAIL }}" \
             --no-fail-on-empty-changeset
 
+      # ----------------------------------------------------------
+      # Seed Admin Token
+      #
+      # ADMIN_TOKEN is taken from GitHub Secret.
+      #
+      # The token should be hashed using SHA-256 by the
+      # authentication/schema Lambda before storing in RDS.
+      # ----------------------------------------------------------
 
-      - name: Initialize or migrate database schema and seed admin token
+      - name: Seed Admin Authentication
         shell: bash
         env:
           ADMIN_ID: ${{ vars.ADMIN_ID || 'ADMIN001' }}
           ADMIN_TOKEN: ${{ secrets.AUTH_TOKEN }}
         run: |
-          rm -f schema-response.json
 
-          if [ -z "${ADMIN_TOKEN}" ]; then
+          if [ -z "$ADMIN_TOKEN" ]; then
             echo "ERROR: AUTH_TOKEN GitHub secret is not configured."
             exit 1
           fi
 
           PAYLOAD=$(python - <<'PY'
-          import json, os
+          import json
+          import os
+
           print(json.dumps({
               "admin_id": os.environ["ADMIN_ID"],
               "admin_token": os.environ["ADMIN_TOKEN"]
@@ -708,256 +385,260 @@ jobs:
           PY
           )
 
-          FUNCTION_ERROR=$(aws lambda invoke \
+          echo "Seeding admin authentication..."
+
+          aws lambda invoke \
             --function-name "CloudMart-${ENVIRONMENT}-schema" \
-            --region "${AWS_REGION}" \
+            --payload "$PAYLOAD" \
             --cli-binary-format raw-in-base64-out \
-            --payload "${PAYLOAD}" \
-            --query 'FunctionError' \
-            --output text \
-            schema-response.json)
+            --region "${AWS_REGION}" \
+            /tmp/schema-response.json
 
-          cat schema-response.json
-
-          if [ "${FUNCTION_ERROR}" != "None" ] && [ "${FUNCTION_ERROR}" != "null" ]; then
-            echo "Schema Lambda returned a function error: ${FUNCTION_ERROR}"
-            exit 1
-          fi
+          cat /tmp/schema-response.json
 
 
   # ============================================================
-  # JOB 6 - EVENTBRIDGE + SNS
+  # 5. DEPLOY API
+  # Product Service
+  # Order Service
+  # Authorizer
   # ============================================================
 
-  deploy-eventbridge:
-    name: Deploy EventBridge and SNS
+  deploy-api:
+
+    needs:
+      - deploy-network
+      - deploy-data
+      - deploy-iam
+      - deploy-auth
+
     runs-on: ubuntu-latest
-    needs: deploy-api
 
     steps:
 
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      # ----------------------------------------------------------
+      # Package Product Lambda
+      # ----------------------------------------------------------
+
+      - name: Package Product Lambda
+        shell: bash
+        run: |
+
+          if [ -d "lambda/product" ]; then
+
+            cd lambda/product
+
+            if [ -f requirements.txt ]; then
+              pip install \
+                -r requirements.txt \
+                -t .
+            fi
+
+            cd ../..
+
+            zip -r product-lambda.zip lambda/product
+
+          else
+            echo "lambda/product directory not found."
+          fi
+
+      # ----------------------------------------------------------
+      # Package Order Lambda
+      # ----------------------------------------------------------
+
+      - name: Package Order Lambda
+        shell: bash
+        run: |
+
+          if [ -d "lambda/order" ]; then
+
+            cd lambda/order
+
+            if [ -f requirements.txt ]; then
+              pip install \
+                -r requirements.txt \
+                -t .
+            fi
+
+            cd ../..
+
+            zip -r order-lambda.zip lambda/order
+
+          else
+            echo "lambda/order directory not found."
+          fi
+
+      # ----------------------------------------------------------
+      # Package Authorizer
+      # ----------------------------------------------------------
+
+      - name: Package Authorizer Lambda
+        shell: bash
+        run: |
+
+          if [ -d "lambda/authorizer" ]; then
+
+            cd lambda/authorizer
+
+            if [ -f requirements.txt ]; then
+              pip install \
+                -r requirements.txt \
+                -t .
+            fi
+
+            cd ../..
+
+            zip -r authorizer-lambda.zip lambda/authorizer
+
+          else
+            echo "lambda/authorizer directory not found."
+          fi
+
+      # ----------------------------------------------------------
+      # Validate API Stack
+      # ----------------------------------------------------------
+
+      - name: Validate API Stack
+        run: |
+          aws cloudformation validate-template \
+            --template-body file://cloudformation/api/api-stack.yaml \
+            --region "${AWS_REGION}"
+
+      # ----------------------------------------------------------
+      # Deploy API Stack
+      # ----------------------------------------------------------
+
+      - name: Deploy API Stack
+        run: |
+
+          aws cloudformation deploy \
+            --template-file cloudformation/api/api-stack.yaml \
+            --stack-name "${API_STACK_NAME}" \
+            --parameter-overrides \
+              Environment="${ENVIRONMENT}" \
+            --region "${AWS_REGION}" \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --no-fail-on-empty-changeset
+
+
+  # ============================================================
+  # 6. DEPLOY EVENTBRIDGE
+  # Low Stock Event
+  # SNS Notification
+  # ============================================================
+
+  deploy-eventbridge:
+
+    needs:
+      - deploy-network
+      - deploy-data
+      - deploy-iam
+      - deploy-api
+
+    runs-on: ubuntu-latest
+
+    steps:
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-
-      - name: Validate EventBridge CloudFormation template
+      - name: Validate EventBridge Stack
         run: |
+
           aws cloudformation validate-template \
             --template-body file://cloudformation/eventbridge/eventbridge-stack.yaml \
             --region "${AWS_REGION}"
 
-
-      - name: Verify API stack exists
+      - name: Deploy EventBridge Stack
         run: |
-          aws cloudformation describe-stacks \
-            --stack-name "${API_STACK_NAME}" \
-            --region "${AWS_REGION}" \
-            --query "Stacks[0].StackStatus" \
-            --output text
 
-
-      - name: Deploy EventBridge and SNS stack
-        run: |
           aws cloudformation deploy \
             --template-file cloudformation/eventbridge/eventbridge-stack.yaml \
             --stack-name "${EVENTBRIDGE_STACK_NAME}" \
             --parameter-overrides \
               Environment="${ENVIRONMENT}" \
-              LowStockEmail="${{ secrets.LOW_STOCK_EMAIL }}" \
-              OrderNotificationEmail="${{ secrets.ORDER_NOTIFICATION_EMAIL }}" \
             --region "${AWS_REGION}" \
+            --capabilities CAPABILITY_NAMED_IAM \
             --no-fail-on-empty-changeset
 
 
-      - name: Show final stack outputs
-        run: |
-          echo "================ API OUTPUTS ================"
-
-          aws cloudformation describe-stacks \
-            --stack-name "${API_STACK_NAME}" \
-            --region "${AWS_REGION}" \
-            --query "Stacks[0].Outputs" \
-            --output table
-
-
-          echo "=========== EVENTBRIDGE OUTPUTS ============="
-
-          aws cloudformation describe-stacks \
-            --stack-name "${EVENTBRIDGE_STACK_NAME}" \
-            --region "${AWS_REGION}" \
-            --query "Stacks[0].Outputs" \
-            --output table
-
-
   # ============================================================
-  # JOB 7 - DAILY REPORTING
+  # 7. DEPLOY REPORTING
+  # Report Lambda
+  # S3
   # ============================================================
 
   deploy-reporting:
-    name: Deploy Daily Reporting
-    runs-on: ubuntu-latest
+
     needs:
-      - deploy-eventbridge
+      - deploy-network
+      - deploy-data
       - deploy-iam
+      - deploy-api
+
+    runs-on: ubuntu-latest
 
     steps:
 
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Get deployment outputs
-        id: deployment
-        shell: bash
+      - name: Validate Reporting Stack
         run: |
-          set -e
 
-          SUBNET_A=$(aws cloudformation describe-stacks \
-            --stack-name "${NETWORK_STACK_NAME}" \
-            --region "${AWS_REGION}" \
-            --query "Stacks[0].Outputs[?OutputKey=='PrivateSubnetAId'].OutputValue | [0]" \
-            --output text)
-
-          SUBNET_B=$(aws cloudformation describe-stacks \
-            --stack-name "${NETWORK_STACK_NAME}" \
-            --region "${AWS_REGION}" \
-            --query "Stacks[0].Outputs[?OutputKey=='PrivateSubnetBId'].OutputValue | [0]" \
-            --output text)
-
-          SG=$(aws cloudformation describe-stacks \
-            --stack-name "${NETWORK_STACK_NAME}" \
-            --region "${AWS_REGION}" \
-            --query "Stacks[0].Outputs[?OutputKey=='LambdaSecurityGroupId'].OutputValue | [0]" \
-            --output text)
-
-          BUCKET=$(aws cloudformation describe-stacks \
-            --stack-name "${DATA_STACK_NAME}" \
-            --region "${AWS_REGION}" \
-            --query "Stacks[0].Outputs[?OutputKey=='LambdaArtifactBucketName'].OutputValue | [0]" \
-            --output text)
-
-          ROLE=$(aws cloudformation describe-stacks \
-            --stack-name "${IAM_STACK_NAME}" \
-            --region "${AWS_REGION}" \
-            --query "Stacks[0].Outputs[?OutputKey=='ReportingLambdaRoleArn'].OutputValue | [0]" \
-            --output text)
-
-          echo "subnets=${SUBNET_A},${SUBNET_B}" >> "$GITHUB_OUTPUT"
-          echo "sg=${SG}" >> "$GITHUB_OUTPUT"
-          echo "bucket=${BUCKET}" >> "$GITHUB_OUTPUT"
-          echo "role=${ROLE}" >> "$GITHUB_OUTPUT"
-
-      - name: Package reporting Lambda
-        run: |
-          rm -rf reporting-package reporting.zip
-          mkdir -p reporting-package
-          cp lambda/reporting/lambda_function.py reporting-package/
-          pip install -r lambda/reporting/requirements.txt -t reporting-package
-          (cd reporting-package && zip -qr ../reporting.zip .)
-
-      - name: Upload reporting Lambda
-        run: |
-          aws s3 cp reporting.zip \
-            "s3://${{ steps.deployment.outputs.bucket }}/reporting/reporting.zip" \
-            --region "${AWS_REGION}"
-
-      - name: Validate reporting stack
-        run: |
           aws cloudformation validate-template \
             --template-body file://cloudformation/reporting/reporting-stack.yaml \
             --region "${AWS_REGION}"
 
-      - name: Deploy reporting stack
+      - name: Deploy Reporting Stack
         run: |
+
           aws cloudformation deploy \
             --template-file cloudformation/reporting/reporting-stack.yaml \
             --stack-name "${REPORTING_STACK_NAME}" \
             --parameter-overrides \
               Environment="${ENVIRONMENT}" \
-              PrivateSubnetIds="${{ steps.deployment.outputs.subnets }}" \
-              LambdaSecurityGroupId="${{ steps.deployment.outputs.sg }}" \
-              ReportingLambdaExecutionRoleArn="${{ steps.deployment.outputs.role }}" \
-              ReportBucketName="${{ steps.deployment.outputs.bucket }}" \
-              DBHostParameter="/cloudmart/${ENVIRONMENT}/db/host" \
-              DBPortParameter="/cloudmart/${ENVIRONMENT}/db/port" \
-              DBNameParameter="/cloudmart/${ENVIRONMENT}/db/name" \
-              DBUsernameParameter="/cloudmart/${ENVIRONMENT}/db/username" \
-              DBPasswordParameter="/cloudmart/${ENVIRONMENT}/db/password" \
-              ReportingLambdaCodeKey="reporting/reporting.zip" \
             --region "${AWS_REGION}" \
+            --capabilities CAPABILITY_NAMED_IAM \
             --no-fail-on-empty-changeset
-
-      - name: Verify daily report Lambda
-        run: |
-          aws lambda get-function \
-            --function-name "CloudMart-${ENVIRONMENT}-daily-report" \
-            --region "${AWS_REGION}" >/dev/null
-
-      - name: Check reporting Lambda configuration
-        run: |
-          aws lambda get-function-configuration \
-            --function-name "CloudMart-${ENVIRONMENT}-daily-report" \
-            --region "${AWS_REGION}" \
-            --query '{Timeout:Timeout,MemorySize:MemorySize,VpcConfig:VpcConfig}' \
-            --output json
-
-      - name: Generate initial daily report
-        run: |
-          set -e
-
-          rm -f reporting-response.json
-
-          FUNCTION_ERROR=$(aws lambda invoke \
-            --function-name "CloudMart-${ENVIRONMENT}-daily-report" \
-            --region "${AWS_REGION}" \
-            --cli-binary-format raw-in-base64-out \
-            --cli-connect-timeout 30 \
-            --cli-read-timeout 300 \
-            --payload '{}' \
-            --query 'FunctionError' \
-            --output text \
-            reporting-response.json)
-
-          cat reporting-response.json
-
-          if [ "${FUNCTION_ERROR}" != "None" ] && [ "${FUNCTION_ERROR}" != "null" ]; then
-            echo "Daily report Lambda returned a function error: ${FUNCTION_ERROR}"
-            exit 1
-          fi
-
-          aws s3api head-object \
-            --bucket "${{ steps.deployment.outputs.bucket }}" \
-            --key "reports/daily-report-$(date -u +%Y-%m-%d).csv" \
-            --region "${AWS_REGION}"
 
 
   # ============================================================
-  # JOB 8 - MONITORING
+  # 8. DEPLOY MONITORING
   # ============================================================
 
   deploy-monitoring:
-    name: Deploy Monitoring Stack
-    runs-on: ubuntu-latest
+
     needs:
-      - deploy-eventbridge
-      - deploy-iam
+      - deploy-network
+      - deploy-data
+      - deploy-api
+
+    runs-on: ubuntu-latest
 
     steps:
 
@@ -967,80 +648,46 @@ jobs:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Determine Operations CIDR
-        id: cidr
-        shell: bash
+      - name: Validate Monitoring Stack
         run: |
-          set -e
 
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            OPERATIONS_CIDR="${{ inputs.operations_cidr }}"
-          else
-            OPERATIONS_CIDR="${{ vars.OPERATIONS_CIDR }}"
-          fi
-
-          if [ -z "${OPERATIONS_CIDR}" ]; then
-            echo "ERROR: Operations CIDR is not configured."
-            exit 1
-          fi
-
-          echo "operations_cidr=${OPERATIONS_CIDR}" >> "$GITHUB_OUTPUT"
-
-      - name: Get dashboard security group
-        id: dashboard_sg
-        shell: bash
-        run: |
-          SG=$(aws cloudformation describe-stacks \
-            --stack-name "${NETWORK_STACK_NAME}" \
-            --region "${AWS_REGION}" \
-            --query "Stacks[0].Outputs[?OutputKey=='EC2SecurityGroupId'].OutputValue | [0]" \
-            --output text)
-
-          test -n "${SG}" && test "${SG}" != "None"
-
-          echo "sg=${SG}" >> "$GITHUB_OUTPUT"
-
-      - name: Validate monitoring stack
-        run: |
           aws cloudformation validate-template \
             --template-body file://cloudformation/monitoring/monitoring-stack.yaml \
             --region "${AWS_REGION}"
 
-      - name: Deploy monitoring stack
+      - name: Deploy Monitoring Stack
         run: |
+
           aws cloudformation deploy \
             --template-file cloudformation/monitoring/monitoring-stack.yaml \
             --stack-name "${MONITORING_STACK_NAME}" \
             --parameter-overrides \
               Environment="${ENVIRONMENT}" \
-              AlarmEmail="${{ secrets.ORDER_NOTIFICATION_EMAIL }}" \
-              DashboardSecurityGroupId="${{ steps.dashboard_sg.outputs.sg }}" \
-              OperationsCidr="${{ steps.cidr.outputs.operations_cidr }}" \
             --region "${AWS_REGION}" \
+            --capabilities CAPABILITY_NAMED_IAM \
             --no-fail-on-empty-changeset
-
-      - name: Verify monitoring alarms
-        run: |
-          aws cloudwatch describe-alarms \
-            --alarm-name-prefix "CloudMart-${ENVIRONMENT}-" \
-            --region "${AWS_REGION}" \
-            --query 'MetricAlarms[].AlarmName' \
-            --output table
 
 
   # ============================================================
-  # JOB 9 - CLOUDFORMATION EC2 DASHBOARD
+  # 9. DEPLOY DASHBOARD TO NEW EC2
   # ============================================================
 
   deploy-dashboard:
-    name: Deploy Flask Dashboard to CloudFormation EC2
-    runs-on: ubuntu-latest
+
     needs:
+      - deploy-network
+      - deploy-data
+      - deploy-iam
+      - deploy-api
+      - deploy-eventbridge
       - deploy-reporting
       - deploy-monitoring
+
+    runs-on: ubuntu-latest
 
     steps:
 
@@ -1050,13 +697,19 @@ jobs:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Get CloudFormation Dashboard EC2 details
-        id: ec2
+      # ----------------------------------------------------------
+      # Get NEW EC2 instance
+      # ----------------------------------------------------------
+
+      - name: Get Dashboard EC2 Details
+        id: dashboard
         shell: bash
         run: |
+
           set -e
 
           INSTANCE_ID=$(aws cloudformation describe-stacks \
@@ -1065,71 +718,219 @@ jobs:
             --query "Stacks[0].Outputs[?OutputKey=='DashboardInstanceId'].OutputValue | [0]" \
             --output text)
 
+          if [ -z "$INSTANCE_ID" ] || [ "$INSTANCE_ID" = "None" ]; then
+            echo "ERROR: DashboardInstanceId not found."
+            exit 1
+          fi
+
+          echo "Dashboard Instance ID: $INSTANCE_ID"
+
+          aws ec2 wait instance-running \
+            --instance-ids "$INSTANCE_ID" \
+            --region "${AWS_REGION}"
+
           PUBLIC_IP=$(aws ec2 describe-instances \
-            --instance-ids "${INSTANCE_ID}" \
+            --instance-ids "$INSTANCE_ID" \
             --region "${AWS_REGION}" \
             --query "Reservations[0].Instances[0].PublicIpAddress" \
             --output text)
 
-          BUCKET=$(aws cloudformation describe-stacks \
-            --stack-name "${DATA_STACK_NAME}" \
-            --region "${AWS_REGION}" \
-            --query "Stacks[0].Outputs[?OutputKey=='LambdaArtifactBucketName'].OutputValue | [0]" \
-            --output text)
-
-          test -n "${INSTANCE_ID}" && test "${INSTANCE_ID}" != "None"
-          test -n "${PUBLIC_IP}" && test "${PUBLIC_IP}" != "None"
-          test -n "${BUCKET}" && test "${BUCKET}" != "None"
-
-          echo "instance_id=${INSTANCE_ID}" >> "$GITHUB_OUTPUT"
-          echo "public_ip=${PUBLIC_IP}" >> "$GITHUB_OUTPUT"
-          echo "bucket=${BUCKET}" >> "$GITHUB_OUTPUT"
-
-      - name: Prepare SSH key
-        shell: bash
-        env:
-          EC2_SSH_PRIVATE_KEY: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
-        run: |
-          if [ -z "${EC2_SSH_PRIVATE_KEY}" ]; then
-            echo "ERROR: Add EC2_SSH_PRIVATE_KEY GitHub secret before dashboard deployment."
+          if [ -z "$PUBLIC_IP" ] || [ "$PUBLIC_IP" = "None" ]; then
+            echo "ERROR: Public IP not found."
             exit 1
           fi
 
-          umask 077
-          printf '%s\n' "${EC2_SSH_PRIVATE_KEY}" > /tmp/cloudmart-ec2-key.pem
+          echo "Dashboard Public IP: $PUBLIC_IP"
+
+          echo "instance_id=$INSTANCE_ID" >> "$GITHUB_OUTPUT"
+          echo "public_ip=$PUBLIC_IP" >> "$GITHUB_OUTPUT"
+
+      # ----------------------------------------------------------
+      # Configure SSH
+      # ----------------------------------------------------------
+
+      - name: Configure SSH
+        shell: bash
+        run: |
+
+          mkdir -p ~/.ssh
+
+          echo "${{ secrets.EC2_SSH_PRIVATE_KEY }}" > ~/.ssh/cloudmart-dashboard.pem
+
+          chmod 600 ~/.ssh/cloudmart-dashboard.pem
+
+          ssh-keyscan -H \
+            "${{ steps.dashboard.outputs.public_ip }}" \
+            >> ~/.ssh/known_hosts
+
+      # ----------------------------------------------------------
+      # Wait for EC2 SSH
+      # ----------------------------------------------------------
 
       - name: Wait for SSH
         shell: bash
         run: |
-          for attempt in {1..30}; do
-            if ssh -o StrictHostKeyChecking=no \
-              -o ConnectTimeout=5 \
-              -i /tmp/cloudmart-ec2-key.pem \
-              ec2-user@"${{ steps.ec2.outputs.public_ip }}" true; then
+
+          for i in {1..30}; do
+
+            if ssh \
+              -i ~/.ssh/cloudmart-dashboard.pem \
+              -o StrictHostKeyChecking=no \
+              -o ConnectTimeout=10 \
+              ec2-user@"${{ steps.dashboard.outputs.public_ip }}" \
+              "echo SSH connection successful"; then
+
               exit 0
+
             fi
 
+            echo "Waiting for SSH..."
             sleep 10
+
           done
 
-          echo "EC2 SSH connection was not available."
+          echo "ERROR: SSH connection failed."
           exit 1
 
-      - name: Copy dashboard files
-        run: |
-          scp -o StrictHostKeyChecking=no \
-            -i /tmp/cloudmart-ec2-key.pem \
-            -r dashboard \
-            ec2-user@"${{ steps.ec2.outputs.public_ip }}":/tmp/cloudmart-dashboard
+      # ----------------------------------------------------------
+      # Install dashboard dependencies
+      # ----------------------------------------------------------
 
-      - name: Install and start dashboard
+      - name: Prepare Dashboard EC2
+        shell: bash
         run: |
-          ssh -o StrictHostKeyChecking=no \
-            -i /tmp/cloudmart-ec2-key.pem \
-            ec2-user@"${{ steps.ec2.outputs.public_ip }}" \
-            "cd /tmp/cloudmart-dashboard && sudo env REPORT_BUCKET='${{ steps.ec2.outputs.bucket }}' bash install.sh"
 
-      - name: Clean SSH key
-        if: always()
+          ssh \
+            -i ~/.ssh/cloudmart-dashboard.pem \
+            -o StrictHostKeyChecking=no \
+            ec2-user@"${{ steps.dashboard.outputs.public_ip }}" \
+            <<'EOF'
+
+          set -e
+
+          echo "Updating packages..."
+
+          sudo dnf update -y
+
+          echo "Installing Python..."
+
+          sudo dnf install -y python3 python3-pip
+
+          mkdir -p ~/cloudmart-dashboard
+
+          EOF
+
+      # ----------------------------------------------------------
+      # Copy dashboard files
+      # ----------------------------------------------------------
+
+      - name: Copy Dashboard Files
+        shell: bash
         run: |
-          rm -f /tmp/cloudmart-ec2-key.pem
+
+          if [ -d "dashboard" ]; then
+
+            scp \
+              -i ~/.ssh/cloudmart-dashboard.pem \
+              -o StrictHostKeyChecking=no \
+              -r dashboard/* \
+              ec2-user@"${{ steps.dashboard.outputs.public_ip }}":~/cloudmart-dashboard/
+
+          elif [ -d "dashboard-app" ]; then
+
+            scp \
+              -i ~/.ssh/cloudmart-dashboard.pem \
+              -o StrictHostKeyChecking=no \
+              -r dashboard-app/* \
+              ec2-user@"${{ steps.dashboard.outputs.public_ip }}":~/cloudmart-dashboard/
+
+          else
+
+            echo "Dashboard directory not found."
+
+          fi
+
+      # ----------------------------------------------------------
+      # Install Python dependencies
+      # ----------------------------------------------------------
+
+      - name: Install Dashboard Dependencies
+        shell: bash
+        run: |
+
+          ssh \
+            -i ~/.ssh/cloudmart-dashboard.pem \
+            -o StrictHostKeyChecking=no \
+            ec2-user@"${{ steps.dashboard.outputs.public_ip }}" \
+            <<'EOF'
+
+          set -e
+
+          cd ~/cloudmart-dashboard
+
+          if [ -f requirements.txt ]; then
+            pip3 install --user -r requirements.txt
+          fi
+
+          EOF
+
+      # ----------------------------------------------------------
+      # Start Flask Dashboard
+      # ----------------------------------------------------------
+
+      - name: Start Dashboard
+        shell: bash
+        run: |
+
+          ssh \
+            -i ~/.ssh/cloudmart-dashboard.pem \
+            -o StrictHostKeyChecking=no \
+            ec2-user@"${{ steps.dashboard.outputs.public_ip }}" \
+            <<'EOF'
+
+          set -e
+
+          cd ~/cloudmart-dashboard
+
+          if [ -f app.py ]; then
+
+            pkill -f "python.*app.py" || true
+
+            nohup python3 app.py \
+              > dashboard.log 2>&1 &
+
+            echo "Dashboard started."
+
+          elif [ -f application.py ]; then
+
+            pkill -f "python.*application.py" || true
+
+            nohup python3 application.py \
+              > dashboard.log 2>&1 &
+
+            echo "Dashboard started."
+
+          else
+
+            echo "No app.py or application.py found."
+
+          fi
+
+          EOF
+
+      # ----------------------------------------------------------
+      # Deployment summary
+      # ----------------------------------------------------------
+
+      - name: Deployment Summary
+        run: |
+
+          echo "=============================================="
+          echo "CloudMart deployment completed"
+          echo "=============================================="
+          echo "Environment: ${ENVIRONMENT}"
+          echo "Region: ${AWS_REGION}"
+          echo "Network Stack: ${NETWORK_STACK_NAME}"
+          echo "Dashboard Instance: ${{ steps.dashboard.outputs.instance_id }}"
+          echo "Dashboard Public IP: ${{ steps.dashboard.outputs.public_ip }}"
+          echo "=============================================="
