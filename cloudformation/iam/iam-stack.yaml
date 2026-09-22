@@ -329,6 +329,29 @@ Resources:
                   - !Sub 'arn:${AWS::Partition}:events:${AWS::Region}:${AWS::AccountId}:event-bus/cloudmart-${Environment}-event-bus'
 
 
+        # --------------------------------------------------------
+        # CLOUDWATCH CUSTOM METRICS
+        #
+        # Allows the Product Lambda to publish custom
+        # CloudWatch metrics such as LowStockEvents.
+        # --------------------------------------------------------
+
+        - PolicyName: ProductCloudWatchMetrics
+
+          PolicyDocument:
+
+            Version: '2012-10-17'
+
+            Statement:
+
+              - Effect: Allow
+
+                Action:
+                  - cloudwatch:PutMetricData
+
+                Resource: "*"
+
+
 
   # ============================================================
   # ORDER PROCESSOR LAMBDA ROLE
