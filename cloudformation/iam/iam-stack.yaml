@@ -306,6 +306,29 @@ Resources:
                 Resource: "*"
 
 
+        # --------------------------------------------------------
+        # EVENTBRIDGE
+        #
+        # Allows the Product Lambda to publish low-stock events.
+        # --------------------------------------------------------
+
+        - PolicyName: ProductEventBridge
+
+          PolicyDocument:
+
+            Version: '2012-10-17'
+
+            Statement:
+
+              - Effect: Allow
+
+                Action:
+                  - events:PutEvents
+
+                Resource:
+                  - !Sub 'arn:${AWS::Partition}:events:${AWS::Region}:${AWS::AccountId}:event-bus/cloudmart-${Environment}-event-bus'
+
+
 
   # ============================================================
   # ORDER PROCESSOR LAMBDA ROLE
@@ -500,4 +523,3 @@ Outputs:
     Export:
       Name:
         !Sub CloudMart-${Environment}-OrderProcessorLambdaRoleArn
-        
