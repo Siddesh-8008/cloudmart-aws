@@ -1,4 +1,3 @@
-
 AWSTemplateFormatVersion: '2010-09-09'
 
 Description: >
@@ -861,7 +860,7 @@ Resources:
                   "metrics": [
 
                     [
-                      "cloudmart",
+                      "CloudMart/Operations",
                       "OrdersPlaced",
                       "Environment",
                       "${Environment}",
@@ -871,10 +870,10 @@ Resources:
                     ],
 
                     [
-                      ".",
+                      "CloudMart/Operations",
                       "OrdersFailed",
-                      ".",
-                      ".",
+                      "Environment",
+                      "${Environment}",
                       {
                         "label": "Orders Failed"
                       }
@@ -911,7 +910,7 @@ Resources:
                   "metrics": [
 
                     [
-                      "cloudmart",
+                      "CloudMart/Operations",
                       "LowStockEvents",
                       "Environment",
                       "${Environment}"
@@ -1218,7 +1217,7 @@ Resources:
         Fires when an order failure is recorded.
 
       Namespace:
-        cloudmart
+        CloudMart/Operations
 
       MetricName:
         OrdersFailed
@@ -1273,7 +1272,7 @@ Resources:
         Fires when a low-stock event is recorded.
 
       Namespace:
-        cloudmart
+        CloudMart/Operations
 
       MetricName:
         LowStockEvents
@@ -1515,5 +1514,3 @@ Outputs:
     Value:
       !Sub
         http://${DashboardEC2.PublicDnsName}
-
-
