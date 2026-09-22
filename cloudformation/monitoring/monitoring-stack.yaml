@@ -861,7 +861,7 @@ Resources:
                   "metrics": [
 
                     [
-                      "CloudMart/Operations",
+                      "cloudmart",
                       "OrdersPlaced",
                       "Environment",
                       "${Environment}",
@@ -911,7 +911,7 @@ Resources:
                   "metrics": [
 
                     [
-                      "CloudMart/Operations",
+                      "cloudmart",
                       "LowStockEvents",
                       "Environment",
                       "${Environment}"
@@ -1218,7 +1218,7 @@ Resources:
         Fires when an order failure is recorded.
 
       Namespace:
-        CloudMart/Operations
+        cloudmart
 
       MetricName:
         OrdersFailed
@@ -1273,7 +1273,7 @@ Resources:
         Fires when a low-stock event is recorded.
 
       Namespace:
-        CloudMart/Operations
+        cloudmart
 
       MetricName:
         LowStockEvents
