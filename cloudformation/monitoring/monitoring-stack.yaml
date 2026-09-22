@@ -898,7 +898,7 @@ Resources:
                   "region":
                     "${AWS::Region}",
 
-                  "period": 300,
+                  "period": 60,
 
                   "stat": "Sum",
 
@@ -933,7 +933,7 @@ Resources:
                   "region":
                     "${AWS::Region}",
 
-                  "period": 300,
+                  "period": 60,
 
                   "stat": "Sum",
 
@@ -982,7 +982,7 @@ Resources:
                   "region":
                     "${AWS::Region}",
 
-                  "period": 300,
+                  "period": 60,
 
                   "stat": "Sum",
 
@@ -1017,7 +1017,7 @@ Resources:
                   "region":
                     "${AWS::Region}",
 
-                  "period": 300,
+                  "period": 60,
 
                   "stat": "Average",
 
@@ -1052,7 +1052,7 @@ Resources:
                   "region":
                     "${AWS::Region}",
 
-                  "period": 300,
+                  "period": 60,
 
                   "stat": "Average",
 
@@ -1087,7 +1087,7 @@ Resources:
                   "region":
                     "${AWS::Region}",
 
-                  "period": 300,
+                  "period": 60,
 
                   "stat": "Average",
 
@@ -1124,7 +1124,7 @@ Resources:
                   "region":
                     "${AWS::Region}",
 
-                  "period": 300,
+                  "period": 60,
 
                   "stat": "Sum",
 
@@ -1170,7 +1170,7 @@ Resources:
                   "region":
                     "${AWS::Region}",
 
-                  "period": 300,
+                  "period": 60,
 
                   "stat": "Sum",
 
@@ -1246,7 +1246,7 @@ Resources:
         Sum
 
       Period:
-        300
+        60
 
       EvaluationPeriods:
         1
@@ -1301,7 +1301,7 @@ Resources:
         Sum
 
       Period:
-        300
+        60
 
       EvaluationPeriods:
         1
@@ -1356,7 +1356,7 @@ Resources:
         Sum
 
       Period:
-        300
+        60
 
       EvaluationPeriods:
         1
@@ -1411,7 +1411,7 @@ Resources:
         Sum
 
       Period:
-        300
+        60
 
       EvaluationPeriods:
         1
@@ -1466,7 +1466,7 @@ Resources:
         Average
 
       Period:
-        300
+        60
 
       EvaluationPeriods:
         1
