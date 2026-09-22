@@ -877,6 +877,16 @@ Resources:
                       {
                         "label": "Orders Failed"
                       }
+                    ],
+
+                    [
+                      "CloudMart/Operations",
+                      "OrdersCancelled",
+                      "Environment",
+                      "${Environment}",
+                      {
+                        "label": "Orders Cancelled"
+                      }
                     ]
 
                   ],
@@ -1189,6 +1199,8 @@ Resources:
 
                     "${LowStockEventsAlarm.Arn}",
 
+                    "${OrdersCancelledAlarm.Arn}",
+
                     "${OrderProcessorErrorsAlarm.Arn}",
 
                     "${RDSHighCPUAlarm.Arn}"
@@ -1312,7 +1324,62 @@ Resources:
 
 
   # ============================================================
-  # ALARM 3 - ORDER PROCESSOR ERRORS
+  # ALARM 3 - ORDERS CANCELLED
+  # ============================================================
+
+  OrdersCancelledAlarm:
+    Type: AWS::CloudWatch::Alarm
+
+    Properties:
+
+      AlarmName:
+        !Sub CloudMart-${Environment}-OrdersCancelled
+
+      AlarmDescription:
+        Fires when an order cancellation is recorded.
+
+      Namespace:
+        CloudMart/Operations
+
+      MetricName:
+        OrdersCancelled
+
+      Dimensions:
+
+        - Name:
+            Environment
+
+          Value:
+            !Ref Environment
+
+      Statistic:
+        Sum
+
+      Period:
+        300
+
+      EvaluationPeriods:
+        1
+
+      DatapointsToAlarm:
+        1
+
+      Threshold:
+        1
+
+      ComparisonOperator:
+        GreaterThanOrEqualToThreshold
+
+      TreatMissingData:
+        notBreaching
+
+      AlarmActions:
+
+        - !Ref OperationsAlarmTopic
+
+
+  # ============================================================
+  # ALARM 4 - ORDER PROCESSOR ERRORS
   # ============================================================
 
   OrderProcessorErrorsAlarm:
@@ -1367,7 +1434,7 @@ Resources:
 
 
   # ============================================================
-  # ALARM 4 - RDS CPU
+  # ALARM 5 - RDS CPU
   # ============================================================
 
   RDSHighCPUAlarm:

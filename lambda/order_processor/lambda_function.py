@@ -194,15 +194,7 @@ def get_authenticated_role(event):
 
 def publish_metric(metric_name, value=1):
 
-    # NOTE: this must go through print(), not logger.info().
-    # The root logger's Lambda-provided formatter prepends
-    # "[INFO]\t<timestamp>\t<request-id>\t" before the message,
-    # which breaks CloudWatch's Embedded Metric Format (EMF)
-    # extraction - EMF requires the *entire* log line to be
-    # valid JSON starting at character 0. print() writes the
-    # line to stdout with no prefix, which is what EMF needs.
-
-    print(
+    logger.info(
         json.dumps(
             {
                 "_aws": {
@@ -922,10 +914,6 @@ def create_order(event):
                                 "lowStockThreshold"
                             ]
                     }
-                )
-
-                publish_metric(
-                    "LowStockEvents"
                 )
 
             # ------------------------------------------------
@@ -1991,6 +1979,10 @@ def cancel_order(event):
                     "cancelledBy":
                         cancelled_by
                 }
+            )
+
+            publish_metric(
+                "OrdersCancelled"
             )
 
             # ------------------------------------------------
