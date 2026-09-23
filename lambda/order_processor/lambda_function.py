@@ -712,6 +712,21 @@ def create_order(event):
                         f"Product {product_id} is inactive"
                     )
 
+                # Calculate the requested item total before checking stock.
+                # This allows FAILED orders to retain the amount the
+                # customer attempted to purchase instead of storing 0.00.
+                price = float(
+                    product["price"]
+                )
+
+                item_total = (
+                    price * quantity
+                )
+
+                total_amount += (
+                    item_total
+                )
+
                 current_stock = int(
                     product["stock"]
                 )
@@ -724,18 +739,6 @@ def create_order(event):
                         f"{current_stock}, Requested: "
                         f"{quantity}"
                     )
-
-                price = float(
-                    product["price"]
-                )
-
-                item_total = (
-                    price * quantity
-                )
-
-                total_amount += (
-                    item_total
-                )
 
                 # ------------------------------------------------
                 # INSERT ORDER ITEM
@@ -986,11 +989,14 @@ def create_order(event):
                             """
                             UPDATE orders
                             SET
+                                total_amount = %s,
                                 status_id = %s,
                                 failure_reason = %s
                             WHERE order_id = %s
                             """,
                             (
+                                total_amount,
+
                                 failed_status[
                                     "status_id"
                                 ],
@@ -1008,6 +1014,15 @@ def create_order(event):
                     {
                         "orderId":
                             order_id,
+
+                        "customerId":
+                            customer_id,
+
+                        "totalAmount":
+                            total_amount,
+
+                        "status":
+                            "FAILED",
 
                         "reason":
                             str(exc)
@@ -1031,7 +1046,13 @@ def create_order(event):
                     str(exc),
 
                 "orderId":
-                    order_id
+                    order_id,
+
+                "totalAmount":
+                    total_amount,
+
+                "status":
+                    "FAILED"
             }
         )
 

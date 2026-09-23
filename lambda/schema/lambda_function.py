@@ -135,6 +135,122 @@ def lambda_handler(event, context):
 
 
             # =================================================
+            # SEED PRODUCTS
+            #
+            # INSERT IGNORE keeps existing product rows and their
+            # current stock unchanged. If the RDS database is newly
+            # created, all ten standard CloudMart products are
+            # inserted automatically.
+            # =================================================
+
+            cursor.execute(
+                """
+                INSERT IGNORE INTO products
+                (
+                    id,
+                    name,
+                    description,
+                    price,
+                    stock,
+                    low_stock_threshold,
+                    is_active
+                )
+                VALUES
+                (
+                    1,
+                    'Apple iPhone 15',
+                    'Apple iPhone 15 128GB smartphone',
+                    69999.00,
+                    25,
+                    5,
+                    TRUE
+                ),
+                (
+                    2,
+                    'Samsung Galaxy S24',
+                    'Samsung Galaxy S24 256GB smartphone',
+                    74999.00,
+                    20,
+                    5,
+                    TRUE
+                ),
+                (
+                    3,
+                    'OnePlus 12',
+                    'OnePlus 12 256GB 5G smartphone',
+                    64999.00,
+                    18,
+                    5,
+                    TRUE
+                ),
+                (
+                    4,
+                    'Apple MacBook Air M2',
+                    'MacBook Air M2 13-inch laptop',
+                    99999.00,
+                    10,
+                    3,
+                    TRUE
+                ),
+                (
+                    5,
+                    'Dell Inspiron 15',
+                    'Dell Inspiron 15 performance laptop',
+                    58999.00,
+                    12,
+                    3,
+                    TRUE
+                ),
+                (
+                    6,
+                    'Samsung Galaxy Tab S9 FE',
+                    'Samsung Galaxy Tab S9 FE tablet',
+                    36999.00,
+                    15,
+                    5,
+                    TRUE
+                ),
+                (
+                    7,
+                    'Sony WH-1000XM5',
+                    'Sony wireless noise cancelling headphones',
+                    29999.00,
+                    20,
+                    5,
+                    TRUE
+                ),
+                (
+                    8,
+                    'JBL Flip 6',
+                    'JBL portable Bluetooth speaker',
+                    11999.00,
+                    29,
+                    5,
+                    TRUE
+                ),
+                (
+                    9,
+                    'Logitech MX Master 3S',
+                    'Wireless productivity mouse',
+                    8999.00,
+                    25,
+                    5,
+                    TRUE
+                ),
+                (
+                    10,
+                    'Apple AirPods Pro 2',
+                    'Apple AirPods Pro 2 wireless earbuds',
+                    24999.00,
+                    21,
+                    5,
+                    TRUE
+                )
+                """
+            )
+
+
+            # =================================================
             # CUSTOMER TABLE
             # =================================================
 
@@ -736,7 +852,7 @@ def lambda_handler(event, context):
         print(
             json.dumps({
                 "message": (
-                    "Products, customers, authentication "
+                    "Products (with seed data), customers, authentication "
                     "and order tables created successfully"
                 )
             })
@@ -750,7 +866,7 @@ def lambda_handler(event, context):
             "body": json.dumps({
 
                 "message": (
-                    "Products, customers, authentication "
+                    "Products (with seed data), customers, authentication "
                     "and order tables created successfully"
                 )
 

@@ -636,30 +636,38 @@ jobs:
         run: |
           BUCKET="${{ steps.bucket.outputs.bucket }}"
 
+          PRODUCT_KEY="product/product-${GITHUB_SHA}.zip"
+          SCHEMA_KEY="schema/schema-${GITHUB_SHA}.zip"
+          ORDER_PROCESSOR_KEY="order-processor/order-processor-${GITHUB_SHA}.zip"
+
           aws s3 cp \
             product.zip \
-            "s3://${BUCKET}/product/product.zip"
+            "s3://${BUCKET}/${PRODUCT_KEY}"
 
           aws s3 cp \
             schema.zip \
-            "s3://${BUCKET}/schema/schema.zip"
+            "s3://${BUCKET}/${SCHEMA_KEY}"
 
           aws s3 cp \
             order-processor.zip \
-            "s3://${BUCKET}/order-processor/order-processor.zip"
+            "s3://${BUCKET}/${ORDER_PROCESSOR_KEY}"
 
 
           aws s3api head-object \
             --bucket "${BUCKET}" \
-            --key product/product.zip
+            --key "${PRODUCT_KEY}"
 
           aws s3api head-object \
             --bucket "${BUCKET}" \
-            --key schema/schema.zip
+            --key "${SCHEMA_KEY}"
 
           aws s3api head-object \
             --bucket "${BUCKET}" \
-            --key order-processor/order-processor.zip
+            --key "${ORDER_PROCESSOR_KEY}"
+
+          echo "PRODUCT_KEY=${PRODUCT_KEY}" >> "$GITHUB_ENV"
+          echo "SCHEMA_KEY=${SCHEMA_KEY}" >> "$GITHUB_ENV"
+          echo "ORDER_PROCESSOR_KEY=${ORDER_PROCESSOR_KEY}" >> "$GITHUB_ENV"
 
 
       - name: Validate API CloudFormation template
@@ -684,9 +692,9 @@ jobs:
               OrderProcessorLambdaExecutionRoleArn="${{ steps.roles.outputs.processor }}" \
               AuthorizerLambdaArn="${{ steps.auth.outputs.arn }}" \
               ProductLambdaCodeBucket="${{ steps.bucket.outputs.bucket }}" \
-              ProductLambdaCodeKey="product/product.zip" \
-              SchemaLambdaCodeKey="schema/schema.zip" \
-              OrderProcessorLambdaCodeKey="order-processor/order-processor.zip" \
+              ProductLambdaCodeKey="${PRODUCT_KEY}" \
+              SchemaLambdaCodeKey="${SCHEMA_KEY}" \
+              OrderProcessorLambdaCodeKey="${ORDER_PROCESSOR_KEY}" \
               DBHostParameter="/cloudmart/${ENVIRONMENT}/db/host" \
               DBPortParameter="/cloudmart/${ENVIRONMENT}/db/port" \
               DBNameParameter="/cloudmart/${ENVIRONMENT}/db/name" \
