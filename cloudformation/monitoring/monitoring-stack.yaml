@@ -604,213 +604,6 @@ Resources:
             !Ref Environment
 
 
-      # ========================================================
-      # USER DATA
-      # ========================================================
-
-      UserData:
-
-        Fn::Base64:
-
-          !Sub |
-            #!/bin/bash
-            set -eux
-
-
-            exec > >(tee /var/log/cloudmart-dashboard-bootstrap.log | logger -t cloudmart-dashboard) 2>&1
-
-
-            # --------------------------------------------------
-            # INSTALL PACKAGES
-            # --------------------------------------------------
-
-            dnf update -y
-
-            dnf install -y \
-              python3.12 \
-              python3.12-pip \
-              nginx \
-              unzip \
-              openssl
-
-
-            # --------------------------------------------------
-            # CREATE APPLICATION DIRECTORY
-            # --------------------------------------------------
-
-            mkdir -p /opt/cloudmart-dashboard
-
-
-            # --------------------------------------------------
-            # DOWNLOAD DASHBOARD PACKAGE
-            # --------------------------------------------------
-
-            aws s3 cp \
-              "s3://${DashboardArtifactBucketName}/${DashboardArtifactKey}" \
-              /tmp/cloudmart-dashboard.zip \
-              --region ${AWS::Region}
-
-
-            # --------------------------------------------------
-            # EXTRACT APPLICATION
-            # --------------------------------------------------
-
-            rm -rf /opt/cloudmart-dashboard/app
-
-            mkdir -p \
-              /opt/cloudmart-dashboard/app
-
-
-            unzip -o \
-              /tmp/cloudmart-dashboard.zip \
-              -d /opt/cloudmart-dashboard/app
-
-
-            # --------------------------------------------------
-            # PYTHON VIRTUAL ENVIRONMENT
-            # --------------------------------------------------
-
-            python3.12 -m venv \
-              /opt/cloudmart-dashboard/venv
-
-
-            /opt/cloudmart-dashboard/venv/bin/pip \
-              install --upgrade pip
-
-
-            /opt/cloudmart-dashboard/venv/bin/pip \
-              install \
-              Flask \
-              boto3 \
-              PyMySQL \
-              gunicorn
-
-
-            # --------------------------------------------------
-            # FLASK SESSION SECRET
-            # --------------------------------------------------
-
-            mkdir -p /etc/cloudmart-dashboard
-
-            if [ ! -s /etc/cloudmart-dashboard/flask-secret ]; then
-
-              openssl rand -hex 32 \
-                > /etc/cloudmart-dashboard/flask-secret
-
-              chmod 600 \
-                /etc/cloudmart-dashboard/flask-secret
-
-            fi
-
-
-            # --------------------------------------------------
-            # SYSTEMD SERVICE
-            # --------------------------------------------------
-
-            cat > \
-              /etc/systemd/system/cloudmart-dashboard.service \
-              <<'SERVICE'
-
-            [Unit]
-
-            Description=CloudMart Flask Operations Dashboard
-
-            After=network-online.target
-
-            Wants=network-online.target
-
-
-            [Service]
-
-            Type=simple
-
-            User=root
-
-            WorkingDirectory=/opt/cloudmart-dashboard/app/dashboard
-
-            Environment=ENVIRONMENT=${Environment}
-
-            Environment=AWS_REGION=${AWS::Region}
-
-            Environment=DB_HOST_PARAMETER=/cloudmart/${Environment}/db/host
-
-            Environment=DB_PORT_PARAMETER=/cloudmart/${Environment}/db/port
-
-            Environment=DB_NAME_PARAMETER=/cloudmart/${Environment}/db/name
-
-            Environment=DB_USERNAME_PARAMETER=/cloudmart/${Environment}/db/username
-
-            Environment=DB_PASSWORD_PARAMETER=/cloudmart/${Environment}/db/password
-
-            Environment=ADMIN_AUTH_TOKEN_PARAMETER=/cloudmart/${Environment}/auth/admin-token
-
-            Environment=FLASK_SECRET_KEY_FILE=/etc/cloudmart-dashboard/flask-secret
-
-            Environment=REPORT_BUCKET=${ReportsBucketName}
-
-            ExecStart=/opt/cloudmart-dashboard/venv/bin/gunicorn --workers 2 --bind 127.0.0.1:8000 app:app
-
-            Restart=always
-
-            RestartSec=5
-
-
-            [Install]
-
-            WantedBy=multi-user.target
-
-            SERVICE
-
-
-            # --------------------------------------------------
-            # NGINX
-            # --------------------------------------------------
-
-            cat > \
-              /etc/nginx/conf.d/cloudmart-dashboard.conf \
-              <<'NGINX'
-
-            server {
-
-                listen 80;
-
-                server_name _;
-
-
-                location / {
-
-                    proxy_pass http://127.0.0.1:8000;
-
-                    proxy_set_header Host $host;
-
-                    proxy_set_header X-Real-IP $remote_addr;
-
-                    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-
-                    proxy_set_header X-Forwarded-Proto $scheme;
-
-                }
-
-            }
-
-            NGINX
-
-
-            rm -f \
-              /etc/nginx/conf.d/default.conf
-
-
-            # --------------------------------------------------
-            # START SERVICES
-            # --------------------------------------------------
-
-            systemctl daemon-reload
-
-            systemctl enable --now cloudmart-dashboard
-
-            systemctl enable --now nginx
-
-
   # ============================================================
   # CLOUDWATCH OPERATIONS DASHBOARD
   # ============================================================
@@ -1201,7 +994,20 @@ Resources:
 
                     "${OrdersCancelledAlarm.Arn}",
 
-                    "${OrderProcessorErrorsAlarm.Arn}",
+
+                    "${AuthorizerLambdaErrorsAlarm.Arn}",
+
+                    "${ProductLambdaErrorsAlarm.Arn}",
+
+                    "${OrderProcessorLambdaErrorsAlarm.Arn}",
+
+                    "${SchemaLambdaErrorsAlarm.Arn}",
+
+                    "${DailyReportLambdaErrorsAlarm.Arn}",
+
+                    "${ApiGateway4XXErrorsAlarm.Arn}",
+
+                    "${ApiGateway5XXErrorsAlarm.Arn}",
 
                     "${RDSHighCPUAlarm.Arn}"
 
@@ -1211,6 +1017,260 @@ Resources:
 
             ]
           }
+
+
+  # ============================================================
+  # LAMBDA ERROR ALARMS
+  # ============================================================
+
+  AuthorizerLambdaErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName:
+        !Sub CloudMart-${Environment}-AuthorizerLambdaErrors
+      AlarmDescription:
+        Fires when the Lambda authorizer reports an execution error.
+      Namespace:
+        AWS/Lambda
+      MetricName:
+        Errors
+      Dimensions:
+        - Name:
+            FunctionName
+          Value:
+            !Sub CloudMart-${Environment}-Authorizer
+      Statistic:
+        Sum
+      Period:
+        60
+      EvaluationPeriods:
+        1
+      DatapointsToAlarm:
+        1
+      Threshold:
+        1
+      ComparisonOperator:
+        GreaterThanOrEqualToThreshold
+      TreatMissingData:
+        notBreaching
+      AlarmActions:
+        - !Ref OperationsAlarmTopic
+
+
+  ProductLambdaErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName:
+        !Sub CloudMart-${Environment}-ProductLambdaErrors
+      AlarmDescription:
+        Fires when the Product Service Lambda reports an execution error.
+      Namespace:
+        AWS/Lambda
+      MetricName:
+        Errors
+      Dimensions:
+        - Name:
+            FunctionName
+          Value:
+            !Sub CloudMart-${Environment}-ProductService
+      Statistic:
+        Sum
+      Period:
+        60
+      EvaluationPeriods:
+        1
+      DatapointsToAlarm:
+        1
+      Threshold:
+        1
+      ComparisonOperator:
+        GreaterThanOrEqualToThreshold
+      TreatMissingData:
+        notBreaching
+      AlarmActions:
+        - !Ref OperationsAlarmTopic
+
+
+  OrderProcessorLambdaErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName:
+        !Sub CloudMart-${Environment}-OrderProcessorLambdaErrors
+      AlarmDescription:
+        Fires when the Order Processor Lambda reports an execution error.
+      Namespace:
+        AWS/Lambda
+      MetricName:
+        Errors
+      Dimensions:
+        - Name:
+            FunctionName
+          Value:
+            !Sub CloudMart-${Environment}-order-processor
+      Statistic:
+        Sum
+      Period:
+        60
+      EvaluationPeriods:
+        1
+      DatapointsToAlarm:
+        1
+      Threshold:
+        1
+      ComparisonOperator:
+        GreaterThanOrEqualToThreshold
+      TreatMissingData:
+        notBreaching
+      AlarmActions:
+        - !Ref OperationsAlarmTopic
+
+
+  SchemaLambdaErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName:
+        !Sub CloudMart-${Environment}-SchemaLambdaErrors
+      AlarmDescription:
+        Fires when the Schema Lambda reports an execution error.
+      Namespace:
+        AWS/Lambda
+      MetricName:
+        Errors
+      Dimensions:
+        - Name:
+            FunctionName
+          Value:
+            !Sub CloudMart-${Environment}-schema
+      Statistic:
+        Sum
+      Period:
+        60
+      EvaluationPeriods:
+        1
+      DatapointsToAlarm:
+        1
+      Threshold:
+        1
+      ComparisonOperator:
+        GreaterThanOrEqualToThreshold
+      TreatMissingData:
+        notBreaching
+      AlarmActions:
+        - !Ref OperationsAlarmTopic
+
+
+  DailyReportLambdaErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName:
+        !Sub CloudMart-${Environment}-DailyReportLambdaErrors
+      AlarmDescription:
+        Fires when the Daily Report Lambda reports an execution error.
+      Namespace:
+        AWS/Lambda
+      MetricName:
+        Errors
+      Dimensions:
+        - Name:
+            FunctionName
+          Value:
+            !Sub CloudMart-${Environment}-daily-report
+      Statistic:
+        Sum
+      Period:
+        60
+      EvaluationPeriods:
+        1
+      DatapointsToAlarm:
+        1
+      Threshold:
+        1
+      ComparisonOperator:
+        GreaterThanOrEqualToThreshold
+      TreatMissingData:
+        notBreaching
+      AlarmActions:
+        - !Ref OperationsAlarmTopic
+
+
+  # ============================================================
+  # API GATEWAY ERROR ALARMS
+  # ============================================================
+
+  ApiGateway4XXErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName:
+        !Sub CloudMart-${Environment}-ApiGateway4XXErrors
+      AlarmDescription:
+        Fires when the CloudMart API records one or more 4XX responses.
+      Namespace:
+        AWS/ApiGateway
+      MetricName:
+        4XXError
+      Dimensions:
+        - Name:
+            ApiName
+          Value:
+            !Sub CloudMart-${Environment}-API
+        - Name:
+            Stage
+          Value:
+            !Ref Environment
+      Statistic:
+        Sum
+      Period:
+        60
+      EvaluationPeriods:
+        1
+      DatapointsToAlarm:
+        1
+      Threshold:
+        1
+      ComparisonOperator:
+        GreaterThanOrEqualToThreshold
+      TreatMissingData:
+        notBreaching
+      AlarmActions:
+        - !Ref OperationsAlarmTopic
+
+
+  ApiGateway5XXErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName:
+        !Sub CloudMart-${Environment}-ApiGateway5XXErrors
+      AlarmDescription:
+        Fires when the CloudMart API records one or more 5XX responses.
+      Namespace:
+        AWS/ApiGateway
+      MetricName:
+        5XXError
+      Dimensions:
+        - Name:
+            ApiName
+          Value:
+            !Sub CloudMart-${Environment}-API
+        - Name:
+            Stage
+          Value:
+            !Ref Environment
+      Statistic:
+        Sum
+      Period:
+        60
+      EvaluationPeriods:
+        1
+      DatapointsToAlarm:
+        1
+      Threshold:
+        1
+      ComparisonOperator:
+        GreaterThanOrEqualToThreshold
+      TreatMissingData:
+        notBreaching
+      AlarmActions:
+        - !Ref OperationsAlarmTopic
 
 
   # ============================================================
@@ -1378,59 +1438,6 @@ Resources:
         - !Ref OperationsAlarmTopic
 
 
-  # ============================================================
-  # ALARM 4 - ORDER PROCESSOR ERRORS
-  # ============================================================
-
-  OrderProcessorErrorsAlarm:
-    Type: AWS::CloudWatch::Alarm
-
-    Properties:
-
-      AlarmName:
-        !Sub CloudMart-${Environment}-OrderProcessorErrors
-
-      AlarmDescription:
-        Fires when the order processor Lambda reports an execution error.
-
-      Namespace:
-        AWS/Lambda
-
-      MetricName:
-        Errors
-
-      Dimensions:
-
-        - Name:
-            FunctionName
-
-          Value:
-            !Sub CloudMart-${Environment}-order-processor
-
-      Statistic:
-        Sum
-
-      Period:
-        60
-
-      EvaluationPeriods:
-        1
-
-      DatapointsToAlarm:
-        1
-
-      Threshold:
-        1
-
-      ComparisonOperator:
-        GreaterThanOrEqualToThreshold
-
-      TreatMissingData:
-        notBreaching
-
-      AlarmActions:
-
-        - !Ref OperationsAlarmTopic
 
 
   # ============================================================

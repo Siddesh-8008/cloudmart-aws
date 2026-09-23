@@ -7,11 +7,6 @@ on:
       - orders
 
   workflow_dispatch:
-    inputs:
-      operations_cidr:
-        description: Public IP/CIDR allowed to access the CloudMart dashboard
-        required: true
-        type: string
 
 
 # ============================================================
@@ -77,40 +72,6 @@ jobs:
             --region "${AWS_REGION}"
 
 
-      # ----------------------------------------------------------
-      # Determine Operations CIDR
-      #
-      # For automatic push:
-      #   use GitHub repository variable OPERATIONS_CIDR
-      #
-      # For manual workflow:
-      #   use workflow_dispatch input operations_cidr
-      # ----------------------------------------------------------
-
-      - name: Determine Operations CIDR
-        id: cidr
-        shell: bash
-        run: |
-          set -e
-
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            OPERATIONS_CIDR="${{ inputs.operations_cidr }}"
-          else
-            OPERATIONS_CIDR="${{ vars.OPERATIONS_CIDR }}"
-          fi
-
-          if [ -z "${OPERATIONS_CIDR}" ]; then
-            echo "ERROR: Operations CIDR is not configured."
-            echo "For push deployments, create repository variable OPERATIONS_CIDR."
-            echo "For manual deployments, provide operations_cidr input."
-            exit 1
-          fi
-
-          echo "Using Operations CIDR: ${OPERATIONS_CIDR}"
-
-          echo "operations_cidr=${OPERATIONS_CIDR}" >> "$GITHUB_OUTPUT"
-
-
       - name: Deploy Network Stack
         run: |
           aws cloudformation deploy \
@@ -118,7 +79,6 @@ jobs:
             --stack-name "${NETWORK_STACK_NAME}" \
             --parameter-overrides \
               Environment="${ENVIRONMENT}" \
-              OperationsCidr="${{ steps.cidr.outputs.operations_cidr }}" \
             --region "${AWS_REGION}" \
             --no-fail-on-empty-changeset
 
@@ -636,38 +596,30 @@ jobs:
         run: |
           BUCKET="${{ steps.bucket.outputs.bucket }}"
 
-          PRODUCT_KEY="product/product-${GITHUB_SHA}.zip"
-          SCHEMA_KEY="schema/schema-${GITHUB_SHA}.zip"
-          ORDER_PROCESSOR_KEY="order-processor/order-processor-${GITHUB_SHA}.zip"
-
           aws s3 cp \
             product.zip \
-            "s3://${BUCKET}/${PRODUCT_KEY}"
+            "s3://${BUCKET}/product/product.zip"
 
           aws s3 cp \
             schema.zip \
-            "s3://${BUCKET}/${SCHEMA_KEY}"
+            "s3://${BUCKET}/schema/schema.zip"
 
           aws s3 cp \
             order-processor.zip \
-            "s3://${BUCKET}/${ORDER_PROCESSOR_KEY}"
+            "s3://${BUCKET}/order-processor/order-processor.zip"
 
 
           aws s3api head-object \
             --bucket "${BUCKET}" \
-            --key "${PRODUCT_KEY}"
+            --key product/product.zip
 
           aws s3api head-object \
             --bucket "${BUCKET}" \
-            --key "${SCHEMA_KEY}"
+            --key schema/schema.zip
 
           aws s3api head-object \
             --bucket "${BUCKET}" \
-            --key "${ORDER_PROCESSOR_KEY}"
-
-          echo "PRODUCT_KEY=${PRODUCT_KEY}" >> "$GITHUB_ENV"
-          echo "SCHEMA_KEY=${SCHEMA_KEY}" >> "$GITHUB_ENV"
-          echo "ORDER_PROCESSOR_KEY=${ORDER_PROCESSOR_KEY}" >> "$GITHUB_ENV"
+            --key order-processor/order-processor.zip
 
 
       - name: Validate API CloudFormation template
@@ -692,9 +644,9 @@ jobs:
               OrderProcessorLambdaExecutionRoleArn="${{ steps.roles.outputs.processor }}" \
               AuthorizerLambdaArn="${{ steps.auth.outputs.arn }}" \
               ProductLambdaCodeBucket="${{ steps.bucket.outputs.bucket }}" \
-              ProductLambdaCodeKey="${PRODUCT_KEY}" \
-              SchemaLambdaCodeKey="${SCHEMA_KEY}" \
-              OrderProcessorLambdaCodeKey="${ORDER_PROCESSOR_KEY}" \
+              ProductLambdaCodeKey="product/product.zip" \
+              SchemaLambdaCodeKey="schema/schema.zip" \
+              OrderProcessorLambdaCodeKey="order-processor/order-processor.zip" \
               DBHostParameter="/cloudmart/${ENVIRONMENT}/db/host" \
               DBPortParameter="/cloudmart/${ENVIRONMENT}/db/port" \
               DBNameParameter="/cloudmart/${ENVIRONMENT}/db/name" \
@@ -994,6 +946,335 @@ jobs:
             --capabilities CAPABILITY_NAMED_IAM \
             --region "${AWS_REGION}" \
             --no-fail-on-empty-changeset
+
+
+      # ========================================================
+      # WAIT FOR DASHBOARD EC2
+      # ========================================================
+
+      - name: Get dashboard report bucket
+        id: report_bucket
+        shell: bash
+        run: |
+          set -e
+
+          REPORT_BUCKET=$(aws cloudformation describe-stacks             --stack-name "cloudmart-${ENVIRONMENT}-monitoring"             --region "${AWS_REGION}"             --query "Stacks[0].Parameters[?ParameterKey=='ReportsBucketName'].ParameterValue | [0]"             --output text)
+
+          test -n "${REPORT_BUCKET}"
+          test "${REPORT_BUCKET}" != "None"
+
+          echo "report_bucket=${REPORT_BUCKET}" >> "$GITHUB_OUTPUT"
+
+      - name: Get dashboard EC2 instance ID
+        id: dashboard
+        shell: bash
+        run: |
+          set -e
+
+          INSTANCE_ID=$(aws cloudformation describe-stacks \
+            --stack-name "cloudmart-${ENVIRONMENT}-monitoring" \
+            --region "${AWS_REGION}" \
+            --query "Stacks[0].Outputs[?OutputKey=='DashboardInstanceId'].OutputValue | [0]" \
+            --output text)
+
+          test -n "${INSTANCE_ID}"
+          test "${INSTANCE_ID}" != "None"
+
+          echo "instance_id=${INSTANCE_ID}" >> "$GITHUB_OUTPUT"
+          echo "Dashboard instance: ${INSTANCE_ID}"
+
+
+      - name: Wait for EC2 instance
+        shell: bash
+        run: |
+          set -e
+
+          aws ec2 wait instance-running \
+            --instance-ids "${{ steps.dashboard.outputs.instance_id }}" \
+            --region "${AWS_REGION}"
+
+
+      - name: Wait for SSM agent
+        shell: bash
+        run: |
+          set -e
+
+          for i in $(seq 1 30); do
+
+            STATUS=$(aws ssm describe-instance-information \
+              --filters "Key=InstanceIds,Values=${{ steps.dashboard.outputs.instance_id }}" \
+              --region "${AWS_REGION}" \
+              --query "InstanceInformationList[0].PingStatus" \
+              --output text 2>/dev/null || true)
+
+            echo "SSM status: ${STATUS}"
+
+            if [ "${STATUS}" = "Online" ]; then
+              exit 0
+            fi
+
+            sleep 10
+
+          done
+
+          echo "ERROR: Dashboard EC2 did not become Online in SSM."
+          exit 1
+
+
+      # ========================================================
+      # INSTALL AND CONFIGURE DASHBOARD THROUGH SSM
+      # ========================================================
+
+      - name: Install dashboard software through SSM
+        id: dashboard_setup
+        shell: bash
+        run: |
+          set -e
+
+          DASHBOARD_BUCKET="${{ steps.bucket.outputs.bucket }}"
+          DASHBOARD_KEY="${DASHBOARD_KEY}"
+          REPORT_BUCKET="${{ steps.report_bucket.outputs.report_bucket }}"
+
+          read -r -d '' BOOTSTRAP <<EOF || true
+          #!/bin/bash
+          set -eux
+
+          exec > >(tee /var/log/cloudmart-dashboard-ssm.log | logger -t cloudmart-dashboard) 2>&1
+
+          echo "Installing CloudMart dashboard dependencies..."
+
+          dnf update -y
+          dnf install -y python3.12 python3.12-pip nginx unzip openssl
+
+          mkdir -p /opt/cloudmart-dashboard
+          mkdir -p /etc/cloudmart-dashboard
+
+          rm -rf /opt/cloudmart-dashboard/app
+          mkdir -p /opt/cloudmart-dashboard/app
+
+          aws s3 cp "s3://${DASHBOARD_BUCKET}/${DASHBOARD_KEY}" /tmp/cloudmart-dashboard.zip --region ${AWS_REGION}
+
+          unzip -o /tmp/cloudmart-dashboard.zip -d /opt/cloudmart-dashboard/app
+
+          rm -rf /opt/cloudmart-dashboard/venv
+
+          python3.12 -m venv /opt/cloudmart-dashboard/venv
+
+          /opt/cloudmart-dashboard/venv/bin/pip install --upgrade pip
+
+          /opt/cloudmart-dashboard/venv/bin/pip install \
+            Flask \
+            boto3 \
+            PyMySQL \
+            gunicorn
+
+          if [ ! -s /etc/cloudmart-dashboard/flask-secret ]; then
+            openssl rand -hex 32 > /etc/cloudmart-dashboard/flask-secret
+            chmod 600 /etc/cloudmart-dashboard/flask-secret
+          fi
+
+          cat > /etc/systemd/system/cloudmart-dashboard.service <<'SERVICE'
+          [Unit]
+          Description=CloudMart Flask Operations Dashboard
+          After=network-online.target
+          Wants=network-online.target
+
+          [Service]
+          Type=simple
+          User=root
+          WorkingDirectory=/opt/cloudmart-dashboard/app/dashboard
+          Environment=ENVIRONMENT=${ENVIRONMENT}
+          Environment=AWS_REGION=${AWS_REGION}
+          Environment=DB_HOST_PARAMETER=/cloudmart/${ENVIRONMENT}/db/host
+          Environment=DB_PORT_PARAMETER=/cloudmart/${ENVIRONMENT}/db/port
+          Environment=DB_NAME_PARAMETER=/cloudmart/${ENVIRONMENT}/db/name
+          Environment=DB_USERNAME_PARAMETER=/cloudmart/${ENVIRONMENT}/db/username
+          Environment=DB_PASSWORD_PARAMETER=/cloudmart/${ENVIRONMENT}/db/password
+          Environment=ADMIN_AUTH_TOKEN_PARAMETER=/cloudmart/${ENVIRONMENT}/auth/admin-token
+          Environment=FLASK_SECRET_KEY_FILE=/etc/cloudmart-dashboard/flask-secret
+          Environment=REPORT_BUCKET=${REPORT_BUCKET}
+          ExecStart=/opt/cloudmart-dashboard/venv/bin/gunicorn --workers 2 --bind 127.0.0.1:8000 app:app
+          Restart=always
+          RestartSec=5
+
+          [Install]
+          WantedBy=multi-user.target
+          SERVICE
+
+          cat > /etc/nginx/conf.d/cloudmart-dashboard.conf <<'NGINX'
+          server {
+              listen 80;
+              server_name _;
+
+              location / {
+                  proxy_pass http://127.0.0.1:8000;
+                  proxy_set_header Host \$host;
+                  proxy_set_header X-Real-IP \$remote_addr;
+                  proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+                  proxy_set_header X-Forwarded-Proto \$scheme;
+              }
+          }
+          NGINX
+
+          rm -f /etc/nginx/conf.d/default.conf
+
+          nginx -t
+
+          systemctl daemon-reload
+          systemctl enable --now cloudmart-dashboard
+          systemctl enable --now nginx
+
+          systemctl is-active --quiet cloudmart-dashboard
+          systemctl is-active --quiet nginx
+
+          echo "CloudMart dashboard installation completed."
+          EOF
+
+          COMMANDS_JSON=$(jq -n --arg command "$BOOTSTRAP" '{commands:[$command]}')
+
+          printf '%s' "$COMMANDS_JSON" > ssm-commands.json
+
+          COMMAND_ID=$(aws ssm send-command \
+            --instance-ids "${{ steps.dashboard.outputs.instance_id }}" \
+            --document-name "AWS-RunShellScript" \
+            --parameters file://ssm-commands.json \
+            --comment "CloudMart dashboard installation from GitHub Actions" \
+            --region "${AWS_REGION}" \
+            --query "Command.CommandId" \
+            --output text)
+
+          echo "command_id=${COMMAND_ID}" >> "$GITHUB_OUTPUT"
+          echo "SSM command: ${COMMAND_ID}"
+
+
+      - name: Wait for dashboard installation
+        shell: bash
+        run: |
+          set -e
+
+          COMMAND_ID="${{ steps.dashboard_setup.outputs.command_id }}"
+          INSTANCE_ID="${{ steps.dashboard.outputs.instance_id }}"
+
+          for i in $(seq 1 60); do
+
+            STATUS=$(aws ssm get-command-invocation \
+              --command-id "${COMMAND_ID}" \
+              --instance-id "${INSTANCE_ID}" \
+              --region "${AWS_REGION}" \
+              --query "Status" \
+              --output text 2>/dev/null || true)
+
+            echo "Dashboard installation status: ${STATUS}"
+
+            case "${STATUS}" in
+              Success)
+                exit 0
+                ;;
+              Failed|Cancelled|TimedOut|Cancelling)
+                echo "ERROR: Dashboard installation failed."
+                aws ssm get-command-invocation \
+                  --command-id "${COMMAND_ID}" \
+                  --instance-id "${INSTANCE_ID}" \
+                  --region "${AWS_REGION}" \
+                  --query "[Status,StatusDetails,StandardOutputContent,StandardErrorContent]" \
+                  --output text
+                exit 1
+                ;;
+            esac
+
+            sleep 10
+
+          done
+
+          echo "ERROR: Timed out waiting for dashboard installation."
+          exit 1
+
+
+      - name: Verify dashboard services
+        shell: bash
+        run: |
+          set -e
+
+          INSTANCE_ID="${{ steps.dashboard.outputs.instance_id }}"
+
+          read -r -d '' VERIFY <<'EOF' || true
+          set -e
+          systemctl is-active --quiet cloudmart-dashboard
+          systemctl is-active --quiet nginx
+          curl -fsS http://127.0.0.1/ >/tmp/cloudmart-dashboard-check.html
+          test -s /tmp/cloudmart-dashboard-check.html
+          echo "Dashboard services and local HTTP endpoint are healthy."
+          EOF
+
+          VERIFY_JSON=$(jq -n --arg command "$VERIFY" '{commands:[$command]}')
+          printf '%s' "$VERIFY_JSON" > verify-commands.json
+
+          VERIFY_ID=$(aws ssm send-command \
+            --instance-ids "${INSTANCE_ID}" \
+            --document-name "AWS-RunShellScript" \
+            --parameters file://verify-commands.json \
+            --comment "Verify CloudMart dashboard services" \
+            --region "${AWS_REGION}" \
+            --query "Command.CommandId" \
+            --output text)
+
+          for i in $(seq 1 30); do
+
+            STATUS=$(aws ssm get-command-invocation \
+              --command-id "${VERIFY_ID}" \
+              --instance-id "${INSTANCE_ID}" \
+              --region "${AWS_REGION}" \
+              --query "Status" \
+              --output text 2>/dev/null || true)
+
+            echo "Dashboard verification status: ${STATUS}"
+
+            if [ "${STATUS}" = "Success" ]; then
+              exit 0
+            fi
+
+            if [ "${STATUS}" = "Failed" ] || [ "${STATUS}" = "Cancelled" ] || [ "${STATUS}" = "TimedOut" ]; then
+              aws ssm get-command-invocation \
+                --command-id "${VERIFY_ID}" \
+                --instance-id "${INSTANCE_ID}" \
+                --region "${AWS_REGION}" \
+                --query "[Status,StandardOutputContent,StandardErrorContent]" \
+                --output text
+              exit 1
+            fi
+
+            sleep 5
+
+          done
+
+          echo "ERROR: Dashboard verification timed out."
+          exit 1
+
+
+      - name: Verify dashboard from GitHub runner
+        shell: bash
+        run: |
+          set -e
+
+          DASHBOARD_URL=$(aws cloudformation describe-stacks             --stack-name "cloudmart-${ENVIRONMENT}-monitoring"             --region "${AWS_REGION}"             --query "Stacks[0].Outputs[?OutputKey=='DashboardUrl'].OutputValue | [0]"             --output text)
+
+          test -n "${DASHBOARD_URL}"
+          test "${DASHBOARD_URL}" != "None"
+
+          echo "Dashboard URL: ${DASHBOARD_URL}"
+
+          for i in $(seq 1 12); do
+            if curl -fsS --max-time 10 "${DASHBOARD_URL}" >/tmp/cloudmart-dashboard.html; then
+              test -s /tmp/cloudmart-dashboard.html
+              echo "Dashboard is reachable."
+              exit 0
+            fi
+            echo "Dashboard is not reachable yet. Retrying..."
+            sleep 10
+          done
+
+          echo "ERROR: Dashboard URL is not reachable."
+          exit 1
 
 
       # ========================================================

@@ -11,9 +11,6 @@ Parameters:
       - prod
     Default: dev
 
-  OperationsCidr:
-    Type: String
-    Description: CIDR allowed to access the public dashboard on TCP 443
 
 Resources:
 
@@ -335,26 +332,17 @@ Resources:
       Description: Dashboard HTTPS outbound access
 
 
-  EC2FromOperationsIngress:
-    Type: AWS::EC2::SecurityGroupIngress
-    Properties:
-      GroupId: !Ref EC2SecurityGroup
-      IpProtocol: tcp
-      FromPort: 443
-      ToPort: 443
-      CidrIp: !Ref OperationsCidr
-      Description: Operations team HTTPS access
-
-
-  EC2FromOperationsHttpIngress:
+  EC2FromDashboardHttpIngress:
     Type: AWS::EC2::SecurityGroupIngress
     Properties:
       GroupId: !Ref EC2SecurityGroup
       IpProtocol: tcp
       FromPort: 80
       ToPort: 80
-      CidrIp: !Ref OperationsCidr
-      Description: Operations team HTTP access to dashboard
+      CidrIp: 0.0.0.0/0
+      Description: Public HTTP access to the CloudMart dashboard
+
+
 
 
   # ============================================================
