@@ -91,6 +91,21 @@ Resources:
             Fn::ImportValue:
               !Sub CloudMart-${Environment}-LowStockTopicArn
 
+          InputTransformer:
+
+            InputPathsMap:
+              productId: $.detail.productId
+              productName: $.detail.productName
+              stock: $.detail.stock
+              lowStockThreshold: $.detail.lowStockThreshold
+
+            InputTemplate: |
+              CloudMart Low Stock Alert
+              Product ID: <productId>
+              Product Name: <productName>
+              Current Stock: <stock>
+              Low Stock Threshold: <lowStockThreshold>
+
 
   # ============================================================
   # LOW STOCK SNS TOPIC POLICY
@@ -244,6 +259,21 @@ Resources:
           Arn:
             !Ref OrderNotificationTopic
 
+          InputTransformer:
+
+            InputPathsMap:
+              orderId: $.detail.orderId
+              customerId: $.detail.customerId
+              totalAmount: $.detail.totalAmount
+              status: $.detail.status
+
+            InputTemplate: |
+              CloudMart Order Confirmed
+              Order ID: <orderId>
+              Customer ID: <customerId>
+              Total Amount: <totalAmount>
+              Status: <status>
+
 
   # ============================================================
   # ORDER FAILED EVENT RULE
@@ -278,6 +308,23 @@ Resources:
 
           Arn:
             !Ref OrderNotificationTopic
+
+          InputTransformer:
+
+            InputPathsMap:
+              orderId: $.detail.orderId
+              customerId: $.detail.customerId
+              totalAmount: $.detail.totalAmount
+              status: $.detail.status
+              reason: $.detail.reason
+
+            InputTemplate: |
+              CloudMart Order Failed
+              Order ID: <orderId>
+              Customer ID: <customerId>
+              Total Amount: <totalAmount>
+              Status: <status>
+              Reason: <reason>
 
 
   # ============================================================
@@ -391,6 +438,23 @@ Resources:
 
           Arn:
             !Ref OrderCancellationTopic
+
+          InputTransformer:
+
+            InputPathsMap:
+              orderId: $.detail.orderId
+              customerId: $.detail.customerId
+              totalAmount: $.detail.totalAmount
+              status: $.detail.status
+              cancelledBy: $.detail.cancelledBy
+
+            InputTemplate: |
+              CloudMart Order Cancelled
+              Order ID: <orderId>
+              Customer ID: <customerId>
+              Total Amount: <totalAmount>
+              Status: <status>
+              Cancelled By: <cancelledBy>
 
 
 # ==============================================================
