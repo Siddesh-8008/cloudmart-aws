@@ -45,10 +45,8 @@ Parameters:
     Description: S3 key for the daily report Lambda ZIP
 
 
-  ReportsBucketName:
-    Type: String
-    Default: cloudmart-dev-reports-550684041874
-    Description: Existing S3 bucket containing CloudMart daily reports
+  # Reports bucket is created by this stack.
+  # The bucket name is generated from the environment and AWS account.
 
 
   LatestAmiId:
@@ -63,6 +61,43 @@ Parameters:
 # ==============================================================
 
 Resources:
+
+
+  # ============================================================
+  # DAILY REPORTS S3 BUCKET
+  # ============================================================
+
+  ReportsBucket:
+    Type: AWS::S3::Bucket
+
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+
+    Properties:
+
+      BucketName:
+        !Sub cloudmart-${Environment}-reports-${AWS::AccountId}
+
+      BucketEncryption:
+
+        ServerSideEncryptionConfiguration:
+
+          - ServerSideEncryptionByDefault:
+
+              SSEAlgorithm: AES256
+
+      PublicAccessBlockConfiguration:
+
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+      OwnershipControls:
+
+        Rules:
+
+          - ObjectOwnership: BucketOwnerEnforced
 
 
   # ============================================================
@@ -223,7 +258,7 @@ Resources:
 
                 Resource:
                   - !Sub
-                    arn:${AWS::Partition}:s3:::cloudmart-${Environment}-reports-${AWS::AccountId}/*
+                    arn:${AWS::Partition}:s3:::${ReportsBucket}/*
 
 
         # --------------------------------------------------------
@@ -315,7 +350,7 @@ Resources:
             !Ref Environment
 
           REPORT_BUCKET:
-            !Ref ReportsBucketName
+            !Ref ReportsBucket
 
           DB_HOST_PARAMETER:
             !Sub
@@ -483,7 +518,7 @@ Resources:
 
                 Resource:
                   - !Sub
-                    arn:${AWS::Partition}:s3:::${ReportsBucketName}
+                    arn:${AWS::Partition}:s3:::${ReportsBucket}
 
 
               - Effect: Allow
@@ -493,7 +528,7 @@ Resources:
 
                 Resource:
                   - !Sub
-                    arn:${AWS::Partition}:s3:::${ReportsBucketName}/*
+                    arn:${AWS::Partition}:s3:::${ReportsBucket}/*
 
 
         # --------------------------------------------------------
@@ -1508,7 +1543,7 @@ Outputs:
       S3 bucket containing CloudMart daily CSV reports
 
     Value:
-      !Ref ReportsBucketName
+      !Ref ReportsBucket
 
     Export:
       Name:
@@ -1521,7 +1556,7 @@ Outputs:
       ARN of the CloudMart reports bucket
 
     Value:
-      !Sub arn:${AWS::Partition}:s3:::${ReportsBucketName}
+      !GetAtt ReportsBucket.Arn
 
     Export:
       Name:

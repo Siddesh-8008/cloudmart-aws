@@ -958,7 +958,11 @@ jobs:
         run: |
           set -e
 
-          REPORT_BUCKET=$(aws cloudformation describe-stacks             --stack-name "cloudmart-${ENVIRONMENT}-monitoring"             --region "${AWS_REGION}"             --query "Stacks[0].Parameters[?ParameterKey=='ReportsBucketName'].ParameterValue | [0]"             --output text)
+          REPORT_BUCKET=$(aws cloudformation describe-stacks \
+            --stack-name "cloudmart-${ENVIRONMENT}-monitoring" \
+            --region "${AWS_REGION}" \
+            --query "Stacks[0].Outputs[?OutputKey=='ReportsBucketName'].OutputValue | [0]" \
+            --output text)
 
           test -n "${REPORT_BUCKET}"
           test "${REPORT_BUCKET}" != "None"
