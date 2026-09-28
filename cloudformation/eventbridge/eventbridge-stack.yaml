@@ -99,7 +99,12 @@ Resources:
               stock: $.detail.stock
               lowStockThreshold: $.detail.lowStockThreshold
 
-            InputTemplate: '"CloudMart Low Stock Alert\nProduct ID: <productId>\nProduct Name: <productName>\nCurrent Stock: <stock>\nLow Stock Threshold: <lowStockThreshold>"'
+            InputTemplate: |
+              "CloudMart Low Stock Alert"
+              "Product ID: <productId>"
+              "Product Name: <productName>"
+              "Current Stock: <stock>"
+              "Low Stock Threshold: <lowStockThreshold>"
 
 
   # ============================================================
@@ -262,7 +267,12 @@ Resources:
               totalAmount: $.detail.totalAmount
               status: $.detail.status
 
-            InputTemplate: '"CloudMart Order Confirmed\nOrder ID: <orderId>\nCustomer ID: <customerId>\nTotal Amount: <totalAmount>\nStatus: <status>"'
+            InputTemplate: |
+              "CloudMart Order Confirmed"
+              "Order ID: <orderId>"
+              "Customer ID: <customerId>"
+              "Total Amount: <totalAmount>"
+              "Status: <status>"
 
 
   # ============================================================
@@ -308,7 +318,13 @@ Resources:
               status: $.detail.status
               reason: $.detail.reason
 
-            InputTemplate: '"CloudMart Order Failed\nOrder ID: <orderId>\nCustomer ID: <customerId>\nTotal Amount: <totalAmount>\nStatus: <status>\nReason: <reason>"'
+            InputTemplate: |
+              "CloudMart Order Failed"
+              "Order ID: <orderId>"
+              "Customer ID: <customerId>"
+              "Total Amount: <totalAmount>"
+              "Status: <status>"
+              "Reason: <reason>"
 
 
   # ============================================================
@@ -432,7 +448,13 @@ Resources:
               status: $.detail.status
               cancelledBy: $.detail.cancelledBy
 
-            InputTemplate: '"CloudMart Order Cancelled\nOrder ID: <orderId>\nCustomer ID: <customerId>\nTotal Amount: <totalAmount>\nStatus: <status>\nCancelled By: <cancelledBy>"'
+            InputTemplate: |
+              "CloudMart Order Cancelled"
+              "Order ID: <orderId>"
+              "Customer ID: <customerId>"
+              "Total Amount: <totalAmount>"
+              "Status: <status>"
+              "Cancelled By: <cancelledBy>"
 
 
 # ==============================================================
