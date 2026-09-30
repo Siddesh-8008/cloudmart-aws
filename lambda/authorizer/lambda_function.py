@@ -1,3 +1,4 @@
+
 import json
 import os
 import hashlib
@@ -50,11 +51,6 @@ DB_PASSWORD_PARAMETER = os.environ[
 
 # ============================================================
 # SSM PARAMETER
-#
-# All CloudMart SSM parameters used by this Lambda are
-# normal String parameters.
-#
-# Therefore WithDecryption is NOT required.
 # ============================================================
 
 def get_parameter(name):
@@ -353,6 +349,19 @@ def find_customer_by_credentials(
 
 # ============================================================
 # PUBLIC PRODUCTS REQUEST
+#
+# Public product catalogue supports:
+#
+# 1. GET /products
+# 2. GET /products/{id}
+#
+# Both can be accessed without a token.
+#
+# They can ALSO be accessed with:
+#
+# 3. Customer Bearer token + customerId
+# 4. Admin Bearer token
+#
 # ============================================================
 
 def is_public_products_request(
@@ -360,8 +369,10 @@ def is_public_products_request(
     method_arn
 ):
 
-    # Prefer the values supplied directly in the REQUEST authorizer
-    # event. The method ARN check is kept as a fallback.
+    # ========================================================
+    # REQUEST AUTHORISER EVENT VALUES
+    # ========================================================
+
     http_method = str(
         event.get("httpMethod") or ""
     ).upper()
@@ -370,21 +381,80 @@ def is_public_products_request(
         event.get("resource") or ""
     )
 
+
+    # ========================================================
+    # FALLBACK TO METHOD ARN
+    # ========================================================
+
     if not http_method or not resource_path:
 
         parts = method_arn.split("/")
 
         if len(parts) < 4:
+
             return False
 
         http_method = parts[2].upper()
-        resource_path = "/" + "/".join(parts[3:])
 
-    if (
-        http_method != "GET"
-        or resource_path != "/products"
-    ):
+        resource_path = "/" + "/".join(
+            parts[3:]
+        )
+
+
+    # ========================================================
+    # ONLY GET PRODUCTS IS PUBLIC
+    #
+    # Allowed:
+    #
+    # GET /products
+    # GET /products/{id}
+    #
+    # ========================================================
+
+    if http_method != "GET":
+
         return False
+
+
+    if resource_path == "/products":
+
+        product_request = True
+
+    elif resource_path == "/products/{id}":
+
+        product_request = True
+
+    else:
+
+        # Some API Gateway authorizer events may provide
+        # the actual path instead of the resource template.
+        #
+        # Example:
+        #
+        # /products/123
+        #
+        # Therefore also allow a direct product ID path.
+
+        product_request = (
+            resource_path.startswith("/products/")
+            and resource_path.count("/") == 2
+            and resource_path != "/products/"
+        )
+
+
+    if not product_request:
+
+        return False
+
+
+    # ========================================================
+    # CUSTOMER ID
+    #
+    # Public access is allowed only when customerId is absent.
+    #
+    # If customerId is supplied, authentication will continue
+    # through the normal customer/admin token validation.
+    # ========================================================
 
     query_parameters = event.get(
         "queryStringParameters"
@@ -394,19 +464,29 @@ def is_public_products_request(
         "customerId"
     )
 
-    # Public access is only the catalogue request itself:
-    # GET /products with no customerId.
     return not customer_id
 
 
-def get_public_products_resources(method_arn):
+# ============================================================
+# GET PUBLIC PRODUCT RESOURCES
+# ============================================================
+
+def get_public_products_resources(
+    method_arn
+):
 
     api_stage_arn = get_api_stage_arn(
         method_arn
     )
 
     return [
-        api_stage_arn + "/GET/products"
+
+        # GET /products
+        api_stage_arn + "/GET/products",
+
+        # GET /products/{id}
+        api_stage_arn + "/GET/products/*"
+
     ]
 
 
@@ -443,29 +523,38 @@ def handler(event, context):
 
     # ========================================================
     # AUTHORIZATION HEADER
-    # REQUEST AUTHORISER RECEIVES THE HTTP HEADERS
+    #
+    # REQUEST AUTHORISER RECEIVES HTTP HEADERS
     # ========================================================
 
-    headers = event.get("headers") or {}
+    headers = event.get(
+        "headers"
+    ) or {}
 
     authorization_token = None
 
     for header_name, header_value in headers.items():
 
-        if str(header_name).lower() == "authorization":
+        if str(
+            header_name
+        ).lower() == "authorization":
 
-            authorization_token = header_value
+            authorization_token = (
+                header_value
+            )
 
             break
 
 
     # ========================================================
-    # PUBLIC GET /products
+    # PUBLIC GET PRODUCTS
     #
-    # GET /products is intentionally available without a token
-    # or customerId, similar to a public product catalogue.
+    # Supported:
     #
-    # No other endpoint is allowed to bypass authentication.
+    # GET /products
+    # GET /products/{id}
+    #
+    # No token is required.
     # ========================================================
 
     if not authorization_token:
@@ -502,6 +591,11 @@ def handler(event, context):
                 role="public"
             )
 
+
+        # ====================================================
+        # EVERYTHING ELSE REQUIRES AUTHENTICATION
+        # ====================================================
+
         print(
             json.dumps({
 
@@ -521,25 +615,6 @@ def handler(event, context):
 
     # ========================================================
     # BEARER FORMAT
-    # ========================================================
-    #
-    # Expected format:
-    #
-    # Bearer <token>
-    #
-    # We use split() to separate:
-    #
-    # [0] = Bearer
-    # [1] = actual token
-    #
-    # Example:
-    #
-    # "Bearer ABC123"
-    #
-    # becomes:
-    #
-    # ["Bearer", "ABC123"]
-    #
     # ========================================================
 
     token_parts = str(
@@ -571,19 +646,10 @@ def handler(event, context):
     # ========================================================
     # EXTRACT ACTUAL TOKEN
     # ========================================================
-    #
-    # token_parts[0] = "Bearer"
-    # token_parts[1] = actual token
-    #
-    # Example:
-    #
-    # ["Bearer", "ABC123"]
-    #
-    # token_parts[1] = "ABC123"
-    #
-    # ========================================================
 
-    supplied_token = token_parts[1].strip()
+    supplied_token = (
+        token_parts[1].strip()
+    )
 
 
     # ========================================================
@@ -616,16 +682,8 @@ def handler(event, context):
         ).strip()
 
 
-    # Admin authentication is checked first, so admin requests
-    # do not need a customerId query parameter.
-
-
     # ========================================================
     # ADMIN TOKEN
-    #
-    # Admin token is stored in SSM as a normal String.
-    # No SecureString.
-    # No KMS decryption.
     # ========================================================
 
     admin_parameter = os.environ.get(
@@ -830,3 +888,4 @@ def handler(event, context):
             customer_id
 
     )
+
