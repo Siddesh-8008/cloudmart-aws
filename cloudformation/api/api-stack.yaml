@@ -137,7 +137,10 @@ Parameters:
   AuthorizerCacheTTL:
     Type: Number
     Default: 0
-    Description: API Gateway authorizer cache TTL in seconds. Keep this at 0 because customerId is part of the authentication input.
+    Description: >
+      API Gateway authorizer cache TTL in seconds.
+      Keep this at 0 because customerId is part of the
+      authentication input.
 
 
   # ============================================================
@@ -514,13 +517,12 @@ Resources:
   #
   # PUBLIC PRODUCT CATALOGUE
   #
-  # This endpoint can be called:
+  # Supported:
+  # 1. Without token
+  # 2. With customer token
+  # 3. With admin token
   #
-  # 1. Without a Bearer token
-  # 2. With a customer Bearer token
-  # 3. With an admin Bearer token
-  #
-  # The endpoint returns all products in all three cases.
+  # No authorizer is used because this endpoint is public.
   # ============================================================
 
   GetProductsMethod:
@@ -537,8 +539,6 @@ Resources:
       HttpMethod:
         GET
 
-      # Public catalogue.
-      # No authorizer is required for this endpoint.
       AuthorizationType:
         NONE
 
@@ -596,6 +596,15 @@ Resources:
 
   # ============================================================
   # GET /products/{id}
+  #
+  # PUBLIC PRODUCT DETAILS
+  #
+  # Supported:
+  # 1. Without token
+  # 2. With customer token
+  # 3. With admin token
+  #
+  # No authorizer is used because this endpoint is public.
   # ============================================================
 
   GetProductMethod:
@@ -613,10 +622,7 @@ Resources:
         GET
 
       AuthorizationType:
-        CUSTOM
-
-      AuthorizerId:
-        !Ref ProductApiAuthorizer
+        NONE
 
       Integration:
 
@@ -980,25 +986,13 @@ Resources:
 
     DependsOn:
 
-      # --------------------------------------------------------
-      # AUTHORIZER
-      # --------------------------------------------------------
-
       - ProductApiAuthorizer
-
-      # --------------------------------------------------------
-      # PRODUCT METHODS
-      # --------------------------------------------------------
 
       - GetProductsMethod
       - CreateProductMethod
       - GetProductMethod
       - UpdateProductMethod
       - DeleteProductMethod
-
-      # --------------------------------------------------------
-      # ORDER METHODS
-      # --------------------------------------------------------
 
       - CreateOrderMethod
       - GetOrdersMethod
