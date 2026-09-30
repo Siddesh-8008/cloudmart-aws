@@ -355,20 +355,48 @@ def find_customer_by_credentials(
 # PUBLIC PRODUCTS REQUEST
 # ============================================================
 
-def is_public_products_request(method_arn):
+def is_public_products_request(
+    event,
+    method_arn
+):
 
-    parts = method_arn.split("/")
+    # Prefer the values supplied directly in the REQUEST authorizer
+    # event. The method ARN check is kept as a fallback.
+    http_method = str(
+        event.get("httpMethod") or ""
+    ).upper()
 
-    if len(parts) < 4:
+    resource_path = str(
+        event.get("resource") or ""
+    )
+
+    if not http_method or not resource_path:
+
+        parts = method_arn.split("/")
+
+        if len(parts) < 4:
+            return False
+
+        http_method = parts[2].upper()
+        resource_path = "/" + "/".join(parts[3:])
+
+    if (
+        http_method != "GET"
+        or resource_path != "/products"
+    ):
         return False
 
-    http_method = parts[2].upper()
-    resource_path = "/" + "/".join(parts[3:])
+    query_parameters = event.get(
+        "queryStringParameters"
+    ) or {}
 
-    return (
-        http_method == "GET"
-        and resource_path == "/products"
+    customer_id = query_parameters.get(
+        "customerId"
     )
+
+    # Public access is only the catalogue request itself:
+    # GET /products with no customerId.
+    return not customer_id
 
 
 def get_public_products_resources(method_arn):
@@ -443,6 +471,7 @@ def handler(event, context):
     if not authorization_token:
 
         if is_public_products_request(
+            event,
             method_arn
         ):
 

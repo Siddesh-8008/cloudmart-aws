@@ -971,10 +971,10 @@ Resources:
   # ============================================================
   # API DEPLOYMENT
   #
-  # V2 FORCES A NEW API GATEWAY DEPLOYMENT
+  # V3 FORCES A NEW API GATEWAY DEPLOYMENT
   # ============================================================
 
-  ApiDeploymentV2:
+  ApiDeploymentV3:
     Type: AWS::ApiGateway::Deployment
 
     DependsOn:
@@ -983,6 +983,7 @@ Resources:
       # PRODUCT METHODS
       # --------------------------------------------------------
 
+      - ProductApiAuthorizer
       - GetProductsMethod
       - CreateProductMethod
       - GetProductMethod
@@ -1020,7 +1021,7 @@ Resources:
         !Ref ProductApi
 
       DeploymentId:
-        !Ref ApiDeploymentV2
+        !Ref ApiDeploymentV3
 
       StageName:
         !Ref Environment
