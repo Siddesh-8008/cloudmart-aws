@@ -459,16 +459,8 @@ Resources:
       RestApiId:
         !Ref ProductApi
 
-      # REQUEST authorizer is required because the customerId
-      # comes from the query string while the token comes from
-      # the Authorization header.
       Type:
         REQUEST
-
-      # Do not configure Authorization as an identity source.
-      # GET /products supports both public access and authenticated
-      # access. The Lambda Authorizer decides whether the request is
-      # public or requires a valid customer/admin token.
 
       AuthorizerUri:
         !Sub
@@ -519,6 +511,16 @@ Resources:
 
   # ============================================================
   # GET /products
+  #
+  # PUBLIC PRODUCT CATALOGUE
+  #
+  # This endpoint can be called:
+  #
+  # 1. Without a Bearer token
+  # 2. With a customer Bearer token
+  # 3. With an admin Bearer token
+  #
+  # The endpoint returns all products in all three cases.
   # ============================================================
 
   GetProductsMethod:
@@ -535,11 +537,10 @@ Resources:
       HttpMethod:
         GET
 
+      # Public catalogue.
+      # No authorizer is required for this endpoint.
       AuthorizationType:
-        CUSTOM
-
-      AuthorizerId:
-        !Ref ProductApiAuthorizer
+        NONE
 
       Integration:
 
@@ -971,19 +972,24 @@ Resources:
   # ============================================================
   # API DEPLOYMENT
   #
-  # V3 FORCES A NEW API GATEWAY DEPLOYMENT
+  # V4 FORCES A NEW API GATEWAY DEPLOYMENT
   # ============================================================
 
-  ApiDeploymentV3:
+  ApiDeploymentV4:
     Type: AWS::ApiGateway::Deployment
 
     DependsOn:
 
       # --------------------------------------------------------
-      # PRODUCT METHODS
+      # AUTHORIZER
       # --------------------------------------------------------
 
       - ProductApiAuthorizer
+
+      # --------------------------------------------------------
+      # PRODUCT METHODS
+      # --------------------------------------------------------
+
       - GetProductsMethod
       - CreateProductMethod
       - GetProductMethod
@@ -1021,7 +1027,7 @@ Resources:
         !Ref ProductApi
 
       DeploymentId:
-        !Ref ApiDeploymentV3
+        !Ref ApiDeploymentV4
 
       StageName:
         !Ref Environment
