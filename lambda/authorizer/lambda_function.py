@@ -352,6 +352,37 @@ def find_customer_by_credentials(
 
 
 # ============================================================
+# PUBLIC PRODUCTS REQUEST
+# ============================================================
+
+def is_public_products_request(method_arn):
+
+    parts = method_arn.split("/")
+
+    if len(parts) < 4:
+        return False
+
+    http_method = parts[2].upper()
+    resource_path = "/" + "/".join(parts[3:])
+
+    return (
+        http_method == "GET"
+        and resource_path == "/products"
+    )
+
+
+def get_public_products_resources(method_arn):
+
+    api_stage_arn = get_api_stage_arn(
+        method_arn
+    )
+
+    return [
+        api_stage_arn + "/GET/products"
+    ]
+
+
+# ============================================================
 # AUTHORIZE
 # ============================================================
 
@@ -401,10 +432,46 @@ def handler(event, context):
 
 
     # ========================================================
-    # MISSING TOKEN
+    # PUBLIC GET /products
+    #
+    # GET /products is intentionally available without a token
+    # or customerId, similar to a public product catalogue.
+    #
+    # No other endpoint is allowed to bypass authentication.
     # ========================================================
 
     if not authorization_token:
+
+        if is_public_products_request(
+            method_arn
+        ):
+
+            print(
+                json.dumps({
+
+                    "event":
+                        "public_products_request",
+
+                    "result":
+                        "allowed"
+
+                })
+            )
+
+            return generate_policy(
+
+                effect="Allow",
+
+                principal_id=
+                    "cloudmart-public-products",
+
+                resources=
+                    get_public_products_resources(
+                        method_arn
+                    ),
+
+                role="public"
+            )
 
         print(
             json.dumps({

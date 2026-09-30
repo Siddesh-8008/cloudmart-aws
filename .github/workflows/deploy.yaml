@@ -949,6 +949,39 @@ jobs:
 
 
       # ========================================================
+      # GENERATE FIRST DAILY REPORT
+      # ========================================================
+
+      - name: Generate initial daily report
+        shell: bash
+        run: |
+          set -e
+
+          echo "Generating initial daily report..."
+
+          echo '{}' > report-payload.json
+
+          aws lambda invoke \
+            --function-name "CloudMart-${ENVIRONMENT}-Report" \
+            --region "${AWS_REGION}" \
+            --cli-binary-format raw-in-base64-out \
+            --payload fileb://report-payload.json \
+            report-response.json
+
+          echo "Daily report Lambda response:"
+          cat report-response.json
+
+          if grep -q '"statusCode": 200' report-response.json; then
+            echo "Initial daily report generation succeeded."
+          else
+            echo "Initial daily report generation failed."
+            exit 1
+          fi
+
+          echo "Initial daily report generation completed."
+
+
+      # ========================================================
       # WAIT FOR DASHBOARD EC2
       # ========================================================
 

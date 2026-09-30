@@ -465,11 +465,10 @@ Resources:
       Type:
         REQUEST
 
-      # Keep only Authorization as the identity source. This lets
-      # the Lambda Authorizer handle the customerId-required case
-      # and return Unauthorized when it is missing.
-      IdentitySource:
-        method.request.header.Authorization
+      # Do not configure Authorization as an identity source.
+      # GET /products supports both public access and authenticated
+      # access. The Lambda Authorizer decides whether the request is
+      # public or requires a valid customer/admin token.
 
       AuthorizerUri:
         !Sub
