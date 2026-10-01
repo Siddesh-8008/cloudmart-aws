@@ -1,9 +1,9 @@
-
 import os
 from datetime import datetime, timezone
 
 import boto3
 import pymysql
+from botocore.config import Config
 from flask import (
     Flask,
     render_template,
@@ -40,7 +40,6 @@ def load_flask_secret_key():
     )
 
     if secret_key:
-
         return secret_key
 
     with open(
@@ -52,7 +51,6 @@ def load_flask_secret_key():
         secret_key = secret_file.read().strip()
 
     if not secret_key:
-
         raise RuntimeError(
             "Flask session secret is empty"
         )
@@ -140,7 +138,13 @@ ssm = boto3.client(
 
 s3 = boto3.client(
     "s3",
-    region_name=AWS_REGION
+    region_name=AWS_REGION,
+    config=Config(
+        signature_version="s3v4",
+        s3={
+            "addressing_style": "path"
+        }
+    )
 )
 
 
@@ -265,6 +269,7 @@ def logout():
 def get_connection():
 
     return pymysql.connect(
+
         host=get_parameter(
             DB_HOST_PARAMETER
         ),
@@ -464,12 +469,14 @@ def load_dashboard_data():
 
 
         return {
+
             "products": products,
 
             "recent_orders":
                 recent_orders,
 
             "stats": {
+
                 "product_count":
                     product_count,
 
@@ -555,6 +562,7 @@ def get_latest_report():
 
 
     return {
+
         "key":
             latest["Key"],
 
@@ -631,6 +639,7 @@ def dashboard():
 
 
     return render_template(
+
         "index.html",
 
         environment=ENVIRONMENT,
@@ -666,9 +675,12 @@ def health():
 
 
         return {
+
             "status": "ok",
+
             "environment":
                 ENVIRONMENT
+
         }, 200
 
 
@@ -694,8 +706,10 @@ def health():
 if __name__ == "__main__":
 
     app.run(
+
         host="0.0.0.0",
+
         port=8000,
+
         debug=False
     )
-
