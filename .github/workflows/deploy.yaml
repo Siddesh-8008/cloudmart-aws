@@ -26,12 +26,12 @@ env:
   AWS_REGION: ap-south-1
   ENVIRONMENT: prod
 
-  NETWORK_STACK_NAME: cloudmart-${ENVIRONMENT}-network
-  DATA_STACK_NAME: cloudmart-${ENVIRONMENT}-data
-  IAM_STACK_NAME: cloudmart-${ENVIRONMENT}-iam
-  AUTH_STACK_NAME: cloudmart-${ENVIRONMENT}-auth
-  API_STACK_NAME: cloudmart-${ENVIRONMENT}-api
-  EVENTBRIDGE_STACK_NAME: CloudMart-${ENVIRONMENT}-eventbridge
+  NETWORK_STACK_NAME: cloudmart-${{ env.ENVIRONMENT }}-network
+  DATA_STACK_NAME: cloudmart-${{ env.ENVIRONMENT }}-data
+  IAM_STACK_NAME: cloudmart-${{ env.ENVIRONMENT }}-iam
+  AUTH_STACK_NAME: cloudmart-${{ env.ENVIRONMENT }}-auth
+  API_STACK_NAME: cloudmart-${{ env.ENVIRONMENT }}-api
+  EVENTBRIDGE_STACK_NAME: CloudMart-${{ env.ENVIRONMENT }}-eventbridge
 
 
 # ============================================================
@@ -749,6 +749,8 @@ jobs:
             --region "${AWS_REGION}" \
             --query "Stacks[0].Outputs" \
             --output table
+
+
   # ============================================================
   # JOB 7 - MILESTONE 5 MONITORING
   # ============================================================
@@ -1003,6 +1005,7 @@ jobs:
 
           echo "report_bucket=${REPORT_BUCKET}" >> "$GITHUB_OUTPUT"
 
+
       - name: Get dashboard EC2 instance ID
         id: dashboard
         shell: bash
@@ -1210,12 +1213,14 @@ jobs:
                 ;;
               Failed|Cancelled|TimedOut|Cancelling)
                 echo "ERROR: Dashboard installation failed."
+
                 aws ssm get-command-invocation \
                   --command-id "${COMMAND_ID}" \
                   --instance-id "${INSTANCE_ID}" \
                   --region "${AWS_REGION}" \
                   --query "[Status,StatusDetails,StandardOutputContent,StandardErrorContent]" \
                   --output text
+
                 exit 1
                 ;;
             esac
@@ -1237,14 +1242,19 @@ jobs:
 
           read -r -d '' VERIFY <<'EOF' || true
           set -e
+
           systemctl is-active --quiet cloudmart-dashboard
           systemctl is-active --quiet nginx
+
           curl -fsS http://127.0.0.1/ >/tmp/cloudmart-dashboard-check.html
+
           test -s /tmp/cloudmart-dashboard-check.html
+
           echo "Dashboard services and local HTTP endpoint are healthy."
           EOF
 
           VERIFY_JSON=$(jq -n --arg command "$VERIFY" '{commands:[$command]}')
+
           printf '%s' "$VERIFY_JSON" > verify-commands.json
 
           VERIFY_ID=$(aws ssm send-command \
@@ -1271,13 +1281,17 @@ jobs:
               exit 0
             fi
 
-            if [ "${STATUS}" = "Failed" ] || [ "${STATUS}" = "Cancelled" ] || [ "${STATUS}" = "TimedOut" ]; then
+            if [ "${STATUS}" = "Failed" ] || \
+               [ "${STATUS}" = "Cancelled" ] || \
+               [ "${STATUS}" = "TimedOut" ]; then
+
               aws ssm get-command-invocation \
                 --command-id "${VERIFY_ID}" \
                 --instance-id "${INSTANCE_ID}" \
                 --region "${AWS_REGION}" \
                 --query "[Status,StandardOutputContent,StandardErrorContent]" \
                 --output text
+
               exit 1
             fi
 
@@ -1294,7 +1308,11 @@ jobs:
         run: |
           set -e
 
-          DASHBOARD_URL=$(aws cloudformation describe-stacks             --stack-name "cloudmart-${ENVIRONMENT}-monitoring"             --region "${AWS_REGION}"             --query "Stacks[0].Outputs[?OutputKey=='DashboardUrl'].OutputValue | [0]"             --output text)
+          DASHBOARD_URL=$(aws cloudformation describe-stacks \
+            --stack-name "cloudmart-${ENVIRONMENT}-monitoring" \
+            --region "${AWS_REGION}" \
+            --query "Stacks[0].Outputs[?OutputKey=='DashboardUrl'].OutputValue | [0]" \
+            --output text)
 
           test -n "${DASHBOARD_URL}"
           test "${DASHBOARD_URL}" != "None"
@@ -1302,13 +1320,22 @@ jobs:
           echo "Dashboard URL: ${DASHBOARD_URL}"
 
           for i in $(seq 1 12); do
-            if curl -fsS --max-time 10 "${DASHBOARD_URL}" >/tmp/cloudmart-dashboard.html; then
+
+            if curl -fsS --max-time 10 \
+              "${DASHBOARD_URL}" \
+              >/tmp/cloudmart-dashboard.html; then
+
               test -s /tmp/cloudmart-dashboard.html
+
               echo "Dashboard is reachable."
+
               exit 0
             fi
+
             echo "Dashboard is not reachable yet. Retrying..."
+
             sleep 10
+
           done
 
           echo "ERROR: Dashboard URL is not reachable."
