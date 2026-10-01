@@ -24,13 +24,14 @@ permissions:
 
 env:
   AWS_REGION: ap-south-1
-  ENVIRONMENT: dev
-  NETWORK_STACK_NAME: cloudmart-dev-network
-  DATA_STACK_NAME: cloudmart-dev-data
-  IAM_STACK_NAME: cloudmart-dev-iam
-  AUTH_STACK_NAME: cloudmart-dev-auth
-  API_STACK_NAME: cloudmart-dev-api
-  EVENTBRIDGE_STACK_NAME: CloudMart-dev-eventbridge
+  ENVIRONMENT: prod
+
+  NETWORK_STACK_NAME: cloudmart-${ENVIRONMENT}-network
+  DATA_STACK_NAME: cloudmart-${ENVIRONMENT}-data
+  IAM_STACK_NAME: cloudmart-${ENVIRONMENT}-iam
+  AUTH_STACK_NAME: cloudmart-${ENVIRONMENT}-auth
+  API_STACK_NAME: cloudmart-${ENVIRONMENT}-api
+  EVENTBRIDGE_STACK_NAME: CloudMart-${ENVIRONMENT}-eventbridge
 
 
 # ============================================================

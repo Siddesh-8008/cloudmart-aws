@@ -97,35 +97,35 @@ Parameters:
 
   DBHostParameter:
     Type: String
-    Default: /cloudmart/dev/db/host
+    Default: /cloudmart/${ENVIRONMENT}/db/host
     Description: >
       SSM parameter containing database host
 
 
   DBPortParameter:
     Type: String
-    Default: /cloudmart/dev/db/port
+    Default: /cloudmart/${ENVIRONMENT}/db/port
     Description: >
       SSM parameter containing database port
 
 
   DBNameParameter:
     Type: String
-    Default: /cloudmart/dev/db/name
+    Default: /cloudmart/${ENVIRONMENT}/db/name
     Description: >
       SSM parameter containing database name
 
 
   DBUsernameParameter:
     Type: String
-    Default: /cloudmart/dev/db/username
+    Default: /cloudmart/${ENVIRONMENT}/db/username
     Description: >
       SSM SecureString parameter containing database username
 
 
   DBPasswordParameter:
     Type: String
-    Default: /cloudmart/dev/db/password
+    Default: /cloudmart/${ENVIRONMENT}/db/password
     Description: >
       SSM SecureString parameter containing database password
 
@@ -149,7 +149,7 @@ Parameters:
 
   EventBusName:
     Type: String
-    Default: cloudmart-dev-event-bus
+    Default: cloudmart-${ENVIRONMENT}-event-bus
     Description: CloudMart EventBridge event bus name
 
 

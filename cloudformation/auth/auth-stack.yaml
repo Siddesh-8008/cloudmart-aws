@@ -37,7 +37,7 @@ Parameters:
 
   AdminAuthTokenParameterName:
     Type: String
-    Default: /cloudmart/dev/auth/admin-token
+    Default: /cloudmart/${ENVIRONMENT}/auth/admin-token
 
     Description: >
       SSM String containing the CloudMart
@@ -50,7 +50,7 @@ Parameters:
 
   DBHostParameter:
     Type: String
-    Default: /cloudmart/dev/db/host
+    Default: /cloudmart/${ENVIRONMENT}/db/host
 
     Description: >
       SSM parameter containing the RDS database host
@@ -58,7 +58,7 @@ Parameters:
 
   DBPortParameter:
     Type: String
-    Default: /cloudmart/dev/db/port
+    Default: /cloudmart/${ENVIRONMENT}/db/port
 
     Description: >
       SSM parameter containing the RDS database port
@@ -66,7 +66,7 @@ Parameters:
 
   DBNameParameter:
     Type: String
-    Default: /cloudmart/dev/db/name
+    Default: /cloudmart/${ENVIRONMENT}/db/name
 
     Description: >
       SSM parameter containing the RDS database name
@@ -74,7 +74,7 @@ Parameters:
 
   DBUsernameParameter:
     Type: String
-    Default: /cloudmart/dev/db/username
+    Default: /cloudmart/${ENVIRONMENT}/db/username
 
     Description: >
       SSM parameter containing the RDS database username
@@ -82,7 +82,7 @@ Parameters:
 
   DBPasswordParameter:
     Type: String
-    Default: /cloudmart/dev/db/password
+    Default: /cloudmart/${ENVIRONMENT}/db/password
 
     Description: >
       SSM parameter containing the RDS database password
