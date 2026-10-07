@@ -271,6 +271,71 @@ def publish_event(
 
 
 # ============================================================
+# LOW STOCK EVENT
+# ============================================================
+
+def publish_low_stock_event(
+    product_id,
+    product_name,
+    stock,
+    low_stock_threshold
+):
+
+    event_detail = {
+        "productId": int(product_id),
+        "productName": product_name,
+        "stock": int(stock),
+        "lowStockThreshold": int(low_stock_threshold),
+        "environment": os.environ.get("ENVIRONMENT", "dev")
+    }
+
+    try:
+
+        result = events.put_events(
+            Entries=[
+                {
+                    "EventBusName": EVENT_BUS_NAME,
+                    "Source": "cloudmart.product",
+                    "DetailType": "Low Stock Alert",
+                    "Detail": json.dumps(
+                        event_detail,
+                        default=str
+                    )
+                }
+            ]
+        )
+
+        if result.get("FailedEntryCount", 0) > 0:
+
+            logger.error(
+                "Failed to publish low stock event: %s",
+                result
+            )
+
+            return False
+
+        publish_metric(
+            "LowStockEvents"
+        )
+
+        logger.info(
+            "Low stock event published: %s",
+            event_detail
+        )
+
+        return True
+
+    except Exception as exc:
+
+        logger.exception(
+            "Failed to publish low stock event: %s",
+            exc
+        )
+
+        return False
+
+
+# ============================================================
 # REQUEST BODY
 # ============================================================
 
@@ -900,23 +965,13 @@ def create_order(event):
 
             for product in low_stock_products:
 
-                publish_event(
-                    "Low Stock Alert",
-                    {
-                        "productId":
-                            product["productId"],
-
-                        "productName":
-                            product["productName"],
-
-                        "stock":
-                            product["stock"],
-
-                        "lowStockThreshold":
-                            product[
-                                "lowStockThreshold"
-                            ]
-                    }
+                publish_low_stock_event(
+                    product_id=product["productId"],
+                    product_name=product["productName"],
+                    stock=product["stock"],
+                    low_stock_threshold=product[
+                        "lowStockThreshold"
+                    ]
                 )
 
             # ------------------------------------------------

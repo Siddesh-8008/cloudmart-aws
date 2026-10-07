@@ -493,6 +493,36 @@ def lambda_handler(event, context):
             )
 
 
+            # --------------------------------------------
+            # LOW STOCK EVENT
+            # --------------------------------------------
+
+            if stock <= low_stock_threshold:
+
+                try:
+
+                    publish_low_stock_event(
+                        product_id=new_product_id,
+                        product_name=name,
+                        stock=stock,
+                        low_stock_threshold=low_stock_threshold
+                    )
+
+                except Exception as event_error:
+
+                    logger.error(
+                        json.dumps({
+                            "level": "ERROR",
+                            "message": (
+                                "Failed to publish "
+                                "low stock event"
+                            ),
+                            "product_id": new_product_id,
+                            "error": str(event_error)
+                        })
+                    )
+
+
             return response(
                 201,
                 {
@@ -958,7 +988,6 @@ def lambda_handler(event, context):
 
             if (
                 "stock" in body
-                and old_stock > new_threshold
                 and new_stock <= new_threshold
             ):
 
